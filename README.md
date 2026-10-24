@@ -469,6 +469,15 @@ drives show in My Computer locked; opening one asks for the passphrase,
 optionally remembered in your keyring (gvfs's schema, so GNOME's tools
 share it). Network shares need gvfs-smb or gvfs-nfs.
 
+Disk Cleanup (a drive's Properties, System Tools in the Start menu, or
+`cleanmgr` in Run) frees space as XP's does: the Recycle Bin, temporary
+files, browsers' caches and thumbnails, and Linux's own: graphics shader
+caches, developer tools' download caches (pip, npm, Yarn, Cargo, Go,
+Gradle), programs' caches and Flatpak runtimes nothing uses. Windows 7's
+"Clean up system files" adds the package cache (pacman, apt or dnf), system
+logs older than two weeks and crash dumps, which `xd-cleanmgr-helper`
+deletes through `pkexec` with an administrator's password.
+
 ### Task Manager
 
 `xd-taskmgr` is the Windows 2000 Task Manager; Ctrl+Shift+Esc (or

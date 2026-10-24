@@ -6289,6 +6289,119 @@ def scratch_flatpak(s):
         user_dir=os.environ["FLATPAK_SYSTEM_DIR"])  # fmt: skip
 
 
+def disk_cleanup_setup(s):
+    """Before the compositor starts: the scratch Flatpak installations with
+    the test app uninstalled (its runtime left unused), a scratch system
+    root with a package cache, archived journal files and a crash dump,
+    stand-ins for pacman, pacman-conf and journalctl that log what they're
+    asked, xd-cleanmgr-helper run directly (no pkexec), and no temporary
+    folders (the real ones are the host's)."""
+    scratch_flatpak(s)
+    if s.flatpak is not None:
+        subprocess.run([s.flatpak, "--user", "uninstall", "-y", "--noninteractive", FLATPAK_APP],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # fmt: skip
+    root = os.path.join(s.base, "sysroot")
+    tools = os.path.join(s.base, "systools")
+    calls = os.path.join(s.base, "syscalls")
+    os.makedirs(tools)
+    old = time.time() - 30 * 24 * 3600
+    for rel in ("var/cache/pacman/pkg/foo-0.9-1-x86_64.pkg.tar.zst",
+                "var/cache/pacman/pkg/foo-1.0-1-x86_64.pkg.tar.zst",
+                "var/log/journal/m/system@0001-0002.journal",
+                "var/lib/systemd/coredump/core.prog.1000.abc.zst"):  # fmt: skip
+        path = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"x" * 200000)
+        os.utime(path, (old, old))
+    scripts = {
+        "pacman": f"case \"$1\" in -Q) echo 'foo 1.0-1';; *) echo \"pacman $*\" >>{calls};; esac\n",
+        "pacman-conf": "echo /var/cache/pacman/pkg/\n",
+        "journalctl": f"echo \"journalctl $*\" >>{calls}\n",
+    }
+    for name, body in scripts.items():
+        path = os.path.join(tools, name)
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+    os.environ.update({"XD_CLEANMGR_ROOT": root, "XD_CLEANMGR_TOOLS": tools,
+                       "XD_CLEANMGR_HELPER": s.tool("xd-cleanmgr-helper"),
+                       "XD_CLEANUP_TEMP_DIRS": ""})  # fmt: skip
+
+
+@scenario(LUNA_INI, setup=disk_cleanup_setup)
+def disk_cleanup_linux(s):
+    """Disk Cleanup on its own (xd-files --disk-cleanup, the Start menu's):
+    the graphics shader, developer tools' and programs' caches ticked go;
+    the unused Flatpak runtime goes (ticked to start with); Clean up system
+    files adds the package cache, old system logs and crash dumps, cleaned
+    by xd-cleanmgr-helper: pacman -Sc, journalctl --vacuum-time, the dump
+    deleted."""
+    cache = os.environ["XDG_CACHE_HOME"]
+    seeded = {
+        "thumbnails": os.path.join(cache, "thumbnails", "normal", "t.png"),
+        "shaders": os.path.join(cache, "mesa_shader_cache", "ab", "cd"),
+        "developer": os.path.join(cache, "pip", "http", "w"),
+        "programs": os.path.join(cache, "some-program", "data"),
+    }
+    for path in seeded.values():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"x" * 100000)
+    calls = os.path.join(s.base, "syscalls")
+    dump = os.path.join(os.environ["XD_CLEANMGR_ROOT"], "var/lib/systemd/coredump",
+                        "core.prog.1000.abc.zst")  # fmt: skip
+    runtime = (os.path.join(os.environ["FLATPAK_USER_DIR"], "runtime", "org.xd.Test.Platform")
+               if s.flatpak is not None else None)  # fmt: skip
+
+    def cleanup_window():
+        return next((w for w in s.windows() if w["title"].startswith("Disk Cleanup for")), None)
+
+    s.launch("xd-files", "--disk-cleanup")
+    s.wait(lambda: cleanup_window() is not None or s.window(title="Disk Cleanup : Drive Selection"),
+           "Disk Cleanup")  # fmt: skip
+    if s.window(title="Disk Cleanup : Drive Selection") is not None:
+        s.inject("key", "Return")  # the first drive: the root file system
+    s.wait(cleanup_window, "Disk Cleanup's window")
+    s.settle("scanned")
+    time.sleep(1)
+    listed = s.settle("disk cleanup")
+    # The rows: Recycle Bin (selected), Thumbnails, shader, developer
+    # tools' and programs' caches, [unused Flatpak runtimes]: tick the
+    # three caches.
+    s.inject("key", "Down", "sleep", 150, "key", "Down", "key", "space", "sleep", 150,
+             "key", "Down", "key", "space", "sleep", 150, "key", "Down", "key", "space")  # fmt: skip
+    s.settle("caches ticked")
+    s.inject("key", "alt+s")
+    time.sleep(1.5)
+    added = s.settle("system files")
+    s.check(added.differs(listed, (0, 0, WIDTH, HEIGHT - 40)) > 0.001,
+            "Clean up system files added to the list")  # fmt: skip
+    # Back to the list (still on programs' caches): past the Flatpak row
+    # and the package cache (ticked), tick the old system logs.
+    downs = ["key", "Down"] * (3 if runtime is not None else 2)
+    s.inject("key", "alt+f", "sleep", 200, *downs, "key", "space", "sleep", 200, "key", "Return",
+             "sleep", 800)  # fmt: skip
+    s.settle("are you sure")
+    s.inject("key", "Return")
+
+    def cleaned():
+        log = open(calls).read() if os.path.exists(calls) else ""
+        return (not os.path.exists(seeded["shaders"]) and not os.path.exists(seeded["developer"])
+                and not os.path.exists(seeded["programs"]) and not os.path.exists(dump)
+                and "pacman -Sc --noconfirm" in log and "journalctl --vacuum-time=2weeks" in log
+                and (runtime is None or not os.path.exists(runtime)))  # fmt: skip
+
+    s.wait(cleaned, "Disk Cleanup to clean everything ticked", timeout=40)
+    s.log("ok: caches, the package cache, old logs and the crash dump cleaned")
+    if runtime is not None:
+        s.log("ok: the unused Flatpak runtime was uninstalled")
+    s.check(not os.path.exists(seeded["thumbnails"]), "Thumbnails (ticked to start with) went")
+    s.check(os.path.isdir(os.path.join(cache, "mesa_shader_cache")),
+            "the cache folders themselves stayed")  # fmt: skip
+    s.wait(lambda: cleanup_window() is None, "Disk Cleanup to finish")
+
+
 @scenario(LUNA_INI, setup=scratch_flatpak)
 def flatpak_permissions(s):
     """Flatpak (xd-flatpak) on scratch installations with a test app: by

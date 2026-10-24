@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- SPDX-License-Identifier: MIT
+     Disk Cleanup's system files (the package cache, old system logs, crash
+     dumps), cleaned by xd-cleanmgr-helper through pkexec. -->
+<policyconfig>
+  <vendor>XeonDesktop</vendor>
+  <action id="org.xeondesktop.cleanmgr.clean">
+    <description>Clean up system files</description>
+    <message>Authentication is required to delete system files that are no longer needed</message>
+    <icon_name>edit-clear</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@LIBEXECDIR@/xd-cleanmgr-helper</annotate>
+  </action>
+</policyconfig>

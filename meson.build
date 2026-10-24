@@ -612,6 +612,8 @@ executable(
 # item isn't offered. libsecret remembers encrypted drives' passphrases;
 # without it, they're asked for each time.
 secret_dep = dependency('libsecret-1', required: false, include_type: 'system')
+# Disk Cleanup's Unused Flatpak runtimes, and Add or Remove Programs.
+flatpak_dep = dependency('flatpak', include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
   'src/files/chrome.c',
@@ -622,6 +624,7 @@ folder_lib = static_library(
   'src/files/extract.c',
   'src/files/favorites.c',
   'src/files/fileops.c',
+  'src/files/flatpakclean.c',
   'src/files/folderview.c',
   'src/files/launcher.c',
   'src/files/luks.c',
@@ -631,6 +634,7 @@ folder_lib = static_library(
   'src/files/places.c',
   'src/files/properties.c',
   'src/files/sendto.c',
+  'src/files/syscleanup.c',
   'src/files/taskpane.c',
   'src/files/udisks.c',
   'src/files/undo.c',
@@ -639,10 +643,11 @@ folder_lib = static_library(
   'src/files/versionsui.c',
   'src/cpl/wizard.c',
   c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
-           '-DXD_HAVE_LIBSECRET=' + (secret_dep.found() ? '1' : '0')],
+           '-DXD_HAVE_LIBSECRET=' + (secret_dep.found() ? '1' : '0'),
+           '-DXD_LIBEXECDIR="' + (get_option('prefix') / get_option('libexecdir')) + '"'],
   link_with: thumb_lib,
   dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep,
-                 secret_dep],
+                 secret_dep, flatpak_dep],
 )
 
 # xd-control: opens Control Panel (control:/// in xd-files) or an applet.
@@ -661,6 +666,7 @@ gtkapp_lib = static_library(
 )
 install_data(
   'data/applications/org.xeondesktop.Files.desktop',
+  'data/applications/org.xeondesktop.DiskCleanup.desktop',
   'data/applications/org.xeondesktop.TaskManager.desktop',
   'data/applications/org.xeondesktop.SnippingTool.desktop',
   'data/applications/org.xeondesktop.Minefield.desktop',
@@ -1084,7 +1090,6 @@ executable(
 
 # Add or Remove Programs: PackageKit and Flatpak.
 packagekit_dep = dependency('packagekit-glib2', include_type: 'system')
-flatpak_dep = dependency('flatpak', include_type: 'system')
 executable(
   'xd-appwiz',
   'src/appwiz/main.c',
@@ -1383,6 +1388,7 @@ test_exe = executable(
   'src/files/favorites.c',
   'src/files/launcher.c',
   'src/files/cleanup.c',
+  'src/files/syscleanup.c',
   'src/files/luks.c',
   'src/files/netdrives.c',
   'src/files/usershare.c',
@@ -1491,6 +1497,24 @@ install_data('tools/xd-theme-import', install_dir: get_option('bindir'),
              install_mode: 'rwxr-xr-x')
 install_data('data/theme/uxtheme.ini',
              install_dir: get_option('datadir') / 'xeondesktop' / 'theme')
+# Disk Cleanup's system files (the package cache, old system logs, crash
+# dumps), cleaned as root through pkexec and the polkit action below.
+executable(
+  'xd-cleanmgr-helper',
+  'src/files/cleanmgr_helper.c',
+  'src/files/syscleanup.c',
+  'src/files/cleanup.c',
+  dependencies: [glib_dep, gio_unix_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+  install_dir: get_option('libexecdir'),
+)
+configure_file(
+  input: 'data/polkit/org.xeondesktop.cleanmgr.policy.in',
+  output: 'org.xeondesktop.cleanmgr.policy',
+  configuration: {'LIBEXECDIR': get_option('prefix') / get_option('libexecdir')},
+  install_dir: get_option('datadir') / 'polkit-1' / 'actions',
+)
 # VirtualBox guests: its shared clipboard as a Wayland client.
 install_data('data/xd-vboxclient', install_dir: get_option('libexecdir'),
              install_mode: 'rwxr-xr-x')

@@ -345,8 +345,16 @@ Modelled on Windows XP's Explorer windows:
   its `Drive` objects. polkit asks, as for Disk Management. Disk Cleanup
   (`cleanup.c`, no GTK) deletes only the user's own disposable files (the
   Recycle Bin, the thumbnail cache, known browser caches, week-old entries
-  in the temporary folders), walking with `openat()` and never following
-  links or crossing into another file system.
+  in the temporary folders, shader, developer tools' and programs'
+  caches), walking with `openat()` and never following links or crossing
+  into another file system. Unused Flatpak runtimes go through libflatpak
+  (`flatpakclean.c`; the system installation's through Flatpak's own
+  polkit helper). The system files (`syscleanup.c`: the package cache, old
+  journal files, crash dumps) are measured as the user and cleaned by
+  `xd-cleanmgr-helper`, the one program of ours that runs as root: pkexec
+  starts it for polkit's `org.xeondesktop.cleanmgr.clean`, it takes only
+  the categories' names, and it runs the system's own tools (`pacman -Sc`,
+  `apt-get clean`, `dnf clean packages`, `journalctl --vacuum-time`).
 - **Thumbnails** follow the freedesktop thumbnail spec, so they're shared
   with other programs. Those missing from the cache are made by
   `xd-thumbnailer`, a process per file, a few at a time, what's on screen

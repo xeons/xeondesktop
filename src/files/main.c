@@ -138,8 +138,8 @@ static gboolean properties_only;          /* --properties: just the dialog */
 static gboolean is_seven_style; /* Aero: Windows 7's menus */
 static gboolean explore_option;           /* --explore: with the Folders bar, as XP's Explore */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
- * --link-to, --launch, --map-drive, --disconnect-drive: one job for the desktop (the shell
- * isn't a GTK program), then exit. */
+ * --link-to, --launch, --map-drive, --disconnect-drive, --disk-cleanup: one job for the
+ * desktop (the shell isn't a GTK program), then exit. */
 typedef enum {
     JOB_NONE,
     JOB_TRASH,
@@ -151,7 +151,8 @@ typedef enum {
     JOB_LINK,
     JOB_LAUNCH,
     JOB_MAP_DRIVE,
-    JOB_DISCONNECT_DRIVE
+    JOB_DISCONNECT_DRIVE,
+    JOB_DISK_CLEANUP
 } cli_job;
 static cli_job job;
 static char *job_dest; /* --copy-to / --move-to / --link-to */
@@ -4124,6 +4125,9 @@ static void run_job(GtkApplication *app, GFile **files, gint count) {
     case JOB_DISCONNECT_DRIVE:
         xd_net_disconnect_dialog(nullptr, G_APPLICATION(app));
         break;
+    case JOB_DISK_CLEANUP:
+        xd_disk_cleanup_run(G_APPLICATION(app), count > 0 ? files[0] : nullptr);
+        break;
     case JOB_NONE:
         break;
     }
@@ -4193,6 +4197,8 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         job = JOB_MAP_DRIVE;
     if (g_variant_dict_contains(opts, "disconnect-drive"))
         job = JOB_DISCONNECT_DRIVE;
+    if (g_variant_dict_contains(opts, "disk-cleanup"))
+        job = JOB_DISK_CLEANUP;
     const char *dest = nullptr;
     if (g_variant_dict_lookup(opts, "copy-to", "^&ay", &dest)) {
         job = JOB_COPY;
@@ -4308,6 +4314,10 @@ int main(int argc, char **argv) {
                                   G_OPTION_ARG_NONE, "Map Network Drive", nullptr);
     g_application_add_main_option(G_APPLICATION(app), "disconnect-drive", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Disconnect Network Drives", nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "disk-cleanup", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE,
+                                  "Disk Cleanup for the drive FILE, or for a drive chosen first",
+                                  nullptr);
     g_application_add_main_option(G_APPLICATION(app), "reconnect", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE,
                                   "Reconnect the network drives mapped to reconnect at logon",

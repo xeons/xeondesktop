@@ -38,6 +38,24 @@ static const struct {
     {"vivaldi", "Code Cache"},
 };
 
+/* Graphics drivers' compiled shaders (Mesa's, NVIDIA's): under
+ * $XDG_CACHE_HOME, or for `home`'s, under ~. */
+static const char *const shader_caches[] = {"mesa_shader_cache", "mesa_shader_cache_db",
+                                            "nvidia/GLCache", "nvidia/ComputeCache"};
+static const char *const home_shader_caches[] = {".nv/GLCache", ".nv/ComputeCache"};
+/* Developer tools' download caches (pip, Go, Yarn; npm, Cargo, Gradle):
+ * what they fetch again when it's gone. */
+static const char *const developer_caches[] = {"pip", "go-build", "yarn"};
+static const char *const home_developer_caches[] = {".npm/_cacache", ".cargo/registry/cache",
+                                                    ".gradle/caches"};
+/* What the other categories take from $XDG_CACHE_HOME, whole folders
+ * that Program caches leaves to them. */
+static const char *const taken_caches[] = {
+    "thumbnails", "mozilla", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge",
+    "vivaldi", "mesa_shader_cache", "mesa_shader_cache_db", "nvidia", "pip", "go-build", "yarn",
+    nullptr,
+};
+
 /* ---- places ------------------------------------------------------------------------ */
 
 /* Whether `path` is `root` or inside it. */
@@ -79,10 +97,31 @@ static char **strv_from(GPtrArray *paths) {
     return (char **)g_ptr_array_free(paths, FALSE);
 }
 
+/* The folders among `under`/`names` that are the user's and on the drive. */
+static void add_own_dirs(GPtrArray *out, const char *under, const char *const *names,
+                         size_t count, const char *root, const char *const *roots, uid_t uid) {
+    if (under == nullptr)
+        return;
+    for (size_t i = 0; i < count; i++) {
+        char *dir = g_build_filename(under, names[i], nullptr);
+        if (own_dir(dir, uid) && on_drive(dir, root, roots))
+            g_ptr_array_add(out, dir);
+        else
+            g_free(dir);
+    }
+}
+
 XdCleanupPlaces *xd_cleanup_places_new(const char *root, const char *const *roots,
                                        const char *data_home, const char *cache_home,
-                                       const char *const *temp_dirs, uid_t uid) {
+                                       const char *home, const char *const *temp_dirs,
+                                       uid_t uid) {
     XdCleanupPlaces *cleanup_places = g_new0(XdCleanupPlaces, 1);
+    cleanup_places->root = g_strdup(root);
+    GPtrArray *all = g_ptr_array_new();
+    for (const char *const *other_root = roots; other_root != nullptr && *other_root != nullptr;
+         other_root++)
+        g_ptr_array_add(all, g_strdup(*other_root));
+    cleanup_places->roots = strv_from(all);
 
     GPtrArray *trashes = g_ptr_array_new();
     char *home_trash = data_home != nullptr ? g_build_filename(data_home, "Trash", nullptr)
@@ -135,6 +174,20 @@ XdCleanupPlaces *xd_cleanup_places_new(const char *root, const char *const *root
     g_ptr_array_sort(caches, by_path);
     cleanup_places->browser_caches = strv_from(caches);
 
+    GPtrArray *shaders = g_ptr_array_new();
+    add_own_dirs(shaders, cache_home, shader_caches, G_N_ELEMENTS(shader_caches), root, roots, uid);
+    add_own_dirs(shaders, home, home_shader_caches, G_N_ELEMENTS(home_shader_caches), root, roots,
+                 uid);
+    cleanup_places->shader_caches = strv_from(shaders);
+    GPtrArray *developer = g_ptr_array_new();
+    add_own_dirs(developer, cache_home, developer_caches, G_N_ELEMENTS(developer_caches), root,
+                 roots, uid);
+    add_own_dirs(developer, home, home_developer_caches, G_N_ELEMENTS(home_developer_caches), root,
+                 roots, uid);
+    cleanup_places->developer_caches = strv_from(developer);
+    if (cache_home != nullptr && own_dir(cache_home, uid) && on_drive(cache_home, root, roots))
+        cleanup_places->program_caches = g_strdup(cache_home);
+
     GPtrArray *temps = g_ptr_array_new();
     for (const char *const *temp_dir = temp_dirs; temp_dir != nullptr && *temp_dir != nullptr;
          temp_dir++)
@@ -151,7 +204,16 @@ void xd_cleanup_places_free(XdCleanupPlaces *cleanup_places) {
     g_strfreev(cleanup_places->trashes);
     g_strfreev(cleanup_places->temp_dirs);
     g_free(cleanup_places->thumbnails);
+    g_strfreev(cleanup_places->shader_caches);
+    g_strfreev(cleanup_places->developer_caches);
+    g_free(cleanup_places->program_caches);
+    g_free(cleanup_places->root);
+    g_strfreev(cleanup_places->roots);
     g_free(cleanup_places);
+}
+
+gboolean xd_cleanup_places_holds(const XdCleanupPlaces *cleanup_places, const char *path) {
+    return on_drive(path, cleanup_places->root, (const char *const *)cleanup_places->roots);
 }
 
 /* ---- walking ----------------------------------------------------------------------- */
@@ -215,9 +277,10 @@ static void walk_at(int at, const char *name, walk *walker, int depth) {
     closedir(dir_stream);
 }
 
-/* The items in `dir` (each deleted whole), with their size. */
+/* The items in `dir` (each deleted whole), with their size; not those
+ * named in `skip` (may be nullptr). */
 static void scan_dir(XdCleanupCategory *cleanup_category, const char *dir, uid_t uid,
-                     gboolean strict, gint64 now, GCancellable *cancel) {
+                     gboolean strict, gint64 now, const char *const *skip, GCancellable *cancel) {
     int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     struct stat top;
     if (fd < 0 || fstat(fd, &top) != 0) {
@@ -233,7 +296,8 @@ static void scan_dir(XdCleanupCategory *cleanup_category, const char *dir, uid_t
     }
     struct dirent *dir_entry;
     while (!g_cancellable_is_cancelled(cancel) && (dir_entry = readdir(dir_stream)) != nullptr) {
-        if (strcmp(dir_entry->d_name, ".") == 0 || strcmp(dir_entry->d_name, "..") == 0)
+        if (strcmp(dir_entry->d_name, ".") == 0 || strcmp(dir_entry->d_name, "..") == 0 ||
+            (skip != nullptr && g_strv_contains(skip, dir_entry->d_name)))
             continue;
         struct stat st;
         if (fstatat(dirfd(dir_stream), dir_entry->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0 ||
@@ -256,11 +320,10 @@ static void scan_dir(XdCleanupCategory *cleanup_category, const char *dir, uid_t
 
 /* ---- categories ------------------------------------------------------------------- */
 
-static XdCleanupCategory *category_new(XdCleanupKind kind) {
-    static const struct {
-        const char *title, *description;
-        gboolean checked;
-    } info[XD_CLEANUP_KIND_COUNT] = {
+static const struct {
+    const char *title, *description;
+    gboolean checked;
+} kind_info[XD_CLEANUP_KIND_COUNT] = {
         [XD_CLEANUP_INTERNET] = {"Temporary Internet Files",
                                  "The Temporary Internet Files folder contains Web pages stored "
                                  "on your hard disk for quick viewing. Your personalized "
@@ -283,12 +346,58 @@ static XdCleanupCategory *category_new(XdCleanupKind kind) {
                                    "you open a folder. If you delete these thumbnails, they "
                                    "will be automatically recreated as needed.",
                                    TRUE},
-    };
+        [XD_CLEANUP_SHADERS] = {"Graphics shader caches",
+                                "Games and other programs that use 3D graphics keep the "
+                                "shaders your graphics card has compiled for them, so that "
+                                "they start faster. If you delete them, they are compiled again "
+                                "as needed, and the next start of those programs is slower.",
+                                FALSE},
+        [XD_CLEANUP_DEVELOPER] = {"Developer tool caches",
+                                  "Programming tools (pip, npm, Yarn, Cargo, Go and Gradle) "
+                                  "keep copies of the packages they download. If you delete "
+                                  "them, the tools download them again when they need them.",
+                                  FALSE},
+        [XD_CLEANUP_PROGRAMS] = {"Program caches",
+                                 "Programs keep files in your cache folder that they can make "
+                                 "again, to start or work faster. Close your programs before "
+                                 "you delete these files: a program that is running may still "
+                                 "be using them.",
+                                 FALSE},
+        [XD_CLEANUP_FLATPAK] = {"Unused Flatpak runtimes",
+                                "Runtimes and extensions that no installed Flatpak program "
+                                "uses any more. Removing those installed for all users asks "
+                                "for an administrator's password.",
+                                TRUE},
+        [XD_CLEANUP_PACKAGES] = {"Package cache",
+                                 "Copies of the software packages that were downloaded to "
+                                 "install or update programs. They are not needed once a "
+                                 "program is installed.",
+                                 TRUE},
+        [XD_CLEANUP_LOGS] = {"Old system logs",
+                             "The system's logs (the systemd journal) older than two weeks. "
+                             "Newer logs are kept.",
+                             FALSE},
+        [XD_CLEANUP_CRASHES] = {"Program crash dumps",
+                                "When a program crashes, the system keeps a copy of its memory "
+                                "to help find the cause. You can delete these files if you do "
+                                "not need to report the problems.",
+                                TRUE},
+};
+
+gboolean xd_cleanup_kind_is_system(XdCleanupKind kind) {
+    return kind == XD_CLEANUP_PACKAGES || kind == XD_CLEANUP_LOGS || kind == XD_CLEANUP_CRASHES;
+}
+
+const char *xd_cleanup_kind_title(XdCleanupKind kind) {
+    return (unsigned)kind < XD_CLEANUP_KIND_COUNT ? kind_info[kind].title : "";
+}
+
+XdCleanupCategory *xd_cleanup_category_new(XdCleanupKind kind) {
     XdCleanupCategory *cleanup_category = g_new0(XdCleanupCategory, 1);
     cleanup_category->kind = kind;
-    cleanup_category->title = info[kind].title;
-    cleanup_category->description = info[kind].description;
-    cleanup_category->checked = info[kind].checked;
+    cleanup_category->title = kind_info[kind].title;
+    cleanup_category->description = kind_info[kind].description;
+    cleanup_category->checked = kind_info[kind].checked;
     cleanup_category->age = TEMP_AGE;
     cleanup_category->roots = g_ptr_array_new_with_free_func(g_free);
     cleanup_category->items = g_ptr_array_new_with_free_func(g_free);
@@ -297,6 +406,8 @@ static XdCleanupCategory *category_new(XdCleanupKind kind) {
 
 static void category_free(gpointer user_data) {
     XdCleanupCategory *cleanup_category = user_data;
+    if (cleanup_category->extra_free != nullptr)
+        cleanup_category->extra_free(cleanup_category->extra);
     g_free(cleanup_category->view);
     g_ptr_array_unref(cleanup_category->roots);
     g_ptr_array_unref(cleanup_category->items);
@@ -313,21 +424,21 @@ GPtrArray *xd_cleanup_scan(const XdCleanupPlaces *places, uid_t uid, gint64 now,
     GPtrArray *out = g_ptr_array_new_with_free_func(category_free);
     if (places->browser_caches[0] != nullptr) {
         set_scanning(scanning, XD_CLEANUP_INTERNET);
-        XdCleanupCategory *cleanup_category = category_new(XD_CLEANUP_INTERNET);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_INTERNET);
         for (char **dir = places->browser_caches; *dir != nullptr; dir++)
-            scan_dir(cleanup_category, *dir, uid, FALSE, now, cancel);
+            scan_dir(cleanup_category, *dir, uid, FALSE, now, nullptr, cancel);
         cleanup_category->view = g_path_get_dirname(places->browser_caches[0]);
         g_ptr_array_add(out, cleanup_category);
     }
 
     set_scanning(scanning, XD_CLEANUP_TRASH);
-    XdCleanupCategory *trash = category_new(XD_CLEANUP_TRASH);
+    XdCleanupCategory *trash = xd_cleanup_category_new(XD_CLEANUP_TRASH);
     for (char **trash_dir = places->trashes; *trash_dir != nullptr; trash_dir++) {
         for (const char *const *sub = (const char *const[]){"files", "info", nullptr};
              *sub != nullptr; sub++) {
             char *dir = g_build_filename(*trash_dir, *sub, nullptr);
             if (own_dir(dir, uid))
-                scan_dir(trash, dir, uid, FALSE, now, cancel);
+                scan_dir(trash, dir, uid, FALSE, now, nullptr, cancel);
             g_free(dir);
         }
     }
@@ -336,16 +447,16 @@ GPtrArray *xd_cleanup_scan(const XdCleanupPlaces *places, uid_t uid, gint64 now,
 
     if (places->temp_dirs[0] != nullptr) {
         set_scanning(scanning, XD_CLEANUP_TEMP);
-        XdCleanupCategory *cleanup_category = category_new(XD_CLEANUP_TEMP);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_TEMP);
         for (char **dir = places->temp_dirs; *dir != nullptr; dir++)
-            scan_dir(cleanup_category, *dir, uid, TRUE, now, cancel);
+            scan_dir(cleanup_category, *dir, uid, TRUE, now, nullptr, cancel);
         cleanup_category->view = g_strdup(places->temp_dirs[0]);
         g_ptr_array_add(out, cleanup_category);
     }
 
     if (places->thumbnails != nullptr) {
         set_scanning(scanning, XD_CLEANUP_THUMBNAILS);
-        XdCleanupCategory *cleanup_category = category_new(XD_CLEANUP_THUMBNAILS);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_THUMBNAILS);
         /* The sizes' folders stay (normal, large, fail/...); what's in
          * them goes. */
         GDir *thumbnail_dir = g_dir_open(places->thumbnails, 0, nullptr);
@@ -353,13 +464,47 @@ GPtrArray *xd_cleanup_scan(const XdCleanupPlaces *places, uid_t uid, gint64 now,
         while (thumbnail_dir != nullptr && (name = g_dir_read_name(thumbnail_dir)) != nullptr) {
             char *sub = g_build_filename(places->thumbnails, name, nullptr);
             if (own_dir(sub, uid))
-                scan_dir(cleanup_category, sub, uid, FALSE, now, cancel);
+                scan_dir(cleanup_category, sub, uid, FALSE, now, nullptr, cancel);
             g_free(sub);
         }
         if (thumbnail_dir != nullptr)
             g_dir_close(thumbnail_dir);
         cleanup_category->view = g_strdup(places->thumbnails);
         g_ptr_array_add(out, cleanup_category);
+    }
+
+    /* Folders whose contents go: shader and developer tools' caches. */
+    const struct {
+        XdCleanupKind kind;
+        char *const *dirs;
+    } folders[] = {
+        {XD_CLEANUP_SHADERS, places->shader_caches},
+        {XD_CLEANUP_DEVELOPER, places->developer_caches},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
+        char *const *dirs = folders[i].dirs;
+        if (dirs[0] == nullptr)
+            continue;
+        set_scanning(scanning, folders[i].kind);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(folders[i].kind);
+        for (char *const *dir = dirs; *dir != nullptr; dir++)
+            scan_dir(cleanup_category, *dir, uid, FALSE, now, nullptr, cancel);
+        cleanup_category->view = g_strdup(dirs[0]);
+        if (cleanup_category->items->len > 0)
+            g_ptr_array_add(out, cleanup_category);
+        else
+            category_free(cleanup_category);
+    }
+
+    if (places->program_caches != nullptr) {
+        set_scanning(scanning, XD_CLEANUP_PROGRAMS);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_PROGRAMS);
+        scan_dir(cleanup_category, places->program_caches, uid, FALSE, now, taken_caches, cancel);
+        cleanup_category->view = g_strdup(places->program_caches);
+        if (cleanup_category->items->len > 0)
+            g_ptr_array_add(out, cleanup_category);
+        else
+            category_free(cleanup_category);
     }
     return out;
 }
@@ -457,17 +602,17 @@ GPtrArray *xd_cleanup_scan_old(const XdCleanupPlaces *places, uid_t uid, gint64 
                                gboolean trash, gboolean temp, GCancellable *cancel) {
     GPtrArray *out = g_ptr_array_new_with_free_func(category_free);
     if (trash) {
-        XdCleanupCategory *cleanup_category = category_new(XD_CLEANUP_TRASH);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_TRASH);
         for (char **trash_dir = places->trashes; *trash_dir != nullptr; trash_dir++)
             scan_old_trash(cleanup_category, *trash_dir, uid, now - age, cancel);
         cleanup_category->view = g_strdup("trash:///");
         g_ptr_array_add(out, cleanup_category);
     }
     if (temp && places->temp_dirs[0] != nullptr) {
-        XdCleanupCategory *cleanup_category = category_new(XD_CLEANUP_TEMP);
+        XdCleanupCategory *cleanup_category = xd_cleanup_category_new(XD_CLEANUP_TEMP);
         cleanup_category->age = age;
         for (char **dir = places->temp_dirs; *dir != nullptr; dir++)
-            scan_dir(cleanup_category, *dir, uid, TRUE, now, cancel);
+            scan_dir(cleanup_category, *dir, uid, TRUE, now, nullptr, cancel);
         cleanup_category->view = g_strdup(places->temp_dirs[0]);
         g_ptr_array_add(out, cleanup_category);
     }

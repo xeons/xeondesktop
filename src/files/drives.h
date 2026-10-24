@@ -27,6 +27,10 @@ void xd_drive_set_label(GtkWindow *parent, GFile *item, const char *name, const 
  * <name> window. */
 gboolean xd_drive_can_cleanup(GFile *item, const char *kind);
 void xd_drive_cleanup(GtkWindow *parent, GFile *item, const char *name);
+/* Disk Cleanup on its own (xd-files --disk-cleanup [DRIVE]): for the drive
+ * whose root is `drive_root`, or the only drive there is; else XP's Select
+ * Drive box first. Holds `app` until it's done. */
+void xd_disk_cleanup_run(GApplication *app, GFile *drive_root);
 
 /* A drive's Properties pages: Tools (Error-checking, Defragmentation,
  * Backup) and Hardware (every disk drive, the drive's own selected).

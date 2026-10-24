@@ -9,6 +9,13 @@
  * hasn't been touched for a week (and nothing holding a socket or FIFO,
  * which a running program may still use). Nothing is followed through
  * symbolic links or into other file systems.
+ *
+ * Linux's own, which Windows has no counterpart for: graphics drivers'
+ * shader caches, developer tools' download caches, and the rest of
+ * $XDG_CACHE_HOME (programs' caches); Flatpak runtimes nothing uses
+ * (flatpakclean.h) and, with an administrator's password, the package
+ * cache, old system logs and crash dumps (syscleanup.h) are categories
+ * here too, found and cleaned by those modules.
  */
 #ifndef XD_FILES_CLEANUP_H
 #define XD_FILES_CLEANUP_H
@@ -23,27 +30,51 @@ typedef enum XdCleanupKind {
     XD_CLEANUP_TRASH,      /* Recycle Bin */
     XD_CLEANUP_TEMP,       /* Temporary files */
     XD_CLEANUP_THUMBNAILS, /* Thumbnails */
+    XD_CLEANUP_SHADERS,    /* Graphics shader caches */
+    XD_CLEANUP_DEVELOPER,  /* Developer tool caches */
+    XD_CLEANUP_PROGRAMS,   /* Program caches: the rest of $XDG_CACHE_HOME */
+    XD_CLEANUP_FLATPAK,    /* Unused Flatpak runtimes (flatpakclean.h) */
+    XD_CLEANUP_PACKAGES,   /* system files (syscleanup.h): the package cache */
+    XD_CLEANUP_LOGS,       /* system files: old system logs */
+    XD_CLEANUP_CRASHES,    /* system files: crash dumps */
     XD_CLEANUP_KIND_COUNT,
 } XdCleanupKind;
+
+/* Whether the kind is one of the system files, which only an
+ * administrator may clean (syscleanup.h). */
+gboolean xd_cleanup_kind_is_system(XdCleanupKind kind);
+/* "Temporary Internet Files": the kind's name in the list. */
+const char *xd_cleanup_kind_title(XdCleanupKind kind);
 
 /* Where a drive's cleanable files are. Every list is nullptr-terminated
  * and may be empty. */
 typedef struct XdCleanupPlaces {
-    char **browser_caches; /* folders whose contents go */
-    char **trashes;        /* trash folders (files/, info/ inside) */
-    char **temp_dirs;      /* only the user's week-old entries go */
-    char *thumbnails;      /* the thumbnail cache, or nullptr */
+    char **browser_caches;   /* folders whose contents go */
+    char **trashes;          /* trash folders (files/, info/ inside) */
+    char **temp_dirs;        /* only the user's week-old entries go */
+    char *thumbnails;        /* the thumbnail cache, or nullptr */
+    char **shader_caches;    /* folders whose contents go */
+    char **developer_caches; /* folders whose contents go */
+    char *program_caches;    /* $XDG_CACHE_HOME (what the others don't take), or nullptr */
+    char *root;              /* the drive's root, and every drive's */
+    char **roots;
 } XdCleanupPlaces;
 
 /* The places on the drive whose root is `root`, out of every drive's
  * root (`roots`): a place is on the drive with the longest root that
  * contains it. The user's places come from `data_home` (its Trash),
- * `cache_home` (thumbnails, browsers' caches) and `temp_dirs` (only
- * those that exist); another drive's trash is its .Trash-UID or
- * .Trash/UID. Free with xd_cleanup_places_free. */
+ * `cache_home` (thumbnails, browsers', shader, developer tools' and
+ * programs' caches), `home` (~/.nv, ~/.npm, ~/.cargo, ~/.gradle; may be
+ * nullptr) and `temp_dirs` (only those that exist); another drive's
+ * trash is its .Trash-UID or .Trash/UID. Free with
+ * xd_cleanup_places_free. */
 XdCleanupPlaces *xd_cleanup_places_new(const char *root, const char *const *roots,
                                        const char *data_home, const char *cache_home,
-                                       const char *const *temp_dirs, uid_t uid);
+                                       const char *home, const char *const *temp_dirs,
+                                       uid_t uid);
+/* Whether `path` is on the places' drive (no other drive inside it holds
+ * it): where a Flatpak installation's or the system's files count. */
+gboolean xd_cleanup_places_holds(const XdCleanupPlaces *cleanup_places, const char *path);
 void xd_cleanup_places_free(XdCleanupPlaces *cleanup_places);
 
 typedef struct XdCleanupCategory {
@@ -56,11 +87,19 @@ typedef struct XdCleanupCategory {
     GPtrArray *items;        /* char*: what goes (each deleted whole) */
     guint64 size;            /* bytes on disk */
     gint64 age;              /* temporary files: untouched this long (µs) */
+    /* What a module that isn't about files keeps (Flatpak's refs). */
+    gpointer extra;
+    GDestroyNotify extra_free;
 } XdCleanupCategory;
+
+/* An empty category of the kind, with its title, description and box,
+ * for the arrays xd_cleanup_scan returns (which free it). */
+XdCleanupCategory *xd_cleanup_category_new(XdCleanupKind kind);
 
 /* The drive's categories, with what each would delete: the Recycle Bin
  * always; Temporary files and Thumbnails where the drive holds them;
- * Temporary Internet Files only where a browser's cache was found.
+ * Temporary Internet Files only where a browser's cache was found; the
+ * shader, developer tools' and programs' caches where there are any.
  * `now` (µs, g_get_real_time) says what's a week old. `scanning`, if
  * given, is set to each category's kind as it starts. Free with
  * g_ptr_array_unref. */

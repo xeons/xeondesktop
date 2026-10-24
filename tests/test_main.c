@@ -49,6 +49,7 @@
 #include <archive_entry.h>
 #endif
 #include "../src/files/cleanup.h"
+#include "../src/files/syscleanup.h"
 #include "../src/files/columns.h"
 #include "../src/files/favorites.h"
 #include "../src/files/launcher.h"
@@ -8237,7 +8238,7 @@ static void test_disk_cleanup(void) {
 
     const char *roots[] = {drive, usb, nullptr};
     const char *temps[] = {tmp, "/nonexistent-xd-tmp", nullptr};
-    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new(drive, roots, data, cache, temps, uid);
+    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new(drive, roots, data, cache, nullptr, temps, uid);
     CHECK(g_strv_length(cleanup_places->trashes) == 1 &&
           g_str_has_suffix(cleanup_places->trashes[0], "share/Trash"));
     CHECK(cleanup_places->thumbnails != nullptr &&
@@ -8249,7 +8250,7 @@ static void test_disk_cleanup(void) {
           g_str_equal(cleanup_places->temp_dirs[0], tmp));
 
     /* The USB drive has only its own trash. */
-    XdCleanupPlaces *pu = xd_cleanup_places_new(usb, roots, data, cache, temps, uid);
+    XdCleanupPlaces *pu = xd_cleanup_places_new(usb, roots, data, cache, nullptr, temps, uid);
     CHECK(g_strv_length(pu->trashes) == 1 &&
           strstr(pu->trashes[0], "/media/usb/.Trash-") != nullptr);
     CHECK(pu->thumbnails == nullptr && pu->browser_caches[0] == nullptr &&
@@ -8261,7 +8262,11 @@ static void test_disk_cleanup(void) {
 
     gint scanning = -1;
     GPtrArray *cats = xd_cleanup_scan(cleanup_places, uid, now, nullptr, &scanning);
-    CHECK(cats->len == 4 && scanning == XD_CLEANUP_THUMBNAILS);
+    /* The four of XP's, and what's left in the cache folder. */
+    CHECK(cats->len == 5 && scanning == XD_CLEANUP_PROGRAMS);
+    const XdCleanupCategory *programs = cleanup_find(cats, XD_CLEANUP_PROGRAMS);
+    CHECK(programs != nullptr && programs->items->len == 1 && !programs->checked &&
+          cleanup_has(programs, drive, "home/.cache/other"));
     const XdCleanupCategory *web = cleanup_find(cats, XD_CLEANUP_INTERNET);
     const XdCleanupCategory *trash = cleanup_find(cats, XD_CLEANUP_TRASH);
     const XdCleanupCategory *temp = cleanup_find(cats, XD_CLEANUP_TEMP);
@@ -8311,7 +8316,7 @@ static void test_disk_cleanup(void) {
           exists_at(drive, "home/.cache/mozilla/firefox/abc.default/keep.txt") &&
           !exists_at(drive, "home/.cache/chromium/Default/Cache/data_0") &&
           exists_at(drive, "home/.cache/chromium/Default/Preferences") &&
-          exists_at(drive, "home/.cache/other/keep"));
+          !exists_at(drive, "home/.cache/other"));
     CHECK(!exists_at(drive, "tmp/old.txt") && !exists_at(drive, "tmp/olddir") &&
           !exists_at(drive, "tmp/link") && exists_at(drive, "tmp/new.txt") &&
           exists_at(drive, "tmp/pipes/fifo") && exists_at(drive, "outside/precious"));
@@ -8334,6 +8339,219 @@ static void test_disk_cleanup(void) {
     g_free(data);
     g_free(usb);
     g_free(drive);
+    g_free(root);
+}
+
+/* Disk Cleanup's own categories for Linux: shader, developer tools' and
+ * programs' caches, each folder's contents (not the folder). */
+static void test_disk_cleanup_caches(void) {
+    char *root = g_dir_make_tmp("xd-cleanup-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    uid_t uid = getuid();
+    char *home = g_build_filename(root, "home", nullptr);
+    char *data = g_build_filename(home, ".local", "share", nullptr);
+    char *cache = g_build_filename(home, ".cache", nullptr);
+    const char *files[] = {
+        "home/.cache/mesa_shader_cache/ab/cd",
+        "home/.cache/nvidia/GLCache/x/y",
+        "home/.cache/nvidia/settings.keep",
+        "home/.nv/GLCache/z",
+        "home/.cache/pip/http/w",
+        "home/.npm/_cacache/index",
+        "home/.npm/keep",
+        "home/.cargo/registry/cache/crate",
+        "home/.cargo/registry/index/keep",
+        "home/.cache/some-program/data",
+        "home/.cache/another/file",
+        "home/.cache/thumbnails/normal/t.png",
+        "home/.cache/mozilla/firefox/p/startupCache/s",
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(files); i++)
+        put_file(root, files[i], "some bytes\n");
+    const char *roots[] = {root, nullptr};
+    const char *temps[] = {nullptr};
+    gint64 now = g_get_real_time();
+    XdCleanupPlaces *places = xd_cleanup_places_new(root, roots, data, cache, home, temps, uid);
+    CHECK(g_strv_length(places->shader_caches) == 3 &&
+          g_strv_length(places->developer_caches) == 3 &&
+          g_strcmp0(places->program_caches, cache) == 0);
+    CHECK(xd_cleanup_places_holds(places, home));
+    GPtrArray *cats = xd_cleanup_scan(places, uid, now, nullptr, nullptr);
+    const XdCleanupCategory *shaders = cleanup_find(cats, XD_CLEANUP_SHADERS);
+    const XdCleanupCategory *developer = cleanup_find(cats, XD_CLEANUP_DEVELOPER);
+    const XdCleanupCategory *programs = cleanup_find(cats, XD_CLEANUP_PROGRAMS);
+    CHECK(shaders != nullptr && shaders->items->len == 3 && !shaders->checked &&
+          cleanup_has(shaders, root, "home/.cache/mesa_shader_cache/ab") &&
+          cleanup_has(shaders, root, "home/.cache/nvidia/GLCache/x") &&
+          cleanup_has(shaders, root, "home/.nv/GLCache/z"));
+    CHECK(developer != nullptr && developer->items->len == 3 &&
+          cleanup_has(developer, root, "home/.cache/pip/http") &&
+          cleanup_has(developer, root, "home/.npm/_cacache/index") &&
+          cleanup_has(developer, root, "home/.cargo/registry/cache/crate"));
+    /* Not what the other categories take: thumbnails, browsers', shader
+     * and developer tools' folders. */
+    CHECK(programs != nullptr && programs->items->len == 2 &&
+          cleanup_has(programs, root, "home/.cache/some-program") &&
+          cleanup_has(programs, root, "home/.cache/another"));
+    GError *err = nullptr;
+    for (guint i = 0; i < cats->len; i++) {
+        const XdCleanupCategory *cleanup_category = g_ptr_array_index(cats, i);
+        if (cleanup_category->kind >= XD_CLEANUP_SHADERS) {
+            CHECK(xd_cleanup_delete(cleanup_category, uid, now, nullptr, &err));
+            g_clear_error(&err);
+        }
+    }
+    CHECK(!exists_at(root, "home/.cache/mesa_shader_cache/ab") &&
+          exists_at(root, "home/.cache/mesa_shader_cache") &&
+          !exists_at(root, "home/.nv/GLCache/z") && exists_at(root, "home/.cache/nvidia") &&
+          exists_at(root, "home/.cache/nvidia/settings.keep"));
+    CHECK(!exists_at(root, "home/.npm/_cacache/index") && exists_at(root, "home/.npm/keep") &&
+          exists_at(root, "home/.cargo/registry/index/keep") &&
+          !exists_at(root, "home/.cache/some-program") &&
+          exists_at(root, "home/.cache/thumbnails/normal/t.png") &&
+          exists_at(root, "home/.cache/mozilla/firefox/p/startupCache/s"));
+    /* An empty category isn't listed. */
+    GPtrArray *again = xd_cleanup_scan(places, uid, now, nullptr, nullptr);
+    CHECK(cleanup_find(again, XD_CLEANUP_SHADERS) == nullptr &&
+          cleanup_find(again, XD_CLEANUP_DEVELOPER) == nullptr);
+    CHECK(xd_cleanup_kind_is_system(XD_CLEANUP_LOGS) &&
+          !xd_cleanup_kind_is_system(XD_CLEANUP_FLATPAK) &&
+          g_str_equal(xd_cleanup_kind_title(XD_CLEANUP_SHADERS), "Graphics shader caches"));
+    g_ptr_array_unref(again);
+    g_ptr_array_unref(cats);
+    xd_cleanup_places_free(places);
+    rm_tree(root);
+    g_free(cache);
+    g_free(data);
+    g_free(home);
+    g_free(root);
+}
+
+/* The bytes on disk of the files named (under `root`). */
+static guint64 disk_bytes(const char *root, const char *const *rels) {
+    guint64 size = 0;
+    for (const char *const *rel = rels; *rel != nullptr; rel++) {
+        char *path = g_build_filename(root, *rel, nullptr);
+        struct stat st;
+        if (lstat(path, &st) == 0)
+            size += (guint64)st.st_blocks * 512;
+        g_free(path);
+    }
+    return size;
+}
+
+static void put_script(const char *dir, const char *name, const char *body) {
+    char *path = g_build_filename(dir, name, nullptr);
+    char *text = g_strdup_printf("#!/bin/sh\n%s", body);
+    CHECK(g_file_set_contents(path, text, -1, nullptr) && g_chmod(path, 0755) == 0);
+    g_free(text);
+    g_free(path);
+}
+
+/* Disk Cleanup's system files, against a scratch root and stand-in
+ * tools: pacman's cache but the installed versions, archived journal
+ * files over two weeks old, crash dumps; never through a link. */
+static void test_disk_cleanup_system(void) {
+    char *root = g_dir_make_tmp("xd-syscleanup-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *tools = g_build_filename(root, "tools", nullptr);
+    char *log = g_build_filename(root, "calls", nullptr);
+    CHECK(g_mkdir(tools, 0755) == 0);
+    char *pacman = g_strdup_printf(
+        "case \"$1\" in -Q) printf 'foo 1.0-1\\nbar 2:3.0-2\\n';; *) echo \"pacman $*\" >>'%s';; "
+        "esac\n",
+        log);
+    put_script(tools, "pacman", pacman);
+    put_script(tools, "pacman-conf", "echo /var/cache/pacman/pkg/\n");
+    char *journalctl = g_strdup_printf("echo \"journalctl $*\" >>'%s'\n", log);
+    put_script(tools, "journalctl", journalctl);
+    const char *files[] = {
+        "var/cache/pacman/pkg/foo-1.0-1-x86_64.pkg.tar.zst",
+        "var/cache/pacman/pkg/foo-0.9-1-x86_64.pkg.tar.zst",
+        "var/cache/pacman/pkg/foo-0.9-1-x86_64.pkg.tar.zst.sig",
+        "var/cache/pacman/pkg/bar-2:3.0-2-any.pkg.tar.zst",
+        "var/cache/pacman/pkg/notes.txt",
+        "var/log/journal/abc/system@0001-0002.journal",
+        "var/log/journal/abc/user-1000@0003-0004.journal~",
+        "var/log/journal/abc/system@0005-0006.journal",
+        "var/log/journal/abc/system.journal",
+        "var/lib/systemd/coredump/core.prog.1000.abc.zst",
+        "var/lib/systemd/coredump/core.other.1000.def.zst",
+        "var/lib/systemd/coredump/README",
+        "outside/precious",
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(files); i++)
+        put_file(root, files[i], "some bytes for the cache\n");
+    char *precious = g_build_filename(root, "outside", "precious", nullptr);
+    char *link = g_build_filename(root, "var/lib/systemd/coredump/core.link", nullptr);
+    CHECK(symlink(precious, link) == 0);
+    gint64 real = g_get_real_time() / G_USEC_PER_SEC;
+    set_times_at(root, "var/log/journal/abc/system@0001-0002.journal", real - 30 * 24 * 3600);
+    set_times_at(root, "var/log/journal/abc/user-1000@0003-0004.journal~", real - 30 * 24 * 3600);
+    set_times_at(root, "var/log/journal/abc/system.journal", real - 30 * 24 * 3600);
+
+    xd_sysclean_env env = {.root = root, .tools = tools, .now = g_get_real_time()};
+    XdCleanupCategory *packages = xd_sysclean_scan(XD_CLEANUP_PACKAGES, &env, nullptr);
+    XdCleanupCategory *logs = xd_sysclean_scan(XD_CLEANUP_LOGS, &env, nullptr);
+    XdCleanupCategory *crashes = xd_sysclean_scan(XD_CLEANUP_CRASHES, &env, nullptr);
+    const char *unneeded[] = {"var/cache/pacman/pkg/foo-0.9-1-x86_64.pkg.tar.zst",
+                              "var/cache/pacman/pkg/foo-0.9-1-x86_64.pkg.tar.zst.sig", nullptr};
+    const char *old_logs[] = {"var/log/journal/abc/system@0001-0002.journal",
+                              "var/log/journal/abc/user-1000@0003-0004.journal~", nullptr};
+    const char *dumps[] = {"var/lib/systemd/coredump/core.prog.1000.abc.zst",
+                           "var/lib/systemd/coredump/core.other.1000.def.zst", nullptr};
+    CHECK(packages != nullptr && packages->size == disk_bytes(root, unneeded) &&
+          packages->checked && g_str_has_suffix(packages->view, "/var/cache/pacman/pkg/"));
+    CHECK(logs != nullptr && logs->size == disk_bytes(root, old_logs) && !logs->checked);
+    CHECK(crashes != nullptr && crashes->size == disk_bytes(root, dumps));
+
+    GError *err = nullptr;
+    CHECK(xd_sysclean_clean(XD_CLEANUP_PACKAGES, &env, &err) &&
+          xd_sysclean_clean(XD_CLEANUP_LOGS, &env, &err) &&
+          xd_sysclean_clean(XD_CLEANUP_CRASHES, &env, &err));
+    g_clear_error(&err);
+    char *calls = nullptr;
+    CHECK(g_file_get_contents(log, &calls, nullptr, nullptr) &&
+          g_str_equal(calls, "pacman -Sc --noconfirm\njournalctl --vacuum-time=2weeks\n"));
+    CHECK(!exists_at(root, "var/lib/systemd/coredump/core.prog.1000.abc.zst") &&
+          exists_at(root, "var/lib/systemd/coredump/README") &&
+          exists_at(root, "var/lib/systemd/coredump/core.link") &&
+          exists_at(root, "outside/precious"));
+    /* Nothing left: no crash dumps listed; no package manager, no cache. */
+    XdCleanupCategory *none = xd_sysclean_scan(XD_CLEANUP_CRASHES, &env, nullptr);
+    CHECK(none == nullptr);
+    xd_sysclean_env bare = {.root = root, .tools = log, .now = env.now};
+    CHECK(xd_sysclean_scan(XD_CLEANUP_PACKAGES, &bare, nullptr) == nullptr);
+    CHECK(!xd_sysclean_clean(XD_CLEANUP_PACKAGES, &bare, &err) && err != nullptr);
+    g_clear_error(&err);
+    XdCleanupKind kind;
+    CHECK(xd_sysclean_kind_from_name("logs", &kind) && kind == XD_CLEANUP_LOGS &&
+          !xd_sysclean_kind_from_name("../etc", &kind) &&
+          g_str_equal(xd_sysclean_name(XD_CLEANUP_CRASHES), "crashes"));
+
+    /* As the categories xd_cleanup_scan's arrays hold, they free there. */
+    const char *roots[] = {root, nullptr};
+    const char *temps[] = {nullptr};
+    XdCleanupPlaces *places =
+        xd_cleanup_places_new(root, roots, nullptr, nullptr, nullptr, temps, getuid());
+    GPtrArray *all = xd_cleanup_scan(places, getuid(), env.now, nullptr, nullptr);
+    g_ptr_array_add(all, packages);
+    g_ptr_array_add(all, logs);
+    g_ptr_array_add(all, crashes);
+    g_ptr_array_unref(all);
+    xd_cleanup_places_free(places);
+    g_free(calls);
+    rm_tree(root);
+    g_free(link);
+    g_free(precious);
+    g_free(journalctl);
+    g_free(pacman);
+    g_free(log);
+    g_free(tools);
     g_free(root);
 }
 
@@ -8494,7 +8712,7 @@ static void test_privacy(void) {
 
     const char *roots[] = {"/", nullptr};
     const char *temps[] = {tmp, nullptr};
-    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new("/", roots, data, nullptr, temps, uid);
+    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new("/", roots, data, nullptr, nullptr, temps, uid);
     GPtrArray *only_trash = xd_cleanup_scan_old(cleanup_places, uid, now, 30 * day * G_USEC_PER_SEC,
                                                 TRUE, FALSE, nullptr);
     CHECK(only_trash->len == 1);
@@ -10530,6 +10748,8 @@ int main(void) {
     test_launcher_fields();
     test_taskmgr_netstat();
     test_disk_cleanup();
+    test_disk_cleanup_caches();
+    test_disk_cleanup_system();
     test_luks();
     test_timedate_ntp();
     test_timedate_zone();

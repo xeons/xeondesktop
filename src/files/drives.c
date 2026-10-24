@@ -7,13 +7,16 @@
 #include <gio/gdesktopappinfo.h>
 #include <string.h>
 #include <sys/vfs.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <linux/magic.h>
 
 #include "../gtkapp/gtkapp.h"
 #include "cleanup.h"
+#include "flatpakclean.h"
 #include "places.h"
+#include "syscleanup.h"
 #include "udisks.h"
 
 #define UD_ERROR "org.freedesktop.UDisks2.Error."
@@ -125,20 +128,31 @@ static XdCleanupPlaces *places_for(GFile *item) {
     g_ptr_array_add(roots, nullptr);
 
     GPtrArray *temps = g_ptr_array_new_with_free_func(g_free);
-    const char *candidates[] = {g_get_tmp_dir(), "/tmp", "/var/tmp"};
-    for (size_t i = 0; i < G_N_ELEMENTS(candidates); i++) {
-        char *real = g_canonicalize_filename(candidates[i], nullptr);
+    /* XD_CLEANUP_TEMP_DIRS (folders separated by colons; empty for none)
+     * stands in for the temporary folders: the tests' sessions share the
+     * real ones. */
+    const char *given = g_getenv("XD_CLEANUP_TEMP_DIRS");
+    char **from_env = given != nullptr ? g_strsplit(given, ":", -1) : nullptr;
+    const char *defaults[] = {g_get_tmp_dir(), "/tmp", "/var/tmp", nullptr};
+    const char *const *candidates =
+        from_env != nullptr ? (const char *const *)from_env : defaults;
+    for (const char *const *candidate = candidates; *candidate != nullptr; candidate++) {
+        if ((*candidate)[0] == '\0')
+            continue;
+        char *real = g_canonicalize_filename(*candidate, nullptr);
         if (!in_memory(real) &&
             !g_ptr_array_find_with_equal_func(temps, real, g_str_equal, nullptr))
             g_ptr_array_add(temps, real);
         else
             g_free(real);
     }
+    g_strfreev(from_env);
     g_ptr_array_add(temps, nullptr);
 
     XdCleanupPlaces *cleanup_places =
         xd_cleanup_places_new(root, (const char *const *)roots->pdata, g_get_user_data_dir(),
-                              g_get_user_cache_dir(), (const char *const *)temps->pdata, getuid());
+                              g_get_user_cache_dir(), g_get_home_dir(),
+                              (const char *const *)temps->pdata, getuid());
     g_ptr_array_unref(temps);
     g_ptr_array_unref(roots);
     g_free(root);
@@ -149,6 +163,7 @@ enum { COL_CHECK, COL_ICON, COL_NAME, COL_SIZE, COL_INDEX, N_COLS };
 
 typedef struct cleanup {
     GtkWidget *parent; /* weak */
+    GApplication *app; /* run on its own (xd-files --disk-cleanup): held while it runs */
     char *name;
     XdCleanupPlaces *places;
     GCancellable *cancel;
@@ -160,7 +175,7 @@ typedef struct cleanup {
     gboolean cleaning;
     GString *errors;
     /* the Disk Cleanup for <name> window */
-    GtkWidget *dlg, *list, *total, *desc, *view;
+    GtkWidget *dlg, *list, *total, *desc, *view, *intro, *system_files;
     GtkListStore *store;
 } cleanup;
 
@@ -177,6 +192,8 @@ static void cleanup_free(cleanup *disk_cleanup) {
     g_clear_object(&disk_cleanup->store);
     if (disk_cleanup->errors != nullptr)
         g_string_free(disk_cleanup->errors, TRUE);
+    if (disk_cleanup->app != nullptr)
+        g_application_release(disk_cleanup->app);
     g_free(disk_cleanup);
 }
 
@@ -185,17 +202,14 @@ static const char *const category_icons[XD_CLEANUP_KIND_COUNT] = {
     [XD_CLEANUP_TRASH] = "user-trash-full",
     [XD_CLEANUP_TEMP] = "text-x-generic",
     [XD_CLEANUP_THUMBNAILS] = "image-x-generic",
+    [XD_CLEANUP_SHADERS] = "video-display",
+    [XD_CLEANUP_DEVELOPER] = "applications-development",
+    [XD_CLEANUP_PROGRAMS] = "application-x-executable",
+    [XD_CLEANUP_FLATPAK] = "system-software-install",
+    [XD_CLEANUP_PACKAGES] = "package-x-generic",
+    [XD_CLEANUP_LOGS] = "text-x-generic",
+    [XD_CLEANUP_CRASHES] = "dialog-warning",
 };
-
-static const char *kind_title(XdCleanupKind kind) {
-    static const char *const titles[XD_CLEANUP_KIND_COUNT] = {
-        [XD_CLEANUP_INTERNET] = "Temporary Internet Files",
-        [XD_CLEANUP_TRASH] = "Recycle Bin",
-        [XD_CLEANUP_TEMP] = "Temporary files",
-        [XD_CLEANUP_THUMBNAILS] = "Thumbnails",
-    };
-    return (unsigned)kind < XD_CLEANUP_KIND_COUNT ? titles[kind] : "";
-}
 
 static gboolean on_progress_tick(gpointer data) {
     cleanup *disk_cleanup = data;
@@ -203,7 +217,7 @@ static gboolean on_progress_tick(gpointer data) {
         return G_SOURCE_CONTINUE;
     gint kind = g_atomic_int_get(&disk_cleanup->scanning);
     char *text = g_strdup_printf("%s %s", disk_cleanup->cleaning ? "Cleaning:" : "Scanning:",
-                                 kind_title((XdCleanupKind)kind));
+                                 xd_cleanup_kind_title((XdCleanupKind)kind));
     gtk_label_set_text(GTK_LABEL(disk_cleanup->doing), text);
     g_free(text);
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(disk_cleanup->bar),
@@ -351,21 +365,85 @@ static void on_more_programs(GtkButton *button, gpointer data) {
     spawn(GTK_WINDOW(((cleanup *)data)->dlg), "Disk Cleanup", "xd-appwiz", nullptr);
 }
 
+/* The system files' places: the real ones, or a test's stand-ins. */
+static xd_sysclean_env system_env(void) {
+    const char *root = g_getenv("XD_CLEANMGR_ROOT");
+    return (xd_sysclean_env){.root = root != nullptr ? root : "",
+                             .tools = g_getenv("XD_CLEANMGR_TOOLS"),
+                             .now = g_get_real_time()};
+}
+
+/* Cleans the ticked system files at once: xd-cleanmgr-helper, through
+ * pkexec (one password for them all). A test runs its own helper,
+ * XD_CLEANMGR_HELPER, directly. */
+static void clean_system_files(GPtrArray *names, GString *errors) {
+    GPtrArray *argv = g_ptr_array_new_with_free_func(g_free);
+    const char *helper = g_getenv("XD_CLEANMGR_HELPER");
+    if (helper != nullptr) {
+        g_ptr_array_add(argv, g_strdup(helper));
+    } else {
+        g_ptr_array_add(argv, g_strdup("pkexec"));
+        g_ptr_array_add(argv, g_build_filename(XD_LIBEXECDIR, "xd-cleanmgr-helper", nullptr));
+    }
+    g_ptr_array_add(argv, g_strdup("clean"));
+    for (guint i = 0; i < names->len; i++)
+        g_ptr_array_add(argv, g_strdup(g_ptr_array_index(names, i)));
+    g_ptr_array_add(argv, nullptr);
+    char *err_out = nullptr;
+    int status = 0;
+    GError *err = nullptr;
+    const char *problem = nullptr;
+    if (!g_spawn_sync(nullptr, (char **)argv->pdata, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                      nullptr, nullptr, &err_out, &status, &err)) {
+        problem = err->message;
+    } else if (!g_spawn_check_wait_status(status, nullptr)) {
+        bool refused = helper == nullptr && WIFEXITED(status) &&
+                       (WEXITSTATUS(status) == 126 || WEXITSTATUS(status) == 127);
+        /* pkexec's 126 and 127: not allowed, or the password box was
+         * cancelled. */
+        if (refused)
+            problem = "System files can only be cleaned up with an administrator's password.";
+        else if (err_out != nullptr && err_out[0] != '\0')
+            problem = g_strstrip(err_out);
+        else
+            problem = "System files could not be cleaned up.";
+    }
+    if (problem != nullptr)
+        g_string_append_printf(errors, "%s%s", errors->len > 0 ? "\n" : "", problem);
+    g_clear_error(&err);
+    g_free(err_out);
+    g_ptr_array_free(argv, TRUE);
+}
+
 static void clean_thread(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
     (void)source;
     cleanup *disk_cleanup = data;
     GString *errors = g_string_new(nullptr);
+    GPtrArray *system_names = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < disk_cleanup->cats->len && !g_cancellable_is_cancelled(cancel); i++) {
         const XdCleanupCategory *cat = g_ptr_array_index(disk_cleanup->cats, i);
         if (!cat->checked)
             continue;
+        if (xd_cleanup_kind_is_system(cat->kind)) {
+            g_ptr_array_add(system_names, g_strdup(xd_sysclean_name(cat->kind)));
+            continue;
+        }
         g_atomic_int_set(&disk_cleanup->scanning, (gint)cat->kind);
         GError *err = nullptr;
-        if (!xd_cleanup_delete(cat, getuid(), g_get_real_time(), cancel, &err)) {
-            g_string_append_printf(errors, "%s%s", errors->len > 0 ? "\n" : "", err->message);
-            g_error_free(err);
+        bool ok = cat->kind == XD_CLEANUP_FLATPAK
+                      ? xd_flatpak_unused_remove(cat, cancel, &err)
+                      : xd_cleanup_delete(cat, getuid(), g_get_real_time(), cancel, &err);
+        if (!ok) {
+            g_string_append_printf(errors, "%s%s", errors->len > 0 ? "\n" : "",
+                                   err != nullptr ? err->message : "");
+            g_clear_error(&err);
         }
     }
+    if (system_names->len > 0 && !g_cancellable_is_cancelled(cancel)) {
+        g_atomic_int_set(&disk_cleanup->scanning, (gint)XD_CLEANUP_PACKAGES);
+        clean_system_files(system_names, errors);
+    }
+    g_ptr_array_free(system_names, TRUE);
     g_task_return_pointer(task, errors, nullptr);
 }
 
@@ -374,12 +452,13 @@ static void cleaned(GObject *src, GAsyncResult *res, gpointer data) {
     cleanup *disk_cleanup = data;
     GString *errors = g_task_propagate_pointer(G_TASK(res), nullptr);
     end_progress(disk_cleanup);
-    if (errors != nullptr && errors->len > 0 && disk_cleanup->parent != nullptr) {
+    if (errors != nullptr && errors->len > 0 &&
+        (disk_cleanup->parent != nullptr || disk_cleanup->app != nullptr)) {
         char *title = g_strdup_printf("Disk Cleanup for %s", disk_cleanup->name);
         char *msg = g_strdup_printf("Disk Cleanup could not delete some of the files.\n\n%s",
                                     errors->str);
-        xd_message_box(GTK_WINDOW(disk_cleanup->parent), title, XD_MB_WARNING, XD_MB_OK, FALSE,
-                       msg);
+        xd_message_box(disk_cleanup->parent != nullptr ? GTK_WINDOW(disk_cleanup->parent) : nullptr,
+                       title, XD_MB_WARNING, XD_MB_OK, FALSE, msg);
         g_free(msg);
         g_free(title);
     }
@@ -426,21 +505,98 @@ static void on_cleanup_destroy(GtkWidget *widget, gpointer data) {
     }
 }
 
-static GtkWidget *cleanup_page(cleanup *disk_cleanup) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+/* "You can use Disk Cleanup to free up to 12,345 KB of disk space on
+ * <name>.", for every category listed. */
+static void update_intro(cleanup *disk_cleanup) {
     guint64 all = 0;
     for (guint i = 0; i < disk_cleanup->cats->len; i++)
         all += ((XdCleanupCategory *)g_ptr_array_index(disk_cleanup->cats, i))->size;
     char *kb = xd_cleanup_format_kb(all);
     char *intro = g_strdup_printf("You can use Disk Cleanup to free up to %s of disk space on %s.",
                                   kb, disk_cleanup->name);
+    gtk_label_set_text(GTK_LABEL(disk_cleanup->intro), intro);
+    g_free(intro);
     g_free(kb);
+}
+
+static void add_category_row(cleanup *disk_cleanup, guint index) {
+    const XdCleanupCategory *cat = g_ptr_array_index(disk_cleanup->cats, index);
+    char *size = xd_cleanup_format_kb(cat->size);
+    gtk_list_store_insert_with_values(disk_cleanup->store, nullptr, -1, COL_CHECK, cat->checked,
+                                      COL_ICON, category_icons[cat->kind], COL_NAME, cat->title,
+                                      COL_SIZE, size, COL_INDEX, index, -1);
+    g_free(size);
+}
+
+static void system_scan_thread(GTask *task, gpointer source, gpointer data,
+                               GCancellable *cancel) {
+    (void)source;
+    cleanup *disk_cleanup = data;
+    xd_sysclean_env env = system_env();
+    GPtrArray *found = g_ptr_array_new();
+    const XdCleanupKind kinds[] = {XD_CLEANUP_PACKAGES, XD_CLEANUP_LOGS, XD_CLEANUP_CRASHES};
+    for (size_t i = 0; i < G_N_ELEMENTS(kinds) && !g_cancellable_is_cancelled(cancel); i++) {
+        g_atomic_int_set(&disk_cleanup->scanning, (gint)kinds[i]);
+        XdCleanupCategory *cat = xd_sysclean_scan(kinds[i], &env, cancel);
+        if (cat != nullptr)
+            g_ptr_array_add(found, cat);
+    }
+    g_task_return_pointer(task, found, nullptr);
+}
+
+static void system_scanned(GObject *src, GAsyncResult *res, gpointer data) {
+    (void)src;
+    cleanup *disk_cleanup = data;
+    GPtrArray *found = g_task_propagate_pointer(G_TASK(res), nullptr);
+    end_progress(disk_cleanup);
+    /* The list's array frees them, from now on. */
+    for (guint i = 0; found != nullptr && i < found->len; i++) {
+        g_ptr_array_add(disk_cleanup->cats, g_ptr_array_index(found, i));
+        if (disk_cleanup->dlg != nullptr)
+            add_category_row(disk_cleanup, disk_cleanup->cats->len - 1);
+    }
+    if (disk_cleanup->dlg != nullptr) {
+        update_intro(disk_cleanup);
+        update_total(disk_cleanup);
+        if (found == nullptr || found->len == 0) {
+            char *title = g_strdup_printf("Disk Cleanup for %s", disk_cleanup->name);
+            xd_message_box(GTK_WINDOW(disk_cleanup->dlg), title, XD_MB_INFO, XD_MB_OK,
+                           FALSE, "Disk Cleanup found no system files to clean up.");
+            g_free(title);
+        }
+    }
+    if (found != nullptr)
+        g_ptr_array_free(found, TRUE);
+}
+
+/* Windows 7's Clean up system files: the system's files that only an
+ * administrator may delete join the list (measured as the user; the
+ * password is asked for when they're cleaned). */
+static void on_system_files(GtkButton *button, gpointer data) {
+    cleanup *disk_cleanup = data;
+    gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
+    disk_cleanup->cleaning = FALSE;
+    g_atomic_int_set(&disk_cleanup->scanning, (gint)XD_CLEANUP_PACKAGES);
+    char *text = g_strdup_printf("Disk Cleanup is calculating how much space you will be able to "
+                                 "free on %s. This may take a few minutes to complete.",
+                                 disk_cleanup->name);
+    show_progress(disk_cleanup, text);
+    g_free(text);
+    GTask *task = g_task_new(nullptr, disk_cleanup->cancel, system_scanned, disk_cleanup);
+    g_task_set_task_data(task, disk_cleanup, nullptr);
+    g_task_run_in_thread(task, system_scan_thread);
+    g_object_unref(task);
+}
+
+static GtkWidget *cleanup_page(cleanup *disk_cleanup) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_box_pack_start(GTK_BOX(row), gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_DND),
                        FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(row), wrapped_label(intro), TRUE, TRUE, 0);
-    g_free(intro);
+    disk_cleanup->intro = wrapped_label("");
+    gtk_box_pack_start(GTK_BOX(row), disk_cleanup->intro, TRUE, TRUE, 0);
+    update_intro(disk_cleanup);
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
 
     GtkWidget *files = gtk_label_new_with_mnemonic("_Files to delete:");
@@ -448,14 +604,8 @@ static GtkWidget *cleanup_page(cleanup *disk_cleanup) {
     gtk_box_pack_start(GTK_BOX(box), files, FALSE, FALSE, 0);
     disk_cleanup->store = gtk_list_store_new(N_COLS, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_STRING,
                                              G_TYPE_STRING, G_TYPE_UINT);
-    for (guint i = 0; i < disk_cleanup->cats->len; i++) {
-        const XdCleanupCategory *cat = g_ptr_array_index(disk_cleanup->cats, i);
-        char *size = xd_cleanup_format_kb(cat->size);
-        gtk_list_store_insert_with_values(disk_cleanup->store, nullptr, -1, COL_CHECK, cat->checked,
-                                          COL_ICON, category_icons[cat->kind], COL_NAME, cat->title,
-                                          COL_SIZE, size, COL_INDEX, i, -1);
-        g_free(size);
-    }
+    for (guint i = 0; i < disk_cleanup->cats->len; i++)
+        add_category_row(disk_cleanup, i);
     disk_cleanup->list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(disk_cleanup->store));
     gtk_label_set_mnemonic_widget(GTK_LABEL(files), disk_cleanup->list);
     gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(disk_cleanup->list), FALSE);
@@ -508,6 +658,17 @@ static GtkWidget *cleanup_page(cleanup *disk_cleanup) {
     gtk_box_pack_start(GTK_BOX(fbox), disk_cleanup->view, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(frame), fbox);
     gtk_box_pack_start(GTK_BOX(box), frame, TRUE, TRUE, 0);
+    /* Only for the drive that holds the system's files. */
+    if (xd_cleanup_places_holds(disk_cleanup->places, "/var")) {
+        disk_cleanup->system_files = gtk_button_new_with_mnemonic("Clean up _system files");
+        gtk_button_set_image(GTK_BUTTON(disk_cleanup->system_files),
+                             gtk_image_new_from_icon_name("security-high", GTK_ICON_SIZE_BUTTON));
+        gtk_button_set_always_show_image(GTK_BUTTON(disk_cleanup->system_files), TRUE);
+        gtk_widget_set_halign(disk_cleanup->system_files, GTK_ALIGN_START);
+        g_signal_connect(disk_cleanup->system_files, "clicked", G_CALLBACK(on_system_files),
+                         disk_cleanup);
+        gtk_box_pack_start(GTK_BOX(box), disk_cleanup->system_files, FALSE, FALSE, 0);
+    }
 
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(disk_cleanup->list));
     g_signal_connect(sel, "changed", G_CALLBACK(on_category_selected), disk_cleanup);
@@ -576,6 +737,10 @@ static void scan_thread(GTask *task, gpointer source, gpointer data, GCancellabl
     cleanup *disk_cleanup = data;
     GPtrArray *cats = xd_cleanup_scan(disk_cleanup->places, getuid(), g_get_real_time(), cancel,
                                       &disk_cleanup->scanning);
+    g_atomic_int_set(&disk_cleanup->scanning, (gint)XD_CLEANUP_FLATPAK);
+    XdCleanupCategory *flatpak = xd_flatpak_unused_scan(disk_cleanup->places, cancel);
+    if (flatpak != nullptr)
+        g_ptr_array_add(cats, flatpak);
     g_task_return_pointer(task, cats, (GDestroyNotify)g_ptr_array_unref);
 }
 
@@ -585,17 +750,24 @@ static void scanned(GObject *src, GAsyncResult *res, gpointer data) {
     disk_cleanup->cats = g_task_propagate_pointer(G_TASK(res), nullptr);
     end_progress(disk_cleanup);
     if (disk_cleanup->cats == nullptr || g_cancellable_is_cancelled(disk_cleanup->cancel) ||
-        disk_cleanup->parent == nullptr) {
+        (disk_cleanup->parent == nullptr && disk_cleanup->app == nullptr)) {
         cleanup_free(disk_cleanup);
         return;
     }
     show_cleanup(disk_cleanup);
 }
 
-void xd_drive_cleanup(GtkWindow *parent, GFile *item, const char *name) {
+static void start_cleanup(GtkWindow *parent, GApplication *app, GFile *item, const char *name) {
     cleanup *disk_cleanup = g_new0(cleanup, 1);
-    disk_cleanup->parent = GTK_WIDGET(parent);
-    g_object_add_weak_pointer(G_OBJECT(disk_cleanup->parent), (gpointer *)&disk_cleanup->parent);
+    if (parent != nullptr) {
+        disk_cleanup->parent = GTK_WIDGET(parent);
+        g_object_add_weak_pointer(G_OBJECT(disk_cleanup->parent),
+                                  (gpointer *)&disk_cleanup->parent);
+    }
+    if (app != nullptr) {
+        disk_cleanup->app = app;
+        g_application_hold(app);
+    }
     disk_cleanup->name = g_strdup(name);
     disk_cleanup->cancel = g_cancellable_new();
     disk_cleanup->places = places_for(item);
@@ -608,6 +780,88 @@ void xd_drive_cleanup(GtkWindow *parent, GFile *item, const char *name) {
     g_task_set_task_data(task, disk_cleanup, nullptr);
     g_task_run_in_thread(task, scan_thread);
     g_object_unref(task);
+}
+
+void xd_drive_cleanup(GtkWindow *parent, GFile *item, const char *name) {
+    start_cleanup(parent, nullptr, item, name);
+}
+
+/* The drives Disk Cleanup can clean, in My Computer's order. */
+static GPtrArray *cleanable_drives(void) {
+    GPtrArray *drives = xd_computer_drives();
+    for (guint i = drives->len; i > 0; i--) {
+        const XdDrive *drive = g_ptr_array_index(drives, i - 1);
+        if (!xd_drive_can_cleanup(drive->root, drive->kind))
+            g_ptr_array_remove_index(drives, i - 1);
+    }
+    return drives;
+}
+
+typedef struct select_drive {
+    GApplication *app;
+    GPtrArray *drives;
+    GtkWidget *combo;
+} select_drive;
+
+static void on_select_drive_response(GtkDialog *dlg, gint response, gpointer data) {
+    select_drive *selection = data;
+    gint index = gtk_combo_box_get_active(GTK_COMBO_BOX(selection->combo));
+    if (response == GTK_RESPONSE_OK && index >= 0 && (guint)index < selection->drives->len) {
+        const XdDrive *drive = g_ptr_array_index(selection->drives, (guint)index);
+        start_cleanup(nullptr, selection->app, drive->root, drive->name);
+    }
+    gtk_widget_destroy(GTK_WIDGET(dlg));
+    g_ptr_array_unref(selection->drives);
+    g_application_release(selection->app);
+    g_free(selection);
+}
+
+void xd_disk_cleanup_run(GApplication *app, GFile *drive_root) {
+    GPtrArray *drives = cleanable_drives();
+    /* A drive named on the command line, or the only one (most Linux
+     * systems have one file system for everything): straight to it. */
+    for (guint i = 0; i < drives->len; i++) {
+        const XdDrive *drive = g_ptr_array_index(drives, i);
+        if (drives->len == 1 || (drive_root != nullptr && g_file_equal(drive->root, drive_root))) {
+            start_cleanup(nullptr, app, drive->root, drive->name);
+            g_ptr_array_unref(drives);
+            return;
+        }
+    }
+    /* XP's Select Drive: the drives in a list, the first chosen. */
+    select_drive *selection = g_new0(select_drive, 1);
+    selection->app = app;
+    selection->drives = drives;
+    g_application_hold(app);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        "Disk Cleanup : Drive Selection", nullptr, GTK_DIALOG_DESTROY_WITH_PARENT, "OK",
+        GTK_RESPONSE_OK, "E_xit", GTK_RESPONSE_CANCEL, nullptr);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_icon_name(GTK_WINDOW(dlg), "edit-clear");
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
+    GtkWidget *grid = gtk_grid_new();
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_grid_attach(GTK_GRID(grid), gtk_image_new_from_icon_name("edit-clear", GTK_ICON_SIZE_DND),
+                    0, 0, 1, 2);
+    GtkWidget *text = gtk_label_new("Select the drive you want to clean up.");
+    gtk_label_set_xalign(GTK_LABEL(text), 0);
+    gtk_grid_attach(GTK_GRID(grid), text, 1, 0, 1, 1);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Drives:");
+    selection->combo = gtk_combo_box_text_new();
+    for (guint i = 0; i < drives->len; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(selection->combo),
+                                       ((const XdDrive *)g_ptr_array_index(drives, i))->name);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(selection->combo), drives->len > 0 ? 0 : -1);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), selection->combo);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), selection->combo, TRUE, TRUE, 0);
+    gtk_grid_attach(GTK_GRID(grid), row, 1, 1, 1, 1);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), grid);
+    g_signal_connect(dlg, "response", G_CALLBACK(on_select_drive_response), selection);
+    gtk_widget_show_all(dlg);
 }
 
 /* ---- Tools: Check Disk ------------------------------------------------------------- */

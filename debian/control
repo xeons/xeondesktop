@@ -97,6 +97,7 @@ Recommends:
  gstreamer1.0-plugins-ugly,
  gstreamer1.0-libav,
  polkitd,
+ pkexec,
  breeze-icon-theme,
  xdg-desktop-portal-gtk,
  xdg-desktop-portal-wlr,

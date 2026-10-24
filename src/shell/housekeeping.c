@@ -71,7 +71,7 @@ static void purge_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer da
          root++) {
         XdCleanupPlaces *places =
             xd_cleanup_places_new(*root, (const char *const *)purge_job->roots,
-                                  g_get_user_data_dir(), nullptr, temps, uid);
+                                  g_get_user_data_dir(), nullptr, nullptr, temps, uid);
         GPtrArray *cats = xd_cleanup_scan_old(places, uid, now, purge_job->age, purge_job->trash,
                                               purge_job->temp, cancel);
         for (guint i = 0; i < cats->len; i++) {

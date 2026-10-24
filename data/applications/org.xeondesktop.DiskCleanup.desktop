@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Disk Cleanup
+Comment=Frees space on your disk by deleting files you don't need
+Exec=xd-files --disk-cleanup
+Icon=edit-clear
+Terminal=false
+Categories=System;GTK;
+Keywords=cleanmgr;clean up;free space;cache;package cache;journal;
+X-XeonDesktop-AppPath=cleanmgr;
+StartupWMClass=org.xeondesktop.Files

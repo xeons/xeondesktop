@@ -977,11 +977,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       mounting a volume and ejecting (no spare disk here).
 - [x] My Computer: drive Properties with XP's pie chart; groups in Details
       (List view can't group, as in XP). Renaming a drive (UDisks2
-      SetLabel), Disk Cleanup (the user's own files only), the Tools tab
+      SetLabel), Disk Cleanup (the user's own files, and Linux's: shader,
+      developer tools' and programs' caches, unused Flatpak runtimes; with
+      Clean up system files, the package cache, old journal files and crash
+      dumps through xd-cleanmgr-helper and pkexec; on its own from System
+      Tools or Run's cleanmgr; UI test disk_cleanup_linux with stand-in
+      tools), the Tools tab
       (Check Now through UDisks2, Defragment's "not needed", Backup with a
       backup program) and the Hardware tab; tested against dbusmock's
       UDisks2. Untested: a successful check or repair, real polkit
-      prompts, real disks.
+      prompts, real disks; Disk Cleanup's system files for real (pkexec's
+      password box, pacman -Sc, apt-get, dnf, journalctl), a system
+      installation's unused Flatpak runtimes through Flatpak's helper.
 - [x] Tabs (Windows 11's): Ctrl+T/W, Ctrl+Tab, Ctrl+1..9, middle click and
       "Open in new tab", per-tab history/view/selection, drag to reorder,
       and Folder Options' "Open folders in new tabs instead of new
