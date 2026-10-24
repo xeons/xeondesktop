@@ -67,6 +67,7 @@ checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
   'gst-plugins-good: screen recording (MP4, sound)'
+  'gst-plugins-bad: screen recording (h264parse)'
   'gst-plugins-ugly: screen recording (x264; or OpenH264 from gst-plugins-bad)'
   'gst-libav: screen recording with sound (AAC)'
   'breeze-icons: icons for the Start menu and file manager'

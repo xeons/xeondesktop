@@ -278,6 +278,8 @@ bool snip_recording_possible(xd_record_sound sound, GError **error) {
     const char *missing = nullptr;
     if (video_encoder() == nullptr)
         missing = "an H.264 encoder (gst-plugins-ugly's x264enc, or gst-plugins-bad's openh264enc)";
+    else if (!element_exists("h264parse"))
+        missing = "the H.264 parser (gst-plugins-bad's h264parse)";
     else if (!element_exists("mp4mux"))
         missing = "the MP4 writer (gst-plugins-good)";
     else if (sound != XD_RECORD_SILENT && !element_exists("pulsesrc"))
@@ -295,7 +297,10 @@ static bool start_pipeline(snip_recording *recording, int width, int height, GEr
     g_autofree char *description = xd_record_pipeline(
         video_encoder(), recording->sound != XD_RECORD_SILENT ? audio_encoder() : nullptr,
         recording->sound);
-    GstElement *pipeline = gst_parse_launch(description, error);
+    /* Without FATAL_ERRORS a missing element is only a warning, and the
+     * pipeline runs with a gap in it ("not-linked"). */
+    GstElement *pipeline =
+        gst_parse_launch_full(description, nullptr, GST_PARSE_FLAG_FATAL_ERRORS, error);
     if (pipeline == nullptr)
         return false;
     GstElement *file = gst_bin_get_by_name(GST_BIN(pipeline), "file");

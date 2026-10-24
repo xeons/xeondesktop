@@ -517,8 +517,8 @@ sound from the microphone and/or what the speakers play, chosen from
 Record's arrow) in Videos/Screen Recordings. A dashed red frame stands
 around the area while it records; the red dot in the notification area,
 or the shortcut again, stops it, and a notification offers to open the
-file. It needs GStreamer's gst-plugins-good, x264 (gst-plugins-ugly) or
-OpenH264, and for sound gst-libav or fdk-aac.
+file. It needs GStreamer's gst-plugins-good and gst-plugins-bad, x264
+(gst-plugins-ugly) or OpenH264, and for sound gst-libav or fdk-aac.
 
 ### Minefield
 
