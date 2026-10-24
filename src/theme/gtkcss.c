@@ -328,8 +328,9 @@ static void classic(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) 
         /* An editable combo's entry and button make one sunken field: no
          * bevel where they meet (the sides themselves go in common rules). */
         "combobox box.linked > entry.combo { box-shadow: inset 1px 1px %s, inset 0 -1px %s; }\n"
-        "combobox box.linked > button.combo, combobox box.linked > button.combo:hover,\n"
-        "combobox box.linked > button.combo:checked {\n"
+        "combobox box.linked > entry.combo + button.combo,\n"
+        "combobox box.linked > entry.combo + button.combo:hover,\n"
+        "combobox box.linked > entry.combo + button.combo:checked {\n"
         "  box-shadow: inset 0 1px %s, inset -1px -1px %s;\n}\n",
         face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, sh.s, hi.s, hi.s, dk.s, hi.s,
         face, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, sh.s, hi.s, hi.s, sh.s, hi.s, sh.s,
@@ -997,9 +998,11 @@ void xd_theme_gtk_css(const xd_theme *theme, xd_strbuf *out) {
     xd_strbuf_append(out, XD_STR("notebook, notebook.frame { border: none; box-shadow: none; }\n"));
     /* An editable combo box (a server, an address) is one field in
      * Windows, its arrow button inside the border; GTK draws the entry and
-     * the button each in a field's border, two boxes side by side. */
+     * the button each in a field's border, two boxes side by side. (A
+     * plain combo box's button is alone in its box.linked: untouched.) */
     xd_strbuf_append(out, XD_STR("combobox box.linked > entry.combo { border-right-width: 0; }\n"
-                                 "combobox box.linked > button.combo { border-left-width: 0; }\n"));
+                                 "combobox box.linked > entry.combo + button.combo {\n"
+                                 "  border-left-width: 0; }\n"));
     /* Disclosure triangles (expanders, "Details"). */
     xd_strbuf_append(out, XD_STR("expander > title > arrow {\n  min-width: 12px;\n"
                                  "  min-height: 12px;\n  margin-right: 4px;\n"
