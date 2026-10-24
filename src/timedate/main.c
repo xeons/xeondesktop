@@ -21,6 +21,7 @@
 #include "../settings/settings.h"
 #include "../gtkapp/gtkapp.h"
 #include "ntp.h"
+#include "zone.h"
 
 #define TIMEDATE "org.freedesktop.timedate1"
 #define TIMEDATE_PATH "/org/freedesktop/timedate1"
@@ -431,12 +432,12 @@ static gboolean draw_map(GtkWidget *widget, cairo_t *cairo, gpointer data) {
     cairo_set_source_rgb(cairo, 0.27, 0.45, 0.72); /* ocean */
     cairo_fill(cairo);
     const char *zone = gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->zones));
-    /* The band of the zone's current UTC offset (15 degrees an hour). */
+    /* The band of the zone's standard time (15 degrees an hour). */
     if (zone != nullptr) {
         GTimeZone *tz = g_time_zone_new_identifier(zone);
         if (tz != nullptr) {
             GDateTime *now = g_date_time_new_now(tz);
-            GTimeSpan offset = g_date_time_get_utc_offset(now);
+            GTimeSpan offset = xd_zone_standard_offset(tz, g_date_time_get_year(now));
             double hours = (double)offset / (double)G_TIME_SPAN_HOUR;
             double x0, x1, y;
             map_point(hours * 15 - 7.5, 0, mw, mh, &x0, &y);

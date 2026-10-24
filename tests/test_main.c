@@ -86,6 +86,7 @@
 #include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
+#include "../src/timedate/zone.h"
 #include "../src/shell/calendar.h"
 #include "../src/shell/notices.h"
 #include <wayland-client-protocol.h>
@@ -8308,6 +8309,26 @@ static void test_disk_cleanup(void) {
 }
 
 /* Date and Time's Internet Time tab. */
+static void test_timedate_zone(void) {
+    /* The map's band: standard time, summer time or not, either hemisphere. */
+    static const struct {
+        const char *zone;
+        double hours;
+    } zones[] = {
+        {"Europe/London", 0}, {"America/New_York", -5}, {"Australia/Sydney", 10},
+        {"Asia/Kolkata", 5.5}, {"UTC", 0},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(zones); i++) {
+        GTimeZone *tz = g_time_zone_new_identifier(zones[i].zone);
+        CHECK(tz != nullptr);
+        if (tz == nullptr)
+            continue;
+        GTimeSpan offset = xd_zone_standard_offset(tz, 2026);
+        CHECK(offset == (GTimeSpan)(zones[i].hours * (double)G_TIME_SPAN_HOUR));
+        g_time_zone_unref(tz);
+    }
+}
+
 static void test_timedate_ntp(void) {
     /* timesyncd's order (runtime, timesyncd.conf, network, fallback), each
      * server once. */
@@ -10482,6 +10503,7 @@ int main(void) {
     test_disk_cleanup();
     test_luks();
     test_timedate_ntp();
+    test_timedate_zone();
     test_privacy();
     test_keys_texts();
     test_keys_ssh();
