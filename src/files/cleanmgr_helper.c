@@ -5,9 +5,10 @@
  *
  *   xd-cleanmgr-helper clean packages|logs|crashes...
  *
- * Run as anyone else (the tests), XD_CLEANMGR_ROOT and XD_CLEANMGR_TOOLS
- * stand in for the system's paths and tools; as root they're ignored
- * (pkexec gives it a clean environment anyway).
+ * Run directly (the tests), XD_CLEANMGR_ROOT and XD_CLEANMGR_TOOLS stand
+ * in for the system's paths and tools, as root too: the UI tests run as
+ * root in CI, and must never clean the real system. Run by pkexec
+ * (PKEXEC_UID set) they're ignored; pkexec clears them anyway.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,13 +34,15 @@ int main(int argc, char **argv) {
         kinds[count++] = kind;
     }
     xd_sysclean_env env = {.root = "", .tools = nullptr, .now = g_get_real_time()};
-    if (getuid() == 0) {
-        umask(022);
-        setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
-    } else {
+    bool is_from_pkexec = getenv("PKEXEC_UID") != nullptr;
+    if (!is_from_pkexec) {
         const char *root = getenv("XD_CLEANMGR_ROOT");
         env.root = root != nullptr ? root : "";
         env.tools = getenv("XD_CLEANMGR_TOOLS");
+    }
+    if (getuid() == 0) {
+        umask(022);
+        setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
     }
     int status = 0;
     for (int i = 0; i < count; i++) {
