@@ -26,7 +26,7 @@ work=$(mktemp -d)
 cp packaging/arch/PKGBUILD "$work/"
 version=${XD_VERSION:-$(sed -n 's/^pkgver=//p' "$work/PKGBUILD")}
 sed -i "s/^pkgver=.*/pkgver=$version/" "$work/PKGBUILD"
-tar --exclude='./build*' --exclude='./dist' --exclude='./.git' \
+tar --exclude='./build*' --exclude='./dist' --exclude='./.git' --exclude='./.claude' \
     --transform "s|^\.|xeondesktop-$version|" -czf "$work/xeondesktop-$version.tar.gz" .
 
 # makepkg refuses to run as root.

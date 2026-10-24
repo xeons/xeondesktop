@@ -22,7 +22,8 @@ fi
 
 # Build in a copy, so the tree (and its build directories) stay as they are.
 work=$(mktemp -d)
-tar --exclude='./build*' --exclude='./dist' --exclude='./.git' -cf - . | tar -xf - -C "$work"
+tar --exclude='./build*' --exclude='./dist' --exclude='./.git' --exclude='./.claude' -cf - . |
+    tar -xf - -C "$work"
 cd "$work"
 
 if [ -n "${XD_VERSION:-}" ]; then
