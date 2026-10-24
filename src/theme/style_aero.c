@@ -256,19 +256,42 @@ typedef struct aero_glyph {
     int count;
 } aero_glyph;
 
+/* A 96 DPI length at a fractional scale, in whole pixels: rounded with
+ * halves down, and by length alone, so strokes the same width at 96 DPI
+ * stay the same width (rounding each edge's position gave a 2 px stroke
+ * 2 px here and 3 px there). */
+static int snap_px(double length) {
+    double snapped = floor(length + 0.25);
+    return snapped < 1 ? 1 : (int)snapped;
+}
+
+static bool fractional_scale(const xd_theme *theme) {
+    return fabs(theme->scale - round(theme->scale)) >= 0.01;
+}
+
 static void draw_aero_glyph(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                             const aero_glyph *glyph, uint32_t fill, uint32_t outline, double alpha,
                             int ox, int oy) {
     double k = theme->scale;
-    int width = (int)lround(glyph->w * k), height = (int)lround(glyph->h * k);
+    bool fractional = fractional_scale(theme);
+    int width = fractional ? snap_px(glyph->w * k) : (int)lround(glyph->w * k);
+    int height = fractional ? snap_px(glyph->h * k) : (int)lround(glyph->h * k);
     int x0 = rect.x + (rect.w - width) / 2, y0 = rect.y + (rect.h - height) / 2;
-    int dx = (int)lround(ox * k), dy = (int)lround(oy * k);
+    int dx = fractional ? snap_px(ox * k) : (int)lround(ox * k);
+    int dy = fractional ? snap_px(oy * k) : (int)lround(oy * k);
     cairo_surface_t *a8 = cairo_image_surface_create(CAIRO_FORMAT_A8, width, height);
     cairo_t *mask_cairo = cairo_create(a8);
     for (int i = 0; i < glyph->count; i++) {
         const aero_rect *part_rect = &glyph->r[i];
-        int ax = (int)lround(part_rect->x0 * k), ay = (int)lround(part_rect->y0 * k);
-        int bx = (int)lround((part_rect->x1 + 1) * k), by = (int)lround((part_rect->y1 + 1) * k);
+        int ax, ay, bx, by;
+        if (fractional) {
+            ax = snap_px(part_rect->x0 * k + 1) - 1, ay = snap_px(part_rect->y0 * k + 1) - 1;
+            bx = ax + snap_px((part_rect->x1 - part_rect->x0 + 1) * k);
+            by = ay + snap_px((part_rect->y1 - part_rect->y0 + 1) * k);
+        } else {
+            ax = (int)lround(part_rect->x0 * k), ay = (int)lround(part_rect->y0 * k);
+            bx = (int)lround((part_rect->x1 + 1) * k), by = (int)lround((part_rect->y1 + 1) * k);
+        }
         cairo_rectangle(mask_cairo, ax, ay, bx - ax, by - ay);
     }
     cairo_fill(mask_cairo);
@@ -325,6 +348,50 @@ static const aero_glyph caption_glyphs[5] = {
       {4, 7, 6, 7}, {4, 8, 5, 8}, {4, 10, 5, 11}},
      9},
 };
+
+/* A caption glyph centred in `rect`. At a fractional scale Close's X is
+ * drawn as two strokes, as its 96 DPI staircase (3 px arms, rows 3 to 10
+ * of a 13 x 14 box) can't be scaled by a fraction without going ragged;
+ * the others' rectangles scale evenly. */
+static void draw_caption_glyph(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                               int glyph_index, uint32_t fill, uint32_t outline, int ox) {
+    const aero_glyph *glyph = &caption_glyphs[glyph_index];
+    if (glyph_index != 0 || !fractional_scale(theme)) {
+        draw_aero_glyph(theme, cairo, rect, glyph, fill, outline, 1, ox, 1);
+        return;
+    }
+    double k = theme->scale;
+    double width = glyph->w * k, height = glyph->h * k;
+    double x0 = rect.x + round((rect.w - width) / 2), y0 = rect.y + round((rect.h - height) / 2);
+    /* The arms' centre lines, top to bottom, and their flat ends. */
+    double top = y0 + 3 * k, bottom = y0 + 11 * k;
+    double left = x0 + 3.5 * k, right = x0 + 9.5 * k;
+    double slope = (right - left) / (bottom - top);
+    /* Widths across the arms: 3 px and the outline's `ox` px, measured
+     * across a row at 96 DPI. */
+    double across = (bottom - top) / hypot(right - left, bottom - top);
+    double arm = 3 * k * across, edge = ox * k * across;
+    double end = snap_px(k); /* the outline above and below the ends */
+    cairo_save(cairo);
+    cairo_set_line_cap(cairo, CAIRO_LINE_CAP_BUTT);
+    for (int pass = 0; pass < 2; pass++) {
+        double reach = pass == 0 ? end : 0, spread = pass == 0 ? edge : 0;
+        double extend = (reach + k) * slope;
+        cairo_save(cairo);
+        cairo_rectangle(cairo, x0 - 2 * edge, top - reach, width + 4 * edge,
+                        bottom - top + 2 * reach);
+        cairo_clip(cairo);
+        cairo_move_to(cairo, left - extend, top - reach - k);
+        cairo_line_to(cairo, right + extend, bottom + reach + k);
+        cairo_move_to(cairo, right + extend, top - reach - k);
+        cairo_line_to(cairo, left - extend, bottom + reach + k);
+        set_rgb(cairo, pass == 0 ? outline : fill, 1);
+        cairo_set_line_width(cairo, arm + 2 * spread);
+        cairo_stroke(cairo);
+        cairo_restore(cairo);
+    }
+    cairo_restore(cairo);
+}
 
 static int caption_glyph_index(xd_frame_part part, bool maximized) {
     return part == XD_PART_CLOSE      ? 0
@@ -520,17 +587,15 @@ static void aero_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect r
                                   rightmost);
         /* DWM's glyphs are outlined 2 px at the sides, but Maximize's
          * box 1 px, which leaves it hollow. */
-        draw_aero_glyph(theme, cairo, rect, &caption_glyphs[glyph_index],
-                        aero_dwm_glyph[glyph_index][state_index][0],
-                        aero_dwm_glyph[glyph_index][state_index][1], 1, glyph_index == 1 ? 1 : 2,
-                        1);
+        draw_caption_glyph(theme, cairo, rect, glyph_index,
+                           aero_dwm_glyph[glyph_index][state_index][0],
+                           aero_dwm_glyph[glyph_index][state_index][1], glyph_index == 1 ? 1 : 2);
         return;
     }
     int k = (frame->active ? 0 : 4) + state_index;
     xd_shape_draw(theme, cairo, close ? &aero_basic_close[k] : &aero_basic_button[k], rect);
-    draw_aero_glyph(theme, cairo, rect, &caption_glyphs[glyph_index],
-                    aero_basic_glyph[glyph_index][k][0], aero_basic_glyph[glyph_index][k][1], 1, 1,
-                    1);
+    draw_caption_glyph(theme, cairo, rect, glyph_index, aero_basic_glyph[glyph_index][k][0],
+                       aero_basic_glyph[glyph_index][k][1], 1);
 }
 
 static void caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_frame_part part,
