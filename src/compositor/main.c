@@ -402,7 +402,8 @@ static void server_finish(xd_server *server) {
  * a change (`settings`; nullptr at startup), other programs' GTK 3
  * windows follow it too: they're told through GSettings, which only a
  * real session may touch (a nested one's are the host desktop's), and
- * only while ours is the GTK theme in use. */
+ * only while ours is the GTK theme in use. Whether the scheme is dark
+ * goes there too, for every program that asks the portal (Firefox). */
 static void install_gtk_theme(xd_server *server, const xd_settings *settings) {
     xd_strbuf err = {0};
     bool changed = false;
@@ -411,6 +412,8 @@ static void install_gtk_theme(xd_server *server, const xd_settings *settings) {
     else if (changed && settings != nullptr && server->session != nullptr &&
              settings->gtk_theme[0] == '\0')
         xd_gtk_theme_nudge(nullptr);
+    if (server->session != nullptr)
+        xd_gtk_theme_set_color_scheme(nullptr, xd_scheme_is_dark(&server->config.scheme));
     xd_strbuf_free(&err);
 }
 

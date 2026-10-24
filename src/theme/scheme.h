@@ -182,6 +182,11 @@ typedef struct xd_scheme {
  * scheme file so a file only needs to list what it changes. */
 void xd_scheme_init_default(xd_scheme *scheme);
 
+/* Whether the scheme's windows are dark (Luna's Dark, High Contrast
+ * Black): other programs are told to prefer a dark look, and Breeze's
+ * dark glyphs would vanish on them. */
+bool xd_scheme_is_dark(const xd_scheme *scheme);
+
 /* Loads a scheme file on top of the defaults. On failure *err describes
  * the problem and the scheme is left at defaults. */
 [[nodiscard]] bool xd_scheme_parse(xd_str text, xd_scheme *scheme, xd_strbuf *err);

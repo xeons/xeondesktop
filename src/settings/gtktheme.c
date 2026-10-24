@@ -254,6 +254,29 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
     return ok;
 }
 
+bool xd_gtk_theme_set_color_scheme(GSettingsBackend *backend, bool dark) {
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = src != nullptr ? g_settings_schema_source_lookup(
+                                                   src, "org.gnome.desktop.interface", TRUE)
+                                             : nullptr;
+    if (schema == nullptr)
+        return false;
+    bool done = false;
+    if (g_settings_schema_has_key(schema, "color-scheme")) {
+        GSettings *gsettings = g_settings_new_full(schema, backend, nullptr);
+        const char *want = dark ? "prefer-dark" : "default";
+        char *now = g_settings_get_string(gsettings, "color-scheme");
+        if (strcmp(now, want) != 0) {
+            done = g_settings_set_string(gsettings, "color-scheme", want);
+            g_settings_sync();
+        }
+        g_free(now);
+        g_object_unref(gsettings);
+    }
+    g_settings_schema_unref(schema);
+    return done;
+}
+
 bool xd_gtk_theme_nudge(GSettingsBackend *backend) {
     GSettingsSchemaSource *src = g_settings_schema_source_get_default();
     GSettingsSchema *schema = src != nullptr ? g_settings_schema_source_lookup(

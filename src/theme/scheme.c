@@ -52,6 +52,11 @@ static void set_font(xd_font_spec *font, const char *family, double pt, bool bol
     font->italic = false;
 }
 
+bool xd_scheme_is_dark(const xd_scheme *scheme) {
+    xd_rgb window = scheme->colors[XD_COLOR_WINDOW];
+    return 0.299 * window.r + 0.587 * window.g + 0.114 * window.b < 96;
+}
+
 void xd_scheme_init_default(xd_scheme *scheme) {
     *scheme = (xd_scheme){0};
     snprintf(scheme->name, sizeof(scheme->name), "%s", "Windows Standard");

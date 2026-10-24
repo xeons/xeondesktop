@@ -229,13 +229,10 @@ static bool icon_theme_installed(const char *name) {
     return false;
 }
 
-/* Whether the colour scheme's windows are dark (Luna's Dark, High
- * Contrast Black): Breeze's dark glyphs would vanish on them. */
 static bool scheme_dark(const xd_settings *settings) {
     xd_scheme scheme;
     xd_settings_scheme(settings, &scheme);
-    xd_rgb window = scheme.colors[XD_COLOR_WINDOW];
-    return 0.299 * window.r + 0.587 * window.g + 0.114 * window.b < 96;
+    return xd_scheme_is_dark(&scheme);
 }
 
 const char *xd_settings_icon_theme(const xd_settings *settings) {

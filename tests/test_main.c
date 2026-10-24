@@ -357,6 +357,20 @@ static void test_shipped_schemes(void) {
      * Royale's Energy Blue and our Dark. */
     CHECK(count == 27);
 
+    /* Programs are asked for their dark look with dark windows only. */
+    static const struct {
+        const char *stem;
+        bool dark;
+    } darkness[] = {
+        {"luna-dark", true}, {"high-contrast-black", true}, {"luna-blue", false},
+        {"windows-standard", false}, {"high-contrast-white", false},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(darkness); i++) {
+        xd_scheme scheme;
+        CHECK(load_shipped_scheme(darkness[i].stem, &scheme));
+        CHECK(xd_scheme_is_dark(&scheme) == darkness[i].dark);
+    }
+
     /* Spot checks against the reference (Windows XP's registry values). */
     static const struct {
         const char *stem, *name;
@@ -2439,6 +2453,21 @@ static void test_theme_settings(void) {
         CHECK(strcmp(value, XD_GTK_THEME_NAME) == 0);
         g_free(value);
         g_object_unref(gsettings);
+        /* A dark scheme asks programs for their dark look (the portal's
+         * color-scheme), a light one for their default; once each. */
+        if (g_settings_schema_has_key(schema, "color-scheme")) {
+            gsettings = g_settings_new_full(schema, fresh, nullptr);
+            CHECK(xd_gtk_theme_set_color_scheme(fresh, true));
+            value = g_settings_get_string(gsettings, "color-scheme");
+            CHECK(strcmp(value, "prefer-dark") == 0);
+            g_free(value);
+            CHECK(!xd_gtk_theme_set_color_scheme(fresh, true));
+            CHECK(xd_gtk_theme_set_color_scheme(fresh, false));
+            value = g_settings_get_string(gsettings, "color-scheme");
+            CHECK(strcmp(value, "default") == 0);
+            g_free(value);
+            g_object_unref(gsettings);
+        }
         g_object_unref(fresh);
         g_settings_schema_unref(schema);
     }

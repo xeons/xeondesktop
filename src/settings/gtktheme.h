@@ -38,4 +38,12 @@ char *xd_gtk_theme_qt_palette_path(void);
  * (nullptr = the default, dconf). */
 bool xd_gtk_theme_nudge(GSettingsBackend *backend);
 
+/* Tells other programs whether the colour scheme is dark: GNOME's
+ * org.gnome.desktop.interface color-scheme ("prefer-dark" or "default"),
+ * which xdg-desktop-portal-gtk passes on as the portal's
+ * org.freedesktop.appearance color-scheme (Firefox, recent GTK and Qt
+ * programs follow it). False if nothing was written (no schema, or it
+ * was so already). `backend`: as above. */
+bool xd_gtk_theme_set_color_scheme(GSettingsBackend *backend, bool dark);
+
 #endif
