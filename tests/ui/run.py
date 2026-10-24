@@ -254,7 +254,7 @@ def run_scenario(name, build, keep, keep_all=False):
         k: v
         for k, v in os.environ.items()
         if not k.startswith(session_prefixes)
-        and k not in ("XDG_CURRENT_DESKTOP", "XMODIFIERS", "GDK_BACKEND")
+        and k not in ("XDG_CURRENT_DESKTOP", "XMODIFIERS", "GDK_BACKEND", "XD_GLASS", "XD_NO_FX")
         and k
         not in (
             "WAYLAND_DISPLAY",
@@ -285,7 +285,9 @@ def run_scenario(name, build, keep, keep_all=False):
             # when a minute ends mid-scenario.
             "XD_CLOCK_FIXED": "12:00 PM",
             "WLR_BACKENDS": "headless",
-            "WLR_RENDERER": "pixman",
+            # XD_UI_RENDERER=gles2 runs a scenario on the machine's GPU
+            # (xd-compositor-fx, Aero's glass); CI has none.
+            "WLR_RENDERER": os.environ.get("XD_UI_RENDERER", "pixman"),
             "WLR_HEADLESS_OUTPUTS": str(len(outputs)),
             "PATH": build + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
             "LANG": "C.UTF-8",
@@ -718,6 +720,42 @@ def aero_snap(s):
     s.check(shot.differs(empty, right) > 0.9, "Win+Right: the window covers the right half")
     s.check(shot.differs(empty, left) < 0.02, "Win+Right: the left half shows the desktop")
     s.check("maximized" not in s.window(title="Control Panel")["states"], "snapped, not maximized")
+
+
+def glass_setup(s):
+    # What xd-compositor-fx sets on a GPU: glass frames, unblurred here.
+    os.environ["XD_GLASS"] = "1"
+
+
+def red_share(shot, rect):
+    """The share (0..1) of pixels in rect that are clearly red."""
+    x0, y0, w, h = rect
+    red = 0
+    for y in range(y0, y0 + h):
+        for x in range(x0, x0 + w):
+            r, g, b = shot.pixel(x, y)
+            red += r > g + 20 and r > b + 20
+    return red / (w * h)
+
+
+@scenario(AERO_INI, setup=glass_setup)
+def aero_glass_caption_buttons(s):
+    """On glass, a window's Close button is red from top to bottom (its
+    measurements once came from wrongly un-premultiplied images, which
+    turned its light rows teal), and red when hot."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "super+Right")  # the caption buttons at the screen's top right
+    shot = s.settle("snapped")
+    # Close's face, rows 3 to 17, either side of its glyph.
+    sides = ((WIDTH - 49, 3, 8, 15), (WIDTH - 19, 3, 8, 15))
+    for name, rect in zip(("left", "right"), sides):
+        share = red_share(shot, rect)
+        s.check(share > 0.9, f"Close is red down its {name} side ({share:.2f})")
+    s.inject("move", WIDTH - 30, 10)
+    hot = s.settle("close-hot")
+    share = min(red_share(hot, rect) for rect in sides)
+    s.check(share > 0.9, f"a hot Close is red ({share:.2f})")
 
 
 def taskbar_top(shot):

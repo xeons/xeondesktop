@@ -244,7 +244,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       the blur buffers on VirtualBox 3D (headless). The Windows 7 Start
       menu and taskbar are blurred too (checked headless on vmwgfx's GLES).
       Window Color and Appearance: 16 swatches, transparency, intensity,
-      mixer. **Untested: how the blur looks on a real GPU.**
+      mixer. On a real GPU (Intel Iris Xe, headless with
+      XD_UI_RENDERER=gles2) the glass caption buttons came out wrong: their
+      measurements were taken before xd-theme-import stopped
+      un-premultiplying DWM's images (Close's light rows teal); remeasured,
+      with UI test aero_glass_caption_buttons. **Untested: how the blur
+      looks in a live session on a real GPU; NVIDIA's own driver.**
 - [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
       AnimateWindows, on by default): a bar in the active caption colour
       flies from the title bar to the taskbar button and back (the shell

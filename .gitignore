@@ -7,3 +7,4 @@ subprojects/*/
 subprojects/packagecache/
 subprojects/.wraplock
 __pycache__/
+/.claude/dev/
