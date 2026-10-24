@@ -6232,9 +6232,15 @@ def privacy_settings(s):
     s.wait(cleared, "the recent documents list to clear")
     s.log("ok: Clear List emptied recently-used.xbel")
 
-    # Location: turn it on, deny Maps.
-    s.inject("key", "ctrl+Tab", "sleep", 300)
-    s.settle("location")
+    # Location: turn it on, deny Maps. A loaded CI runner has dropped the
+    # Ctrl+Tab; send it again until the page has changed.
+    general = s.settle("general")
+    for _ in range(3):
+        s.inject("key", "ctrl+Tab", "sleep", 300)
+        if s.settle("location").differs(general, (0, 0, WIDTH, HEIGHT - 40)) > 0.01:
+            break
+    else:
+        raise Failure("Ctrl+Tab didn't open the Location tab")
     s.inject("key", "alt+u", "sleep", 200, "key", "alt+k", "sleep", 200)
     s.inject("key", "space", "sleep", 200, "key", "alt+d", "sleep", 500)
     s.wait(lambda: lookup("location", "location").get("org.example.Maps") == ["NONE", "1800000000"],
