@@ -703,6 +703,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       xd-theme-import converting XP, Vista and 7 .msstyles and .theme
       files (python-pefile). data/theme/uxtheme.ini: uxtheme's documented
       names. Tried on Luna, Royale, the five WE styles, Vista's and 7's Aero.
+      Fails on a Manjaro laptop (2026-10-23) with luna.msstyles beside its
+      Shell folder: GdkPixbuf there (glycin loaders) can't read a BMP in
+      shellstyle.dll ("Unsupported image format"); the .msstyles alone
+      imports.
 - [x] The renderer (src/theme/pkg.c): lookups with uxtheme's fallbacks,
       DrawThemeBackground's image strips, 9-grid, TrueSize, ImageFileN by
       DPI or size, image glyphs, BorderFill, atlas rectangles; the
@@ -807,7 +811,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       buttons, 7's controls. Left: XP's caption buttons' diagonal shading
       and 7's glass glow (two-dimensional, not in our measured shapes),
       Luna's Large and Extra Large Fonts sizes, Whistler and Classic at
-      high DPI.
+      high DPI. Luna's corner radii are fitted to the real corners'
+      coverage (transparency, or for XP's opaque tabs their colour): tabs,
+      caption buttons, scroll buttons and group boxes were square or too
+      sharp. Not yet remeasured: Energy Blue's (needs royale.msstyles),
+      Aero's (its glass buttons are pieces of one strip, which the fit
+      misreads; kept on the old rule). Side lines that two colours can't
+      follow get gradient stops (7's glass split), Aero only so far:
+      luna.c's recolouring for Dark doesn't take them.
 - [x] Tests: unit tests of the loader and renderer with a package made in
       the test (our own images), and a UI scenario (theme_package) drawing
       frames and controls from one.

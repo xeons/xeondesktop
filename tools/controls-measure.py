@@ -24,11 +24,13 @@ Also measured: the colours of check boxes, radio buttons and glyphs.
 Colours are premultiplied ARGB. Glyphs are drawn by luna.c and
 style_aero.c. Needs ImageMagick.
 """
+import math
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
 MAX_STOPS = 6  # a gradient's stops at most
+MAX_RADIUS = 8  # a corner's radius at most
 SIDE_TOLERANCE = 16  # how far a side line's gradient may miss before it gets stops
 
 # What each style measures: (C name, class, part, lines, states). Lines
@@ -174,15 +176,63 @@ def argb(p):
     return f"0x{p[0]:02X}{p[1]:02X}{p[2]:02X}{p[3]:02X}u"
 
 
-def corner_radius(pm, lines):
-    """The outline's radius: where the diagonal from the corner reaches a
-    mostly opaque pixel, k px in, an arc of radius about 2k does."""
+def diagonal_radius(pm, lines):
+    """Aero's: where the diagonal from the corner reaches a mostly opaque
+    pixel, k px in, an arc of radius about 2k does. (Windows 7's caption
+    buttons are pieces of one strip, whose corners the fit below misreads.)"""
     if lines[0] == 0 or lines[1] == 0:
         return 0
     k = 0
     while k < min(len(pm), len(pm[0])) // 2 and pm[k][k][0] < 128:
         k += 1
     return 2 * k
+
+
+def corner_cover(radius, x, y):
+    """How much of pixel (x, y) a corner of the radius covers, as luna.c
+    draws it."""
+    if x >= radius or y >= radius:
+        return 1.0
+    d = math.hypot(x + 0.5 - radius, y + 0.5 - radius)
+    return min(max(radius - d + 0.5, 0.0), 1.0)
+
+
+def corner_radius(pm, lines):
+    """The outline's radius: the one whose corner best matches how much of
+    each pixel along the top-left corner's first row and column the
+    outline covers. Read from their transparency, or in an opaque image
+    (XP's tabs, their corners painted in the colour behind) from how far
+    each has faded from the outline's colour towards the corner pixel's."""
+    if lines[0] == 0 or lines[1] == 0:
+        return 0
+    n = min(MAX_RADIUS, len(pm) // 2, len(pm[0]) // 2)
+    if n < 2:
+        return 0
+    # Clear or faint rings round the outside (a shadow, Windows 7's clear
+    # ring): the outline starts at the first ring at least half as opaque
+    # as the one inside it, its corner `inset` in.
+    inset = 0
+    while inset < n - 1 and 2 * pm[inset][n][0] < pm[inset + 1][n][0]:
+        inset += 1
+    n -= inset
+    edge = [((x, 0), pm[inset][inset + n]) for x in range(n)] + \
+        [((0, y), pm[inset + n][inset]) for y in range(1, n)]
+    corner = pm[inset][inset]
+
+    def coverage(px, line):
+        if line[0] - corner[0] >= 64:  # transparent corners
+            return min(max(px[0] / line[0], 0.0), 1.0)
+        ch = max(range(1, 4), key=lambda c: abs(corner[c] - line[c]))
+        if abs(corner[ch] - line[ch]) < 24:
+            return 1.0  # the corner is the outline's colour: square
+        return min(max((corner[ch] - px[ch]) / (corner[ch] - line[ch]), 0.0), 1.0)
+
+    seen = [((x, y), coverage(pm[inset + y][inset + x], line)) for (x, y), line in edge]
+    if all(c >= 0.99 for _, c in seen):
+        return inset * 2 if inset else 0
+    fit = min(range(MAX_RADIUS + 1),
+              key=lambda r: sum((corner_cover(r, x, y) - c) ** 2 for (x, y), c in seen))
+    return fit + inset
 
 
 def shape(name, g, margins, lines, luna):
@@ -252,7 +302,8 @@ def shape(name, g, margins, lines, luna):
             k += 1
             cells.append(f"{{{argb(a)}, {argb(b)}}}")
         lines_c.append("{" + ", ".join(cells) + "}" if cells else "{}")
-    body = [f"    .w = {w}, .h = {h}, .radius = {corner_radius(pm, [nl, nt])},",
+    radius = (corner_radius if luna else diagonal_radius)(pm, [nl, nt])
+    body = [f"    .w = {w}, .h = {h}, .radius = {radius},",
             f"    .lines = {{{nl}, {nt}, {nl}, {nt}}},",
             "    .edge = {" + ", ".join(lines_c) + "},",
             f"    .nv = {len(v)}, .v = {stops(v, len(col))},",

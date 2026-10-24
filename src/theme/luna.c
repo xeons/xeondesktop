@@ -449,17 +449,23 @@ static uint32_t dark_control_rgb(uint32_t rgb) {
     return from_ycc(y, cb, cr);
 }
 
-static uint32_t dark_chrome_rgb(uint32_t rgb, bool active) {
-    tint tn = dark_tint(active);
+/* Dark's Minimize and Maximize: lifted above the frame's charcoal and
+ * keeping more of Blue's relief, so they stand out from the caption as
+ * Blue's lighter blue ones do (in the frame's tint they were nearly as
+ * dark as it). */
+static tint dark_button_tint(bool active) {
+    return active ? (tint){.on = true, .y_from = 0, .y_to = 34, .k = 0.46, .a = 0.22, .b = 0}
+                  : (tint){.on = true, .y_from = 0, .y_to = 40, .k = 0.32, .a = 0.10, .b = 0};
+}
+
+static uint32_t dark_button_active_rgb(uint32_t rgb) {
+    tint tn = dark_button_tint(true);
     return tinted(&tn, rgb & 0xFFFFFF);
 }
 
-static uint32_t dark_active_rgb(uint32_t rgb) {
-    return dark_chrome_rgb(rgb, true);
-}
-
-static uint32_t dark_inactive_rgb(uint32_t rgb) {
-    return dark_chrome_rgb(rgb, false);
+static uint32_t dark_button_inactive_rgb(uint32_t rgb) {
+    tint tn = dark_button_tint(false);
+    return tinted(&tn, rgb & 0xFFFFFF);
 }
 
 /* A premultiplied colour through `recolor`, its alpha kept. */
@@ -519,8 +525,8 @@ static uint32_t *recolor_list(const uint32_t *colors, size_t count) {
     recolor_shapes(luna_blue_##name, XD_ARRAY_LEN(luna_blue_##name), recolor)
 
 /* Blue's controls recoloured, made the first time Dark draws one (and
- * kept: they're small). The caption buttons are the frame's, in its
- * charcoal; Close keeps XP's red. */
+ * kept: they're small). The caption buttons are the frame's charcoal,
+ * lighter; Close keeps XP's red. */
 static const luna_controls *dark_controls(void) {
     static luna_controls set;
     static bool made;
@@ -537,8 +543,8 @@ static const luna_controls *dark_controls(void) {
     set.tabpane = RECOLOR_SHAPES(tabpane, dark_control_rgb);
     set.groupbox = RECOLOR_SHAPES(groupbox, dark_control_rgb);
     /* States 0-3 are an active window's, 4-7 an inactive one's. */
-    xd_shape *caption = RECOLOR_SHAPES(captionbutton, dark_active_rgb);
-    xd_shape *inactive = RECOLOR_SHAPES(captionbutton, dark_inactive_rgb);
+    xd_shape *caption = RECOLOR_SHAPES(captionbutton, dark_button_active_rgb);
+    xd_shape *inactive = RECOLOR_SHAPES(captionbutton, dark_button_inactive_rgb);
     for (size_t i = 4; i < XD_ARRAY_LEN(luna_blue_captionbutton); i++)
         caption[i] = inactive[i];
     xd_free(inactive);
@@ -556,15 +562,18 @@ static const luna_controls *dark_controls(void) {
         for (int shade = 0; shade < 2; shade++)
             gripper[i][shade] = dark_control_rgb(luna_blue_gripper[i][shade]);
     set.gripper = (const uint32_t(*)[2])gripper;
-    /* Caption glyphs: white on the frame's buttons; an inactive window's
-     * pale ones in its charcoal. Close's (glyph 0) are kept. */
+    /* Caption glyphs: an active window's white, as Blue's; an inactive
+     * window's pale ones in the buttons' charcoal. Close's (glyph 0) are
+     * kept. */
     typedef uint32_t glyph_states[8][3];
     glyph_states *glyphs = XD_NEW_ARRAY(glyph_states, XD_ARRAY_LEN(luna_blue_capglyph));
     for (size_t glyph = 0; glyph < XD_ARRAY_LEN(luna_blue_capglyph); glyph++)
         for (int state = 0; state < 8; state++)
             for (int ink = 0; ink < 3; ink++) {
                 uint32_t rgb = luna_blue_capglyph[glyph][state][ink];
-                glyphs[glyph][state][ink] = glyph == 0 ? rgb : dark_chrome_rgb(rgb, state < 4);
+                glyphs[glyph][state][ink] = glyph == 0 || state < 4
+                                                ? rgb
+                                                : dark_button_inactive_rgb(rgb);
             }
     set.capglyph = (const uint32_t(*)[8][3])glyphs;
     xd_stop *body = XD_NEW_ARRAY(xd_stop, XD_ARRAY_LEN(luna_blue_tabbody));

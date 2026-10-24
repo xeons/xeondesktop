@@ -355,7 +355,8 @@ static void flat_selected_tab(xd_strbuf *buffer, xd_rgba edge, xd_rgba fill, int
 }
 
 /* Luna's selected tab: as above, with XP's orange band (two light rows and
- * a darker one) across the top. */
+ * a darker one) across the top, and rounded at the top like the others
+ * (the shadows that widen it follow the rounding). */
 static void luna_selected_tab(const xd_theme *theme, xd_strbuf *buffer, xd_rgba border,
                               xd_rgba hot) {
     hexbuf border_hex = hex(border);
@@ -364,7 +365,7 @@ static void luna_selected_tab(const xd_theme *theme, xd_strbuf *buffer, xd_rgba 
                       "notebook > header > tabs > tab:checked {\n"
                       "  margin: 2px 0 -1px 0; padding: 0 8px 5px 8px;\n"
                       "  border: 1px solid %s; border-top-color: %s;\n"
-                      "  border-bottom: none; border-radius: 0;\n"
+                      "  border-bottom: none; border-radius: 3px 3px 0 0;\n"
                       "  background-image: linear-gradient(%s, %s);\n"
                       "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 %s, 2px 0 %s,\n"
                       "    -2px 1px %s, 2px 1px %s, -1px 1px %s, 1px 1px %s;\n}\n",

@@ -13,21 +13,21 @@
 /* Button PushButton (images/blue/button.png, states 1 to 5). */
 static const xd_shape luna_blue_pushbutton[5] = {
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFDFDFCu, 0xFFECEBE6u}, {0xFFFDFDFCu, 0xFFEBEBE5u}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFEFEFEu, 0xFFFEFEFEu}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFF6F4F2u, 0xFFE0DDD4u}, {0xFFFBFBFAu, 0xFFE4E2DAu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFD6D0C5u, 0xFFD5CFC3u}, {0xFFE0DED4u, 0xFFDFDCD2u}}},
         .nv = 4, .v = {{0, 0xFFFCFCFBu}, {91, 0xFFF5F5F1u}, {237, 0xFFF0F0EAu}, {255, 0xFFECEBE5u}},
         .nh = 2, .hs = {{0, 0xFFF4F4F0u}, {255, 0xFFF3F3EFu}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFEDF9Au, 0xFFF9B435u}, {0xFFFCD279u, 0xFFF8B535u}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFF0CFu, 0xFFFFF0CFu}, {0xFFFDD889u, 0xFFFDD889u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFDE09Bu, 0xFFF8B435u}, {0xFFFCD279u, 0xFFF8B535u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFE59700u, 0xFFE59700u}, {0xFFF8B330u, 0xFFF8B230u}}},
         .nv = 4, .v = {{0, 0xFFFCFCFBu}, {91, 0xFFF5F5F1u}, {237, 0xFFF0F0EAu}, {255, 0xFFECEBE5u}},
         .nh = 2, .hs = {{0, 0xFFF4F4F0u}, {255, 0xFFF3F3EFu}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFD8D4CBu, 0xFFDAD8CFu}, {0xFFDDDAD1u, 0xFFDFDED6u}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFD0CBBFu, 0xFFD1CCC1u}, {0xFFD9D4CBu, 0xFFDBD7CEu}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFE5E4DDu, 0xFFE6E5DFu}, {0xFFE4E3DCu, 0xFFE6E5DFu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFF0F0ECu, 0xFFF2F2EFu}, {0xFFEAE9E3u, 0xFFECEBE6u}}},
         .nv = 5, .v = {{0, 0xFFE5E3DCu}, {18, 0xFFE6E6E0u}, {146, 0xFFE2E1D9u}, {237, 0xFFE0E0D7u}, {255, 0xFFE2E2DAu}},
@@ -41,7 +41,7 @@ static const xd_shape luna_blue_pushbutton[5] = {
         .nh = 2, .hs = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFBAD3F5u, 0xFF89ADE4u}, {0xFFBAD3F6u, 0xFF89ADE4u}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFCEE7FFu, 0xFFCEE7FFu}, {0xFFBCD4F6u, 0xFFBCD4F6u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFBAD3F6u, 0xFF89ADE4u}, {0xFFBAD2F5u, 0xFF89ADE4u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFF6982EEu, 0xFF6982EEu}, {0xFF89ADE4u, 0xFF89ADE4u}}},
         .nv = 4, .v = {{0, 0xFFFCFCFBu}, {91, 0xFFF5F5F1u}, {237, 0xFFF0F0EAu}, {255, 0xFFECEBE5u}},
@@ -82,56 +82,56 @@ static const xd_shape luna_blue_dropdown[4] = {
 /* ScrollBar ArrowBtn (images/blue/scrollarrows.png, states 1 to 8). */
 static const xd_shape luna_blue_scrollarrow[8] = {
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCAD8F9u, 0xFFAAC0F3u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFD0DFFCu, 0xFFAFC5F4u}, {0xFFE1EAFEu, 0xFFBCCEFAu}}, {{0xFFBDCBDAu, 0xFFA0B5D3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBACCF4u, 0xFFB0C5F2u}}, {{0xFF94B1D9u, 0xFF82A4D6u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7C6F1u, 0xFFB0C4F2u}}},
         .nv = 4, .v = {{0, 0xFFCAD8FCu}, {76, 0xFFC1D3FCu}, {204, 0xFFBBD2FCu}, {255, 0xFFB6CCFAu}},
         .nh = 4, .hs = {{0, 0xFFC7D7FCu}, {128, 0xFFC2D4FBu}, {153, 0xFFBAD1FCu}, {255, 0xFFB5CCFAu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFABBEE9u, 0xFF87A0DEu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB4C7EBu, 0xFF8AA6E1u}, {0xFFFDFFFFu, 0xFFCDE2FCu}}, {{0xFFB6C8DAu, 0xFF92ACD0u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF98AEE1u, 0xFF8DA7DDu}}, {{0xFF82A7D9u, 0xFF6E96D4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF93A7DFu, 0xFF8BA6DFu}}},
         .nv = 4, .v = {{0, 0xFFDFF0FDu}, {76, 0xFFD3E9FDu}, {204, 0xFFCBE8FDu}, {255, 0xFFC4E0FCu}},
         .nh = 5, .hs = {{0, 0xFFDCEEFDu}, {102, 0xFFD6EBFDu}, {128, 0xFFD4EBFDu}, {178, 0xFFC8E5FCu}, {255, 0xFFC3E0FCu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF98A1DDu, 0xFF7280D8u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFA2ACDCu, 0xFF7786D9u}, {0xFF6E8EF1u, 0xFF8096F1u}}, {{0xFFBDCBDAu, 0xFFA0B5D3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBACCF4u, 0xFFB0C5F2u}}, {{0xFF94B1D9u, 0xFF82A4D6u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7C6F1u, 0xFFB0C4F2u}}},
         .nv = 6, .v = {{0, 0xFF85A3F0u}, {51, 0xFF8FAAF0u}, {153, 0xFF9BAEF1u}, {178, 0xFF9AAEF2u}, {204, 0xFF9CAFEEu}, {255, 0xFFACBEEEu}},
         .nh = 3, .hs = {{0, 0xFF849DF1u}, {230, 0xFFA7B9EFu}, {255, 0xFFA8BAEEu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
         .nh = 3, .hs = {{0, 0xFFEFEFE9u}, {128, 0xFFEEEEE7u}, {255, 0xFFEAEAE1u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCAD8F9u, 0xFFAAC0F3u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFD0DFFCu, 0xFFAFC5F4u}, {0xFFE1EAFEu, 0xFFBCCEFAu}}, {{0xFFBDCBDAu, 0xFFA0B5D3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBACCF4u, 0xFFB0C5F2u}}, {{0xFF94B1D9u, 0xFF82A4D6u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7C6F1u, 0xFFB0C4F2u}}},
         .nv = 4, .v = {{0, 0xFFCAD8FCu}, {76, 0xFFC1D3FCu}, {204, 0xFFBBD2FCu}, {255, 0xFFB6CCFAu}},
         .nh = 4, .hs = {{0, 0xFFC7D7FCu}, {128, 0xFFC2D4FBu}, {153, 0xFFBAD1FCu}, {255, 0xFFB5CCFAu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFABBEE9u, 0xFF87A0DEu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB4C7EBu, 0xFF8AA6E1u}, {0xFFFDFFFFu, 0xFFCDE2FCu}}, {{0xFFB6C8DAu, 0xFF92ACD0u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF98AEE1u, 0xFF8DA7DDu}}, {{0xFF82A7D9u, 0xFF6E96D4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF93A7DFu, 0xFF8BA6DFu}}},
         .nv = 4, .v = {{0, 0xFFDFF0FDu}, {76, 0xFFD3E9FDu}, {204, 0xFFCBE8FDu}, {255, 0xFFC4E0FCu}},
         .nh = 5, .hs = {{0, 0xFFDCEEFDu}, {102, 0xFFD6EBFDu}, {128, 0xFFD4EBFDu}, {178, 0xFFC8E5FCu}, {255, 0xFFC3E0FCu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF98A1DDu, 0xFF7280D8u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFA2ACDCu, 0xFF7786D9u}, {0xFF6E8EF1u, 0xFF8096F1u}}, {{0xFFBDCBDAu, 0xFFA0B5D3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBACCF4u, 0xFFB0C5F2u}}, {{0xFF94B1D9u, 0xFF82A4D6u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7C6F1u, 0xFFB0C4F2u}}},
         .nv = 6, .v = {{0, 0xFF85A3F0u}, {51, 0xFF8FAAF0u}, {153, 0xFF9BAEF1u}, {178, 0xFF9AAEF2u}, {204, 0xFF9CAFEEu}, {255, 0xFFACBEEEu}},
         .nh = 3, .hs = {{0, 0xFF849DF1u}, {230, 0xFFA7B9EFu}, {255, 0xFFA8BAEEu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
@@ -141,28 +141,28 @@ static const xd_shape luna_blue_scrollarrow[8] = {
 /* ScrollBar ThumbBtnVert (images/blue/scrollthumbvertical.png, states 1 to 4). */
 static const xd_shape luna_blue_scrollthumb[4] = {
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7CAF5u, 0xFFB8CBF6u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFD0DFFCu, 0xFFAFC5F4u}, {0xFFE1EAFEu, 0xFFBCCEFAu}}, {{0xFF9FB5D2u, 0xFF9FB5D2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB9CBF3u, 0xFFBACBF4u}}, {{0xFF83A4D3u, 0xFF85A4D5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB7C6F1u, 0xFFB0C4F2u}}},
         .nv = 2, .v = {{0, 0xFFC1D3FCu}, {255, 0xFFC2D3FCu}},
         .nh = 5, .hs = {{0, 0xFFC7D6FCu}, {64, 0xFFC8D7FBu}, {159, 0xFFC2D4FCu}, {223, 0xFFB5CEFCu}, {255, 0xFFB7CDFBu}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFE2EEFFu, 0xFFE2EEFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFACCEFFu, 0xFFACCEFFu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCBDFFFu, 0xFFA1C6FFu}, {0xFFEAF3FFu, 0xFFD0E3FFu}}, {{0xFF9FB5D2u, 0xFF9FB5D2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFACCEFFu, 0xFFACCEFFu}}, {{0xFF83A4D3u, 0xFF85A4D5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFA6C9FFu, 0xFFA1C6FFu}}},
         .nv = 2, .v = {{0, 0xFFD4E6FFu}, {255, 0xFFD5E6FFu}},
         .nh = 4, .hs = {{0, 0xFFD8E8FFu}, {159, 0xFFD5E7FFu}, {223, 0xFFCCE1FFu}, {255, 0xFFCCE1FFu}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8299D2u, 0xFF849CD5u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF859BCCu, 0xFF7B92CBu}, {0xFF99ABD6u, 0xFF879ED8u}}, {{0xFFA7B9D3u, 0xFF9FB5D2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8FA8E2u, 0xFF98B0EEu}}, {{0xFF83A4D3u, 0xFF85A4D5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8DA2E0u, 0xFF8AA6EBu}}},
         .nv = 4, .v = {{0, 0xFF97B0ECu}, {17, 0xFF9CB8F4u}, {51, 0xFFA0BAF8u}, {255, 0xFFA1BBF9u}},
         .nh = 6, .hs = {{0, 0xFF9EB4ECu}, {32, 0xFFA7BDF5u}, {96, 0xFFA7BFFAu}, {159, 0xFFA0BBF9u}, {223, 0xFF92B3F8u}, {255, 0xFF92B2F8u}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFEBEBE3u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFCCCCB9u, 0xFFCCCCB9u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DCu, 0xFFE6E6DCu}}, {{0xFFC5C5B1u, 0xFFC7C7B4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 2, .v = {{0, 0xFFEEEEE7u}, {255, 0xFFEEEEE7u}},
@@ -186,7 +186,7 @@ static const xd_shape luna_blue_scrolltrack[4] = {
         .nh = 3, .hs = {{0, 0xFFF4F1ECu}, {170, 0xFFFBFBF9u}, {255, 0xFFFEFEFBu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFFD7D5C2u, 0xFFD7D5C2u}, {0xFFE3DED3u, 0xFFE3DED3u}}, {{0xFFE5DED3u, 0xFFFDFDF6u}, {0xFFE5DED3u, 0xFFFDFDF6u}}, {{0xFFD7D5C2u, 0xFFD7D5C2u}, {0xFFFDFDF6u, 0xFFFDFDF6u}}, {{0xFFE5DED3u, 0xFFFDFDF6u}, {0xFFE5DED3u, 0xFFFDFDF6u}}},
         .nv = 2, .v = {{0, 0xFFF1F0E8u}, {255, 0xFFF1F0E8u}},
@@ -203,35 +203,35 @@ static const xd_shape luna_blue_scrolltrack[4] = {
 /* Tab TabItem (images/blue/tabitem.png, states 1 to 5). */
 static const xd_shape luna_blue_tab[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF91A7B4u, 0xFF91A7B4u}, {0xFFFDFDFCu, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFF91A7B4u, 0xFFA1B3BBu}, {0xFFFFFFFFu, 0xFFEDF1F3u}, {0xFFFEFEFEu, 0xFFFEFEFDu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF91A7B4u, 0xFF91A7B4u}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
         .nh = 3, .hs = {{0, 0xFFF5F5F2u}, {232, 0xFFF4F4F1u}, {255, 0xFFF0EFEAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFFDFDFCu, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
         .nh = 3, .hs = {{0, 0xFFF5F5F2u}, {232, 0xFFF4F4F1u}, {255, 0xFFF0EFEAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFE68B2Cu, 0xFFE68B2Cu}, {0xFFFFC83Cu, 0xFFFFC83Cu}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFC9C7BAu, 0xFFD0CEC0u}, {0xFFF5F4EAu, 0xFFEEEDE2u}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}},
         .nv = 2, .v = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
         .nh = 2, .hs = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFFAFAF9u, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
@@ -241,35 +241,35 @@ static const xd_shape luna_blue_tab[5] = {
 /* Tab TopTabItem (images/blue/tabitemtop.png, states 1 to 5). */
 static const xd_shape luna_blue_tabtop[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF91A7B4u, 0xFF91A7B4u}, {0xFFFDFDFCu, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFF91A7B4u, 0xFFA1B3BBu}, {0xFFFFFFFFu, 0xFFEDF1F3u}, {0xFFFEFEFEu, 0xFFFEFEFDu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF91A7B4u, 0xFF91A7B4u}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
         .nh = 3, .hs = {{0, 0xFFF5F5F2u}, {232, 0xFFF4F4F1u}, {255, 0xFFF0EFEAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFFDFDFCu, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
         .nh = 3, .hs = {{0, 0xFFF5F5F2u}, {232, 0xFFF4F4F1u}, {255, 0xFFF0EFEAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFE68B2Cu, 0xFFE68B2Cu}, {0xFFFFC83Cu, 0xFFFFC83Cu}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFC9C7BAu, 0xFFD0CEC0u}, {0xFFF5F4EAu, 0xFFEEEDE2u}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}},
         .nv = 2, .v = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
         .nh = 2, .hs = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFFAFAF9u, 0xFFF2F2EDu}, {0xFFFDFDFCu, 0xFFF2F2EDu}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9DB1BAu, 0xFF9DB1BAu}, {0xFFF6F4F2u, 0xFFE6E3DCu}}, {{0xFFEBEBE5u, 0xFFE4E2DAu}, {0xFFF0F0EAu, 0xFFEAE8E1u}, {0xFFF0F0EBu, 0xFFEBEAE3u}}},
         .nv = 3, .v = {{0, 0xFFFCFCFBu}, {93, 0xFFF6F5F1u}, {255, 0xFFF0F0EBu}},
@@ -289,7 +289,7 @@ static const xd_shape luna_blue_tabpane[1] = {
 /* Button GroupBox (images/blue/groupbox.png, states 1 to 1). */
 static const xd_shape luna_blue_groupbox[1] = {
     {
-        .w = 22, .h = 20, .radius = 2,
+        .w = 22, .h = 20, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFD0D0C0u, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD0D0BFu, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD1D1BFu, 0xFFD1D1BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD0D0BFu, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}},
         .nv = 2, .v = {{0, 0x00000000u}, {255, 0x00000000u}},
@@ -299,56 +299,56 @@ static const xd_shape luna_blue_groupbox[1] = {
 /* Window MaxButton (images/blue/captionbutton.png, states 1 to 8). */
 static const xd_shape luna_blue_captionbutton[8] = {
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF6590F7u, 0xFF0E50EDu}, {0xFF97B4F9u, 0xFF1C5BEFu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF608CF7u, 0xFF1F5DEFu}, {0xFF94B2F9u, 0xFF326BF2u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF1546B9u, 0xFF003AB9u}, {0xFF285FE3u, 0xFF004DE2u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF0D3FB6u, 0xFF003BBEu}, {0xFF1B55DFu, 0xFF014EE2u}}},
         .nv = 6, .v = {{0, 0xFF648FF7u}, {36, 0xFF4C7CF5u}, {73, 0xFF4176F6u}, {182, 0xFF367BF6u}, {219, 0xFF3077F6u}, {255, 0xFF226AF2u}},
         .nh = 4, .hs = {{0, 0xFF5B88F6u}, {55, 0xFF5382F6u}, {219, 0xFF236EF6u}, {255, 0xFF1E67F3u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF6C9DFFu, 0xFF1761F9u}, {0xFF9EBEFFu, 0xFF246BFAu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF6A9CFFu, 0xFF276CF9u}, {0xFF9CBDFFu, 0xFF3878FBu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF1B52C2u, 0xFF0850C8u}, {0xFF2E6CEAu, 0xFF0C6DEDu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF134BBFu, 0xFF0951CBu}, {0xFF2163E8u, 0xFF0C6EEDu}}},
         .nv = 6, .v = {{0, 0xFF6E9EFFu}, {55, 0xFF528CFFu}, {128, 0xFF4994FFu}, {200, 0xFF439EFFu}, {237, 0xFF3895FFu}, {255, 0xFF2F89FCu}},
         .nh = 5, .hs = {{0, 0xFF6598FFu}, {55, 0xFF5F94FFu}, {182, 0xFF3C97FFu}, {237, 0xFF2F8FFFu}, {255, 0xFF2C88FCu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF002452u, 0xFF003883u}, {0xFF003170u, 0xFF0045A1u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF002453u, 0xFF003882u}, {0xFF003070u, 0xFF0045A0u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF004BADu, 0xFF0051B6u}, {0xFF004BAEu, 0xFF0057BCu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF004BADu, 0xFF0052B7u}, {0xFF004BAFu, 0xFF0057BCu}}},
         .nv = 4, .v = {{0, 0xFF0044A0u}, {36, 0xFF0047A8u}, {200, 0xFF0056BBu}, {255, 0xFF0055BAu}},
         .nh = 4, .hs = {{0, 0xFF0045A1u}, {73, 0xFF004AADu}, {200, 0xFF0056BBu}, {255, 0xFF0055BAu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF87AAEDu, 0xFF87B1FCu}, {0xFF356FE8u, 0xFF0754F2u}, {0xFF5081E9u, 0xFF0F5AF2u}}, {{0xFF87B0F3u, 0xFF87A9ECu}, {0xFF336FEBu, 0xFF104EDFu}, {0xFF4E81E9u, 0xFF1A53DFu}}, {{0xFF879CE2u, 0xFF87A7F7u}, {0xFF0B3CBFu, 0xFF0041D3u}, {0xFF154AD6u, 0xFF004CEAu}}, {{0xFF87B2FCu, 0xFF87ADFAu}, {0xFF074DD6u, 0xFF0045D8u}, {0xFF0E58EBu, 0xFF014EEAu}}},
         .nv = 5, .v = {{0, 0xFF3569E6u}, {36, 0xFF285FE6u}, {91, 0xFF215AE8u}, {219, 0xFF1962F3u}, {255, 0xFF125FF3u}},
         .nh = 4, .hs = {{0, 0xFF306BEDu}, {109, 0xFF2461ECu}, {237, 0xFF1156EAu}, {255, 0xFF1053E8u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFBBC7EDu, 0xFFBFCFF3u}, {0xFF6E8FE9u, 0xFF4676EAu}, {0xFF87A1EAu, 0xFF4D7CEAu}}, {{0xFFBDCCF0u, 0xFFBCC7EDu}, {0xFF6C8FEAu, 0xFF4A71E3u}, {0xFF86A1EAu, 0xFF5376E4u}}, {{0xFFB9BDEAu, 0xFFBEC9F2u}, {0xFF4461C7u, 0xFF3F66CFu}, {0xFF4E6FDCu, 0xFF3E70E3u}}, {{0xFFBFCFF3u, 0xFFBFCCF2u}, {0xFF466FCEu, 0xFF3F69D1u}, {0xFF4D7AE2u, 0xFF3F72E3u}}},
         .nv = 5, .v = {{0, 0xFF6D8BE8u}, {55, 0xFF5E7FE8u}, {128, 0xFF5980E9u}, {219, 0xFF5685EDu}, {255, 0xFF5081ECu}},
         .nh = 4, .hs = {{0, 0xFF6A8CEBu}, {128, 0xFF5C82EAu}, {237, 0xFF4C79E9u}, {255, 0xFF4B77E8u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF6C9DFFu, 0xFF1761F9u}, {0xFF9EBEFFu, 0xFF246BFAu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF6A9CFFu, 0xFF276CF9u}, {0xFF9CBDFFu, 0xFF3878FBu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF1B52C2u, 0xFF0850C8u}, {0xFF2E6CEAu, 0xFF0C6DEDu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF134BBFu, 0xFF0951CBu}, {0xFF2163E8u, 0xFF0C6EEDu}}},
         .nv = 6, .v = {{0, 0xFF6E9EFFu}, {55, 0xFF528CFFu}, {128, 0xFF4994FFu}, {200, 0xFF439EFFu}, {237, 0xFF3895FFu}, {255, 0xFF2F89FCu}},
         .nh = 5, .hs = {{0, 0xFF6598FFu}, {55, 0xFF5F94FFu}, {182, 0xFF3C97FFu}, {237, 0xFF2F8FFFu}, {255, 0xFF2C88FCu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF002452u, 0xFF003883u}, {0xFF003170u, 0xFF0045A1u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF002453u, 0xFF003882u}, {0xFF003070u, 0xFF0045A0u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF004BADu, 0xFF0051B6u}, {0xFF004BAEu, 0xFF0057BCu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF004BADu, 0xFF0052B7u}, {0xFF004BAFu, 0xFF0057BCu}}},
         .nv = 4, .v = {{0, 0xFF0044A0u}, {36, 0xFF0047A8u}, {200, 0xFF0056BBu}, {255, 0xFF0055BAu}},
         .nh = 4, .hs = {{0, 0xFF0045A1u}, {73, 0xFF004AADu}, {200, 0xFF0056BBu}, {255, 0xFF0055BAu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF98AAE4u, 0xFF9EB5ECu}, {0xFF738EE2u, 0xFF648BE8u}, {0xFF7F96E2u, 0xFF678DE7u}}, {{0xFF9BB1E7u, 0xFF99A9E4u}, {0xFF7291E3u, 0xFF617CDDu}, {0xFF7E97E2u, 0xFF657CDDu}}, {{0xFF949BDEu, 0xFF9CACEAu}, {0xFF5D70CEu, 0xFF607EDAu}, {0xFF6277D8u, 0xFF5F83E4u}}, {{0xFF9EB6ECu, 0xFF9DB1EBu}, {0xFF6489DBu, 0xFF6082DCu}, {0xFF678DE4u, 0xFF6086E4u}}},
         .nv = 4, .v = {{0, 0xFF7289E0u}, {73, 0xFF6A83E1u}, {182, 0xFF6A89E5u}, {255, 0xFF688DE8u}},
@@ -358,56 +358,56 @@ static const xd_shape luna_blue_captionbutton[8] = {
 /* Window CloseButton (images/blue/closebutton.png, states 1 to 8). */
 static const xd_shape luna_blue_closebutton[8] = {
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE97F65u, 0xFFD8370Eu}, {0xFFF0A997u, 0xFFDB431Cu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE97B60u, 0xFFDC451Fu}, {0xFFF0A694u, 0xFFE05532u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFAA3315u, 0xFFAA2300u}, {0xFFD24A28u, 0xFFD12F00u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFA62B0Du, 0xFFAE2400u}, {0xFFCC3E1Bu, 0xFFD13001u}}},
         .nv = 6, .v = {{0, 0xFFE97E64u}, {36, 0xFFE5694Cu}, {73, 0xFFE46141u}, {182, 0xFFE76036u}, {219, 0xFFE75B30u}, {255, 0xFFE24E22u}},
         .nh = 4, .hs = {{0, 0xFFE7775Bu}, {55, 0xFFE66F53u}, {219, 0xFFE55123u}, {255, 0xFFE24B1Eu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFF8D80u, 0xFFFA4935u}, {0xFFFFB3ABu, 0xFFFB5441u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFF8C7Fu, 0xFFFA5643u}, {0xFFFFB2A9u, 0xFFFC6352u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCB4233u, 0xFFD4402Au}, {0xFFED5948u, 0xFFF2573Au}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC93C2Bu, 0xFFD6402Au}, {0xFFEC4F3Du, 0xFFF3583Au}}},
         .nv = 6, .v = {{0, 0xFFFF8F82u}, {55, 0xFFFF7969u}, {128, 0xFFFF816Cu}, {200, 0xFFFF8B70u}, {237, 0xFFFF8065u}, {255, 0xFFFD745Au}},
         .nh = 6, .hs = {{0, 0xFFFF8779u}, {36, 0xFFFF8678u}, {91, 0xFFFF8372u}, {164, 0xFFFF856Cu}, {237, 0xFFFF795Cu}, {255, 0xFFFD7257u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF591C0Du, 0xFF8D2D14u}, {0xFF792711u, 0xFFAD3719u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF5A1D0Du, 0xFF8C2C14u}, {0xFF782611u, 0xFFAC3618u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBA3B1Bu, 0xFFC3411Eu}, {0xFFBB3B1Bu, 0xFFC74520u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBA3B1Bu, 0xFFC3411Eu}, {0xFFBC3C1Bu, 0xFFC74520u}}},
         .nv = 4, .v = {{0, 0xFFAD3619u}, {36, 0xFFB5381Au}, {182, 0xFFC5441Fu}, {255, 0xFFC5431Fu}},
         .nh = 4, .hs = {{0, 0xFFAE3619u}, {73, 0xFFBA3A1Bu}, {219, 0xFFC74520u}, {255, 0xFFC5431Fu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF767EC4u, 0xFF7370B3u}, {0xFF7786CEu, 0xFF7372B6u}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF767EC4u, 0xFF7373B7u}, {0xFF7786CEu, 0xFF7476BAu}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF6A6FB5u, 0xFF696CB1u}, {0xFF7173B9u, 0xFF716FB1u}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF696EB3u, 0xFF6A6CB1u}, {0xFF7071B6u, 0xFF716FB1u}}},
         .nv = 4, .v = {{0, 0xFF767EC4u}, {109, 0xFF7578BDu}, {237, 0xFF7576B9u}, {255, 0xFF7474B7u}},
         .nh = 2, .hs = {{0, 0xFF767DC3u}, {255, 0xFF7474B7u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFBBC7EDu, 0xFFBFCFF3u}, {0xFFB086A0u, 0xFFAC6A7Au}, {0xFFB49BB9u, 0xFFAD7080u}}, {{0xFFBDCCF0u, 0xFFBCC7EDu}, {0xFFB1869Eu, 0xFFA9657Bu}, {0xFFB49BB7u, 0xFFAB6B84u}}, {{0xFFB9BDEAu, 0xFFBEC9F2u}, {0xFF8F5875u, 0xFF945B72u}, {0xFFA3647Eu, 0xFFA76172u}}, {{0xFFBFCFF3u, 0xFFBFCCF2u}, {0xFF936579u, 0xFF965E72u}, {0xFFA66E80u, 0xFFA86373u}}},
         .nv = 5, .v = {{0, 0xFFB0829Eu}, {36, 0xFFAE7892u}, {109, 0xFFAE738Cu}, {219, 0xFFB27789u}, {255, 0xFFB07383u}},
         .nh = 4, .hs = {{0, 0xFFB1839Cu}, {128, 0xFFAF778Eu}, {237, 0xFFAF6B7Fu}, {255, 0xFFAD697Du}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFF8D80u, 0xFFFA4935u}, {0xFFFFB3ABu, 0xFFFB5441u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFF8C7Fu, 0xFFFA5643u}, {0xFFFFB2A9u, 0xFFFC6352u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCB4233u, 0xFFD4402Au}, {0xFFED5948u, 0xFFF2573Au}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC93C2Bu, 0xFFD6402Au}, {0xFFEC4F3Du, 0xFFF3583Au}}},
         .nv = 6, .v = {{0, 0xFFFF8F82u}, {55, 0xFFFF7969u}, {128, 0xFFFF816Cu}, {200, 0xFFFF8B70u}, {237, 0xFFFF8065u}, {255, 0xFFFD745Au}},
         .nh = 6, .hs = {{0, 0xFFFF8779u}, {36, 0xFFFF8678u}, {91, 0xFFFF8372u}, {164, 0xFFFF856Cu}, {237, 0xFFFF795Cu}, {255, 0xFFFD7257u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF591C0Du, 0xFF8D2D14u}, {0xFF792711u, 0xFFAD3719u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF5A1D0Du, 0xFF8C2C14u}, {0xFF782611u, 0xFFAC3618u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBA3B1Bu, 0xFFC3411Eu}, {0xFFBB3B1Bu, 0xFFC74520u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBA3B1Bu, 0xFFC3411Eu}, {0xFFBC3C1Bu, 0xFFC74520u}}},
         .nv = 4, .v = {{0, 0xFFAD3619u}, {36, 0xFFB5381Au}, {182, 0xFFC5441Fu}, {255, 0xFFC5431Fu}},
         .nh = 4, .hs = {{0, 0xFFAE3619u}, {73, 0xFFBA3A1Bu}, {219, 0xFFC74520u}, {255, 0xFFC5431Fu}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF767EC4u, 0xFF7370B3u}, {0xFF7786CEu, 0xFF7372B6u}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF767EC4u, 0xFF7373B7u}, {0xFF7786CEu, 0xFF7476BAu}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF6A6FB5u, 0xFF696CB1u}, {0xFF7173B9u, 0xFF716FB1u}}, {{0xFF7A97E3u, 0xFF7A97E3u}, {0xFF696EB3u, 0xFF6A6CB1u}, {0xFF7071B6u, 0xFF716FB1u}}},
         .nv = 4, .v = {{0, 0xFF767EC4u}, {109, 0xFF7578BDu}, {237, 0xFF7576B9u}, {255, 0xFF7474B7u}},
@@ -484,35 +484,35 @@ static const xd_stop luna_blue_tabbody[] = {{0, 0xFFFCFCFEu}, {131, 0xFFF4F3EEu}
 /* Button PushButton (images/homestead/button.png, states 1 to 5). */
 static const xd_shape luna_olive_pushbutton[5] = {
     {
-        .w = 20, .h = 23, .radius = 2,
+        .w = 20, .h = 23, .radius = 4,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F1D1D1Cu, 0x1D1B1B1Bu}, {0xFF376206u, 0xFF376206u}, {0xFFFFFFF3u, 0xFFF3EEDBu}, {0xFFFFFFF3u, 0xFFF2EEDAu}}, {{0x211F1E1Eu, 0x211F1E1Eu}, {0xFF376206u, 0xFF376206u}, {0xFFFFFFF6u, 0xFFFFFFF6u}, {0xFFFFFFF5u, 0xFFFFFFF5u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF376206u, 0xFF376206u}, {0xFFFBF7E8u, 0xFFEADEC8u}, {0xFFFDFEF0u, 0xFFEEE4CEu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF376206u, 0xFF376206u}, {0xFFE3D1B8u, 0xFFE2D0B6u}, {0xFFEAE0C8u, 0xFFEADDC6u}}},
         .nv = 4, .v = {{0, 0xFFFEFFF2u}, {55, 0xFFFAF9E9u}, {237, 0xFFF6F3E0u}, {255, 0xFFF3EEDAu}},
         .nh = 2, .hs = {{0, 0xFFF9F7E6u}, {255, 0xFFF9F6E5u}},
     },
     {
-        .w = 20, .h = 23, .radius = 2,
+        .w = 20, .h = 23, .radius = 4,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F1D1D1Cu, 0x1D1B1B1Bu}, {0xFF376206u, 0xFF376206u}, {0xFFEEC9A5u, 0xFFE39152u}, {0xFFEBB88Bu, 0xFFE39352u}}, {{0x211F1E1Eu, 0x211F1E1Eu}, {0xFF376206u, 0xFF376206u}, {0xFFFCC595u, 0xFFFCC595u}, {0xFFEDBE96u, 0xFFEDBE96u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF376206u, 0xFF376206u}, {0xFFEECBA7u, 0xFFE39152u}, {0xFFEBB88Bu, 0xFFE39352u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF376206u, 0xFF376206u}, {0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}}},
         .nv = 4, .v = {{0, 0xFFFFFFF2u}, {73, 0xFFFAF9E8u}, {237, 0xFFF5F2E0u}, {255, 0xFFF2ECDAu}},
         .nh = 2, .hs = {{0, 0xFFF8F6E6u}, {255, 0xFFF8F5E5u}},
     },
     {
-        .w = 20, .h = 23, .radius = 2,
+        .w = 20, .h = 23, .radius = 4,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F1D1D1Cu, 0x1D1B1B1Bu}, {0xFF376206u, 0xFF376206u}, {0xFFE4D4BFu, 0xFFE5D9C3u}, {0xFFE8DBC5u, 0xFFEAE0C9u}}, {{0x211F1E1Eu, 0x211F1E1Eu}, {0xFF376206u, 0xFF376206u}, {0xFFDECCB2u, 0xFFDFCDB4u}, {0xFFE4D4BFu, 0xFFE6D8C2u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF376206u, 0xFF376206u}, {0xFFEEE6D2u, 0xFFEEE7D4u}, {0xFFEEE5D0u, 0xFFEEE7D4u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF376206u, 0xFF376206u}, {0xFFF6F3E2u, 0xFFF8F5E5u}, {0xFFF2ECD8u, 0xFFF3EEDBu}}},
         .nv = 5, .v = {{0, 0xFFEEE5D1u}, {18, 0xFFEEE9D5u}, {91, 0xFFEDE5CFu}, {237, 0xFFEAE2CAu}, {255, 0xFFECE4CEu}},
         .nh = 2, .hs = {{0, 0xFFECE3CDu}, {255, 0xFFEDE4D0u}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x00000000u, 0x00000000u}, {0xFFCAC4B8u, 0xFFCAC4B8u}, {0xFFF6F2E9u, 0xFFF6F2E9u}, {0xFFF6F2E9u, 0xFFF6F2E9u}}, {{0x00000000u, 0x00000000u}, {0xFFCAC4B8u, 0xFFCAC4B8u}, {0xFFF6F2E9u, 0xFFF6F2E9u}, {0xFFF6F2E9u, 0xFFF6F2E9u}}, {{0x00000000u, 0x00000000u}, {0xFFCAC4B8u, 0xFFCAC4B8u}, {0xFFF6F2E9u, 0xFFF6F2E9u}, {0xFFF6F2E9u, 0xFFF6F2E9u}}, {{0x00000000u, 0x00000000u}, {0xFFCAC4B8u, 0xFFCAC4B8u}, {0xFFF6F2E9u, 0xFFF6F2E9u}, {0xFFF6F2E9u, 0xFFF6F2E9u}}},
         .nv = 2, .v = {{0, 0xFFF6F2E9u}, {255, 0xFFF6F2E9u}},
         .nh = 2, .hs = {{0, 0xFFF6F2E9u}, {255, 0xFFF6F2E9u}},
     },
     {
-        .w = 20, .h = 23, .radius = 2,
+        .w = 20, .h = 23, .radius = 4,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F1D1D1Cu, 0x1D1B1B1Bu}, {0xFF376206u, 0xFF376206u}, {0xFFB1CB7Du, 0xFF90C154u}, {0xFFB0CC7Du, 0xFF90C154u}}, {{0x211F1E1Eu, 0x211F1E1Eu}, {0xFF376206u, 0xFF376206u}, {0xFFC2D18Fu, 0xFFC2D18Fu}, {0xFFB1CB80u, 0xFFB1CB80u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF376206u, 0xFF376206u}, {0xFFB0CC7Du, 0xFF90C154u}, {0xFFB0CB7Du, 0xFF90C154u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF376206u, 0xFF376206u}, {0xFFA8A766u, 0xFFA8A766u}, {0xFF90C154u, 0xFF90C154u}}},
         .nv = 4, .v = {{0, 0xFFFEFFF2u}, {55, 0xFFFAF9E9u}, {237, 0xFFF6F3E0u}, {255, 0xFFF3EEDAu}},
@@ -553,7 +553,7 @@ static const xd_shape luna_olive_dropdown[4] = {
 /* ScrollBar ArrowBtn (images/homestead/scrollarrows.png, states 1 to 8). */
 static const xd_shape luna_olive_scrollarrow[8] = {
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8E997Du, 0xFF8E997Du}, {0xFFCBD7BAu, 0xFFCBD7BAu}}, {{0xFFB6C1A6u, 0xFF9BB383u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}, {{0xFF99B877u, 0xFF89B162u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}},
         .nv = 4, .v = {{0, 0xFFBAC7A6u}, {26, 0xFFA9BA95u}, {204, 0xFF9EB081u}, {255, 0xFF95A776u}},
@@ -567,21 +567,21 @@ static const xd_shape luna_olive_scrollarrow[8] = {
         .nh = 4, .hs = {{0, 0xFFD6E4B3u}, {26, 0xFFC7D4A0u}, {230, 0xFFC7D4A0u}, {255, 0xFFD6E4B3u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF798B60u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF80906Au, 0xFF80906Au}, {0xFF869473u, 0xFF869473u}}, {{0xFFD1D0CEu, 0xFF9BB181u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF798B60u}}, {{0xFF99B877u, 0xFF89B162u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF768361u}}},
         .nv = 4, .v = {{0, 0xFF93A47Bu}, {102, 0xFF94A77Au}, {153, 0xFF92A573u}, {255, 0xFF90A470u}},
         .nh = 4, .hs = {{0, 0xFF86966Fu}, {51, 0xFF95A876u}, {204, 0xFF95A876u}, {255, 0xFF86966Fu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
         .nh = 3, .hs = {{0, 0xFFEFEFE9u}, {128, 0xFFEEEEE7u}, {255, 0xFFEAEAE1u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8E997Du, 0xFF8E997Du}, {0xFFCBD7BAu, 0xFFCBD7BAu}}, {{0xFFB6C1A6u, 0xFF9BB383u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}, {{0xFF99B877u, 0xFF89B162u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF8E997Du, 0xFF8E997Du}}},
         .nv = 4, .v = {{0, 0xFFBAC7A6u}, {26, 0xFFA9BA95u}, {204, 0xFF9EB081u}, {255, 0xFF95A776u}},
@@ -595,14 +595,14 @@ static const xd_shape luna_olive_scrollarrow[8] = {
         .nh = 4, .hs = {{0, 0xFFD6E4B3u}, {26, 0xFFC7D4A0u}, {230, 0xFFC7D4A0u}, {255, 0xFFD6E4B3u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF798B60u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF80906Au, 0xFF80906Au}, {0xFF869473u, 0xFF869473u}}, {{0xFFD1D0CEu, 0xFF9BB181u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF798B60u}}, {{0xFF99B877u, 0xFF89B162u}, {0xFFFAFAFAu, 0xFFFAFAFAu}, {0xFF768361u, 0xFF768361u}}},
         .nv = 4, .v = {{0, 0xFF93A47Bu}, {102, 0xFF94A77Au}, {153, 0xFF92A573u}, {255, 0xFF90A470u}},
         .nh = 4, .hs = {{0, 0xFF86966Fu}, {51, 0xFF95A876u}, {204, 0xFF95A876u}, {255, 0xFF86966Fu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
@@ -612,28 +612,28 @@ static const xd_shape luna_olive_scrollarrow[8] = {
 /* ScrollBar ThumbBtnVert (images/homestead/scrollthumbvertical.png, states 1 to 4). */
 static const xd_shape luna_olive_scrollthumb[4] = {
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8FA173u, 0xFF8DA271u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFAEBB9Au, 0xFF869967u}, {0xFFBDC6B0u, 0xFF97A97Du}}, {{0xFF8B9377u, 0xFF8B9377u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8D9D73u, 0xFF8A9C6Fu}}, {{0xFF849166u, 0xFF849267u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF889B71u, 0xFF859A69u}}},
         .nv = 2, .v = {{0, 0xFF9FB086u}, {255, 0xFFA0B186u}},
         .nh = 5, .hs = {{0, 0xFFA3B38Cu}, {64, 0xFFA6B594u}, {191, 0xFF9BAD7Cu}, {223, 0xFF95A774u}, {255, 0xFF95A775u}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFE2EEFFu, 0xFFE2EEFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBDCB96u, 0xFFBCCC94u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFD0D9B3u, 0xFFB8C78Du}, {0xFFD7DEC4u, 0xFFC1CF9Du}}, {{0xFF8B9377u, 0xFF8B9377u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBCC797u, 0xFFBAC893u}}, {{0xFF849166u, 0xFF849267u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB6C696u, 0xFFB6C68Eu}}},
         .nv = 2, .v = {{0, 0xFFC7D4A3u}, {255, 0xFFC8D5A2u}},
         .nh = 6, .hs = {{0, 0xFFC9D6A9u}, {64, 0xFFC8D5AAu}, {96, 0xFFCBD9A9u}, {159, 0xFFC7D4A4u}, {223, 0xFFC4D195u}, {255, 0xFFC3D096u}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF7E9065u, 0xFF809266u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF7D8C66u, 0xFF798B60u}, {0xFF869473u, 0xFF829468u}}, {{0xFF8D947Du, 0xFF8B9377u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF899B6Eu, 0xFF90A476u}}, {{0xFF849166u, 0xFF849267u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF869A6Du, 0xFF8BA16Du}}},
         .nv = 3, .v = {{0, 0xFF8FA274u}, {34, 0xFF97AB7Bu}, {255, 0xFF98AB7Cu}},
         .nh = 5, .hs = {{0, 0xFF91A379u}, {32, 0xFF98AA80u}, {128, 0xFF9AAC7Eu}, {223, 0xFF95A972u}, {255, 0xFF94A973u}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFEBEBE3u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFCCCCB9u, 0xFFCCCCB9u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DCu, 0xFFE6E6DCu}}, {{0xFFC5C5B1u, 0xFFC7C7B4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 2, .v = {{0, 0xFFEEEEE7u}, {255, 0xFFEEEEE7u}},
@@ -657,7 +657,7 @@ static const xd_shape luna_olive_scrolltrack[4] = {
         .nh = 3, .hs = {{0, 0xFFF4F1ECu}, {170, 0xFFFBFBF9u}, {255, 0xFFFEFEFBu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFFD7D5C2u, 0xFFD7D5C2u}, {0xFFE3DED3u, 0xFFE3DED3u}}, {{0xFFE5DED3u, 0xFFFDFDF6u}, {0xFFE5DED3u, 0xFFFDFDF6u}}, {{0xFFD7D5C2u, 0xFFD7D5C2u}, {0xFFFDFDF6u, 0xFFFDFDF6u}}, {{0xFFE5DED3u, 0xFFFDFDF6u}, {0xFFE5DED3u, 0xFFFDFDF6u}}},
         .nv = 2, .v = {{0, 0xFFF1F0E8u}, {255, 0xFFF1F0E8u}},
@@ -674,35 +674,35 @@ static const xd_shape luna_olive_scrolltrack[4] = {
 /* Tab TabItem (images/homestead/tabitem.png, states 1 to 5). */
 static const xd_shape luna_olive_tab[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFFFFF3u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFA6A1A6u, 0xFFB2B0AEu}, {0xFFFFFFF6u, 0xFFEEF3E9u}, {0xFFFFFFF5u, 0xFFFFFFF4u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
         .nh = 3, .hs = {{0, 0xFFFAF8E8u}, {232, 0xFFF9F7E7u}, {255, 0xFFF6F1E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFFFFF3u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
         .nh = 3, .hs = {{0, 0xFFFAF8E8u}, {232, 0xFFF9F7E7u}, {255, 0xFFF6F1E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFD5C4ADu, 0xFFD5C4ADu}, {0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFD5C4ADu, 0xFFDBCCB3u}, {0xFFFAF6E0u, 0xFFF4EFD7u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFFD5C4ADu, 0xFFD5C4ADu}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}},
         .nv = 2, .v = {{0, 0xFFFAF6E0u}, {255, 0xFFFAF6E0u}},
         .nh = 2, .hs = {{0, 0xFFFAF6E0u}, {255, 0xFFFAF6E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFEFDF0u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
@@ -712,35 +712,35 @@ static const xd_shape luna_olive_tab[5] = {
 /* Tab TopTabItem (images/homestead/tabitemtop.png, states 1 to 5). */
 static const xd_shape luna_olive_tabtop[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFFFFF3u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFA6A1A6u, 0xFFB2B0AEu}, {0xFFFFFFF6u, 0xFFEEF3E9u}, {0xFFFFFFF5u, 0xFFFFFFF4u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
         .nh = 3, .hs = {{0, 0xFFFAF8E8u}, {232, 0xFFF9F7E7u}, {255, 0xFFF6F1E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFFFFF3u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
         .nh = 3, .hs = {{0, 0xFFFAF8E8u}, {232, 0xFFF9F7E7u}, {255, 0xFFF6F1E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFD5C4ADu, 0xFFD5C4ADu}, {0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFD5C4ADu, 0xFFDBCCB3u}, {0xFFFAF6E0u, 0xFFF4EFD7u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFFD5C4ADu, 0xFFD5C4ADu}, {0xFFFAF6E0u, 0xFFFAF6E0u}}, {{0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}, {0xFFFAF6E0u, 0xFFFAF6E0u}}},
         .nv = 2, .v = {{0, 0xFFFAF6E0u}, {255, 0xFFFAF6E0u}},
         .nh = 2, .hs = {{0, 0xFFFAF6E0u}, {255, 0xFFFAF6E0u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFEFDF0u, 0xFFF7F4E3u}, {0xFFFFFFF3u, 0xFFF7F4E3u}}, {{0xFFCF7225u, 0xFFCF7225u}, {0xFFE3914Fu, 0xFFE3914Fu}, {0xFFE39658u, 0xFFE39658u}}, {{0xFFF1EFDFu, 0xFFF1EFDFu}, {0xFF9BAC9Cu, 0xFF9BAC9Cu}, {0xFFFAF6E8u, 0xFFEDE3D1u}}, {{0xFFF1ECDAu, 0xFFECE2CFu}, {0xFFF5F2E0u, 0xFFF1E9D6u}, {0xFFF5F2E1u, 0xFFF1EBD8u}}},
         .nv = 3, .v = {{0, 0xFFFFFFF2u}, {93, 0xFFFAF8E7u}, {255, 0xFFF6F2E1u}},
@@ -760,7 +760,7 @@ static const xd_shape luna_olive_tabpane[1] = {
 /* Button GroupBox (images/homestead/groupbox.png, states 1 to 1). */
 static const xd_shape luna_olive_groupbox[1] = {
     {
-        .w = 22, .h = 20, .radius = 2,
+        .w = 22, .h = 20, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFD0D0C0u, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD0D0BFu, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD1D1BFu, 0xFFD1D1BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFD0D0BFu, 0xFFD0D0C0u}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}},
         .nv = 2, .v = {{0, 0x00000000u}, {255, 0x00000000u}},
@@ -791,7 +791,7 @@ static const xd_shape luna_olive_captionbutton[8] = {
         .nh = 3, .hs = {{0, 0xFF63694Du}, {219, 0xFF6E7454u}, {255, 0xFF6D7354u}},
     },
     {
-        .w = 21, .h = 21, .radius = 2,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFF2F9E1u, 0xFFFAFBE7u}, {0xFFB5C396u, 0xFF9CAE73u}, {0xFFC6D1ACu, 0xFFA2B279u}}, {{0xFFF6FAE2u, 0xFFF2F9E1u}, {0xFFB6C496u, 0xFF94A571u}, {0xFFC6D1ABu, 0xFF99A978u}}, {{0xFFE6EFD9u, 0xFFF7FBE6u}, {0xFF748457u, 0xFF7E8F5Au}, {0xFF8FA070u, 0xFF91A369u}}, {{0xFFFAFBE7u, 0xFFFAFBE7u}, {0xFF899863u, 0xFF83945Eu}, {0xFF9DAD75u, 0xFF93A46Bu}}},
         .nv = 5, .v = {{0, 0xFFB1BF94u}, {36, 0xFFA8B889u}, {109, 0xFFA5B583u}, {219, 0xFFABBA84u}, {255, 0xFFA5B57Du}},
@@ -829,56 +829,56 @@ static const xd_shape luna_olive_captionbutton[8] = {
 /* Window CloseButton (images/homestead/closebutton.png, states 1 to 8). */
 static const xd_shape luna_olive_closebutton[8] = {
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFDD8B71u, 0xFFC54A20u}, {0xFFE7B29Fu, 0xFFC9542Du}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFDC886Du, 0xFFCA5730u}, {0xFFE7AE9Cu, 0xFFD06642u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF9C4022u, 0xFF9A320Fu}, {0xFFC25937u, 0xFFBE4213u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF983A1Bu, 0xFF9E3510u}, {0xFFBB4D2Au, 0xFFBE4314u}}},
         .nv = 6, .v = {{0, 0xFFDC8A6Fu}, {36, 0xFFD77759u}, {91, 0xFFD46E4Du}, {182, 0xFFD76F46u}, {237, 0xFFD4663Au}, {255, 0xFFCF5F33u}},
         .nh = 4, .hs = {{0, 0xFFDA8467u}, {55, 0xFFD97D60u}, {219, 0xFFD36134u}, {255, 0xFFCF5C30u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF08A68u, 0xFFF05420u}, {0xFFECA994u, 0xFFF05C2Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF08A68u, 0xFFF05F2Eu}, {0xFFECA891u, 0xFFF0693Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC34A21u, 0xFFCC4917u}, {0xFFE36033u, 0xFFE86026u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC2451Au, 0xFFCF4B17u}, {0xFFE35929u, 0xFFE96126u}}},
         .nv = 6, .v = {{0, 0xFFEF8C6Bu}, {55, 0xFFF27C52u}, {109, 0xFFF27F52u}, {182, 0xFFF18D5Bu}, {237, 0xFFF2844Eu}, {255, 0xFFF17943u}},
         .nh = 5, .hs = {{0, 0xFFF08762u}, {55, 0xFFF1835Eu}, {164, 0xFFF28755u}, {219, 0xFFF2824Au}, {255, 0xFFF17840u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8A5A3Eu, 0xFF8D4121u}, {0xFFA8704Du, 0xFFA84A25u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF905F41u, 0xFF904425u}, {0xFFA97251u, 0xFFAC512Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB34C26u, 0xFFBA5027u}, {0xFFB54F29u, 0xFFBE5329u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB14923u, 0xFFBA5027u}, {0xFFB44C25u, 0xFFBE5329u}}},
         .nv = 6, .v = {{0, 0xFFBE6D47u}, {36, 0xFFBA5D37u}, {73, 0xFFB6502Bu}, {146, 0xFFBA5027u}, {237, 0xFFBD5329u}, {255, 0xFFBC5228u}},
         .nh = 4, .hs = {{0, 0xFFB45A35u}, {55, 0xFFB6532Du}, {182, 0xFFBF572Du}, {255, 0xFFBD5329u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFC3AFACu, 0xFFBFAE9Au}, {0xFFCBBBC1u, 0xFFBFAF9Fu}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFC3B0ACu, 0xFFBCA797u}, {0xFFCABBC0u, 0xFFBEA79Bu}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFAA928Cu, 0xFFAE9B8Fu}, {0xFFB8A196u, 0xFFBBA995u}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFAE9D95u, 0xFFAF9D91u}, {0xFFBBAB9Cu, 0xFFBCAA96u}}},
         .nv = 5, .v = {{0, 0xFFC3AEABu}, {55, 0xFFC0AAA1u}, {164, 0xFFC2AEA2u}, {237, 0xFFC2B1A2u}, {255, 0xFFC1B0A0u}},
         .nh = 3, .hs = {{0, 0xFFC3B0ABu}, {164, 0xFFC1ADA0u}, {255, 0xFFBFAB9Au}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFBFA7ADu, 0xFFBA9892u}, {0xFFC8B6C4u, 0xFFBB9C97u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC0A7ACu, 0xFFB8918Fu}, {0xFFC6B5C1u, 0xFFBA9394u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFA58589u, 0xFFA98788u}, {0xFFB38E90u, 0xFFB6938Du}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFAA8E90u, 0xFFAA8A89u}, {0xFFB69896u, 0xFFB7948Eu}}},
         .nv = 5, .v = {{0, 0xFFBFA4AAu}, {55, 0xFFBC9B9Eu}, {128, 0xFFBD9B9Cu}, {237, 0xFFBE9F9Bu}, {255, 0xFFBD9D99u}},
         .nh = 2, .hs = {{0, 0xFFC0A5AAu}, {255, 0xFFBB9693u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF08A68u, 0xFFF05420u}, {0xFFECA994u, 0xFFF05C2Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF08A68u, 0xFFF05F2Eu}, {0xFFECA891u, 0xFFF0693Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC34A21u, 0xFFCC4917u}, {0xFFE36033u, 0xFFE86026u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC2451Au, 0xFFCF4B17u}, {0xFFE35929u, 0xFFE96126u}}},
         .nv = 6, .v = {{0, 0xFFEF8C6Bu}, {55, 0xFFF27C52u}, {109, 0xFFF27F52u}, {182, 0xFFF18D5Bu}, {237, 0xFFF2844Eu}, {255, 0xFFF17943u}},
         .nh = 5, .hs = {{0, 0xFFF08762u}, {55, 0xFFF1835Eu}, {164, 0xFFF28755u}, {219, 0xFFF2824Au}, {255, 0xFFF17840u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF8A5A3Eu, 0xFF8D4121u}, {0xFFA8704Du, 0xFFA84A25u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFF905F41u, 0xFF904425u}, {0xFFA97251u, 0xFFAC512Bu}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB34C26u, 0xFFBA5027u}, {0xFFB54F29u, 0xFFBE5329u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB14923u, 0xFFBA5027u}, {0xFFB44C25u, 0xFFBE5329u}}},
         .nv = 6, .v = {{0, 0xFFBE6D47u}, {36, 0xFFBA5D37u}, {73, 0xFFB6502Bu}, {146, 0xFFBA5027u}, {237, 0xFFBD5329u}, {255, 0xFFBC5228u}},
         .nh = 4, .hs = {{0, 0xFFB45A35u}, {55, 0xFFB6532Du}, {182, 0xFFBF572Du}, {255, 0xFFBD5329u}},
     },
     {
-        .w = 21, .h = 21, .radius = 0,
+        .w = 21, .h = 21, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFBFA7ADu, 0xFFBA9892u}, {0xFFC8B6C4u, 0xFFBB9C97u}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFC0A7ACu, 0xFFB8918Fu}, {0xFFC6B5C1u, 0xFFBA9394u}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFA58589u, 0xFFA98788u}, {0xFFB38E90u, 0xFFB6938Du}}, {{0xFFEAF4DBu, 0xFFEAF4DBu}, {0xFFAA8E90u, 0xFFAA8A89u}, {0xFFB69896u, 0xFFB7948Eu}}},
         .nv = 5, .v = {{0, 0xFFBFA4AAu}, {55, 0xFFBC9B9Eu}, {128, 0xFFBD9B9Cu}, {237, 0xFFBE9F9Bu}, {255, 0xFFBD9D99u}},
@@ -955,21 +955,21 @@ static const xd_stop luna_olive_tabbody[] = {{0, 0xFFFCFCFEu}, {131, 0xFFF4F3EEu
 /* Button PushButton (images/metallic/button.png, states 1 to 5). */
 static const xd_shape luna_silver_pushbutton[5] = {
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFDFDFDu, 0xFFCDCCDFu}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFDFDFDu, 0xFFCDCCDFu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFC6C5D7u, 0xFFC6C5D7u}, {0xFFC6C5D7u, 0xFFC6C5D7u}}},
         .nv = 6, .v = {{0, 0xFFFDFDFDu}, {36, 0xFFFDFDFDu}, {109, 0xFFF0F1FCu}, {182, 0xFFD9DAE7u}, {219, 0xFFD6D7E7u}, {255, 0xFFCDCCDFu}},
         .nh = 2, .hs = {{0, 0xFFE8E9F2u}, {255, 0xFFE8E9F2u}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFEDF9Au, 0xFFF9B435u}, {0xFFFCD279u, 0xFFF8B535u}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFF0CFu, 0xFFFFF0CFu}, {0xFFFDD889u, 0xFFFDD889u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFDE09Bu, 0xFFF8B435u}, {0xFFFCD279u, 0xFFF8B535u}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFE59700u, 0xFFE59700u}, {0xFFF8B330u, 0xFFF8B230u}}},
         .nv = 5, .v = {{0, 0xFFFDFDFDu}, {73, 0xFFFDFDFDu}, {146, 0xFFF0F1FCu}, {219, 0xFFD9DAE7u}, {255, 0xFFD6D7E7u}},
         .nh = 2, .hs = {{0, 0xFFEEEFF6u}, {255, 0xFFEEEFF6u}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB3B2C5u, 0xFFFFFFFFu}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFACABBDu, 0xFFACABBDu}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFB3B2C5u, 0xFFFFFFFFu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}},
         .nv = 6, .v = {{0, 0xFFB3B2C5u}, {36, 0xFFBCBDCDu}, {73, 0xFFBFC0CDu}, {164, 0xFFDADBE5u}, {219, 0xFFF5F7FDu}, {255, 0xFFFFFFFFu}},
@@ -983,7 +983,7 @@ static const xd_shape luna_silver_pushbutton[5] = {
         .nh = 2, .hs = {{0, 0xFFF1F1EDu}, {255, 0xFFF1F1EDu}},
     },
     {
-        .w = 20, .h = 23, .radius = 4,
+        .w = 20, .h = 23, .radius = 3,
         .lines = {4, 4, 4, 4},
         .edge = {{{0x1F12100Cu, 0x1D110F0Cu}, {0xFF003C74u, 0xFF003C74u}, {0xFFBAD3F5u, 0xFF89ADE4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0x2113110Du, 0x2113110Du}, {0xFF003C74u, 0xFF003C74u}, {0xFFCEE7FFu, 0xFFCEE7FFu}, {0xFFBCD4F6u, 0xFFBCD4F6u}}, {{0x2C2C2C2Cu, 0x3F3F3F3Fu}, {0xFF003C74u, 0xFF003C74u}, {0xFFBAD3F6u, 0xFF89ADE4u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0x97979797u, 0xA0A0A0A0u}, {0xFF003C74u, 0xFF003C74u}, {0xFF6982EEu, 0xFF6982EEu}, {0xFF89ADE4u, 0xFF89ADE4u}}},
         .nv = 6, .v = {{0, 0xFFFDFDFDu}, {36, 0xFFFDFDFDu}, {109, 0xFFF0F1FCu}, {182, 0xFFD9DAE7u}, {219, 0xFFD6D7E7u}, {255, 0xFFCDCCDFu}},
@@ -993,21 +993,21 @@ static const xd_shape luna_silver_pushbutton[5] = {
 /* ComboBox DropDownButton (images/metallic/combobutton.png, states 1 to 4). */
 static const xd_shape luna_silver_dropdown[4] = {
     {
-        .w = 15, .h = 16, .radius = 0,
+        .w = 15, .h = 16, .radius = 2,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFFB5B5BEu, 0xFFB3B3BDu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF9D9EABu, 0xFF9D9EABu}, {0xFFD9DAE4u, 0xFFD9DAE4u}}},
         .nv = 5, .v = {{0, 0xFFFFFFFFu}, {23, 0xFFFBFCFCu}, {139, 0xFFD1D2E0u}, {185, 0xFFCBCCDAu}, {255, 0xFFCBCCDAu}},
         .nh = 2, .hs = {{0, 0xFFDDDEE7u}, {255, 0xFFDDDEE7u}},
     },
     {
-        .w = 15, .h = 16, .radius = 0,
+        .w = 15, .h = 16, .radius = 2,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFD9DAE4u, 0xFFD9DAE4u}}},
         .nv = 6, .v = {{0, 0xFFFFFFFFu}, {70, 0xFFFFFFFFu}, {93, 0xFFFBFBFFu}, {162, 0xFFD7D8EBu}, {185, 0xFFD1D2E4u}, {255, 0xFFCFD1E3u}},
         .nh = 2, .hs = {{0, 0xFFE8E8F2u}, {255, 0xFFE8E8F2u}},
     },
     {
-        .w = 15, .h = 16, .radius = 0,
+        .w = 15, .h = 16, .radius = 2,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFF434848u, 0xFF434848u}, {0xFFFFFFFFu, 0xFFA0B5CDu}}, {{0xFF434848u, 0xFF434848u}, {0xFFF5F7FCu, 0xFFF5F7FCu}}, {{0xFF434848u, 0xFF434848u}, {0xFFFFFFFFu, 0xFFA0B5CDu}}, {{0xFF434848u, 0xFF434848u}, {0xFFA0B5CDu, 0xFFA0B5CDu}}},
         .nv = 5, .v = {{0, 0xFFBFC2DBu}, {23, 0xFFCED4E8u}, {70, 0xFFECEFF4u}, {93, 0xFFFEFEFEu}, {255, 0xFFFFFFFFu}},
@@ -1024,56 +1024,56 @@ static const xd_shape luna_silver_dropdown[4] = {
 /* ScrollBar ArrowBtn (images/metallic/scrollarrows.png, states 1 to 8). */
 static const xd_shape luna_silver_scrollarrow[8] = {
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFFB5B5BEu, 0xFFB4B4BDu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFBFCFCu, 0xFFCBCCDAu}}, {{0xFF9D9EABu, 0xFF9D9EABu}, {0xFFD9DAE4u, 0xFFD9DAE4u}, {0xFFCBCCDAu, 0xFFCBCCDAu}}},
         .nv = 4, .v = {{0, 0xFFFBFCFCu}, {128, 0xFFD1D2E0u}, {178, 0xFFCBCCDAu}, {255, 0xFFCBCCDAu}},
         .nh = 2, .hs = {{0, 0xFFDADBE5u}, {255, 0xFFDADBE5u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFCFD1E3u}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFD9DAE4u, 0xFFD9DAE4u}, {0xFFCFD1E3u, 0xFFCFD1E3u}}},
         .nv = 6, .v = {{0, 0xFFFFFFFFu}, {51, 0xFFFFFFFFu}, {76, 0xFFFBFBFFu}, {153, 0xFFD7D8EBu}, {178, 0xFFD1D2E4u}, {255, 0xFFCFD1E3u}},
         .nh = 2, .hs = {{0, 0xFFE6E6F1u}, {255, 0xFFE6E6F1u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFF5F7FCu, 0xFFF5F7FCu}, {0xFFBFC2DBu, 0xFFBFC2DBu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCED4E8u, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFA0B5CDu, 0xFFA0B5CDu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}},
         .nv = 4, .v = {{0, 0xFFCED4E8u}, {51, 0xFFECEEF4u}, {76, 0xFFFEFEFEu}, {255, 0xFFFFFFFFu}},
         .nh = 2, .hs = {{0, 0xFFF6F7FBu}, {255, 0xFFF6F7FBu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
         .nh = 3, .hs = {{0, 0xFFEFEFE9u}, {128, 0xFFEEEEE7u}, {255, 0xFFEAEAE1u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFFB5B5BEu, 0xFFB4B4BDu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFBFCFCu, 0xFFCBCCDAu}}, {{0xFF9D9EABu, 0xFF9D9EABu}, {0xFFD9DAE4u, 0xFFD9DAE4u}, {0xFFCBCCDAu, 0xFFCBCCDAu}}},
         .nv = 4, .v = {{0, 0xFFFBFCFCu}, {128, 0xFFD1D2E0u}, {178, 0xFFCBCCDAu}, {255, 0xFFCBCCDAu}},
         .nh = 2, .hs = {{0, 0xFFDADBE5u}, {255, 0xFFDADBE5u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFCFD1E3u}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFD9DAE4u, 0xFFD9DAE4u}, {0xFFCFD1E3u, 0xFFCFD1E3u}}},
         .nv = 6, .v = {{0, 0xFFFFFFFFu}, {51, 0xFFFFFFFFu}, {76, 0xFFFBFBFFu}, {153, 0xFFD7D8EBu}, {178, 0xFFD1D2E4u}, {255, 0xFFCFD1E3u}},
         .nh = 2, .hs = {{0, 0xFFE6E6F1u}, {255, 0xFFE6E6F1u}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFF5F7FCu, 0xFFF5F7FCu}, {0xFFBFC2DBu, 0xFFBFC2DBu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCED4E8u, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFA0B5CDu, 0xFFA0B5CDu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}},
         .nv = 4, .v = {{0, 0xFFCED4E8u}, {51, 0xFFECEEF4u}, {76, 0xFFFEFEFEu}, {255, 0xFFFFFFFFu}},
         .nh = 2, .hs = {{0, 0xFFF6F7FBu}, {255, 0xFFF6F7FBu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFEEEEE7u, 0xFFE2E2D7u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF1F1EBu, 0xFFE4E4D9u}, {0xFFF7F7F3u, 0xFFECECE4u}}, {{0xFFD8D8C9u, 0xFFCCCCBAu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE6E6DDu, 0xFFE3E3D8u}}, {{0xFFCCCCBAu, 0xFFC6C6B3u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE5E5DBu, 0xFFE3E3D8u}}},
         .nv = 3, .v = {{0, 0xFFF0F0EAu}, {230, 0xFFEBEBE4u}, {255, 0xFFEAEAE1u}},
@@ -1083,28 +1083,28 @@ static const xd_shape luna_silver_scrollarrow[8] = {
 /* ScrollBar ThumbBtnVert (images/metallic/scrollthumbvertical.png, states 1 to 4). */
 static const xd_shape luna_silver_scrollthumb[4] = {
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFFB7B7BFu, 0xFFB7B7BFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF7F7F9u, 0xFFCCCDDBu}}, {{0xFF9495A2u, 0xFF9495A2u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCDCEDCu, 0xFFCDCEDCu}}, {{0xFF9D9EACu, 0xFF9D9EACu}, {0xFFD0D1DFu, 0xFFD0D1DFu}, {0xFFF7F7F9u, 0xFFCCCDDBu}}},
         .nv = 2, .v = {{0, 0xFFE0E1E9u}, {255, 0xFFE0E1E9u}},
         .nh = 5, .hs = {{0, 0xFFF7F7F9u}, {32, 0xFFECECF1u}, {96, 0xFFE8E9EEu}, {223, 0xFFCECFDCu}, {255, 0xFFCCCDDBu}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFE9EEF8u, 0xFFE9EEF8u}, {0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFEFEFFu, 0xFFC9CBDCu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFCBCCDDu, 0xFFCBCCDDu}}, {{0xFF5B6665u, 0xFF5B6665u}, {0xFFD3D4E3u, 0xFFD3D4E3u}, {0xFFFEFEFFu, 0xFFC9CBDCu}}},
         .nv = 2, .v = {{0, 0xFFE3E3EDu}, {255, 0xFFE3E3EDu}},
         .nh = 5, .hs = {{0, 0xFFFEFEFFu}, {32, 0xFFF4F4F9u}, {96, 0xFFECEDF3u}, {223, 0xFFCCCDDEu}, {255, 0xFFC9CBDCu}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 3,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFEEEDE5u, 0xFFEEEDE5u}, {0xFF434848u, 0xFF434848u}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF434848u, 0xFF434848u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFC5C7D8u, 0xFFFCFCFEu}}, {{0xFF434848u, 0xFF434848u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFFFFFFFu, 0xFFFFFFFFu}}, {{0xFF434848u, 0xFF434848u}, {0xFFA0B5CDu, 0xFFA0B5CDu}, {0xFFC5C7D8u, 0xFFFDFDFEu}}},
         .nv = 2, .v = {{0, 0xFFDFE0EBu}, {255, 0xFFDFE0EAu}},
         .nh = 6, .hs = {{0, 0xFFC5C7D8u}, {32, 0xFFCACCDDu}, {64, 0xFFCBCCDCu}, {96, 0xFFD3D4E3u}, {159, 0xFFEAEAF2u}, {255, 0xFFFDFDFEu}},
     },
     {
-        .w = 15, .h = 22, .radius = 0,
+        .w = 15, .h = 22, .radius = 2,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFECEBE6u, 0xFFECEBE6u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE4E4DEu, 0xFFE9E9E4u}}, {{0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFF0F0ECu, 0xFFE2E2DBu}, {0xFFF6F6F4u, 0xFFEAEAE5u}}, {{0xFFC8C8BCu, 0xFFC8C8BCu}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE4E4DEu, 0xFFE4E4DEu}}, {{0xFFC1C1B5u, 0xFFC3C3B7u}, {0xFFFFFFFFu, 0xFFFFFFFFu}, {0xFFE3E3DDu, 0xFFE1E1DAu}}},
         .nv = 2, .v = {{0, 0xFFECECE8u}, {255, 0xFFECECE8u}},
@@ -1128,7 +1128,7 @@ static const xd_shape luna_silver_scrolltrack[4] = {
         .nh = 3, .hs = {{0, 0xFFECEFF4u}, {170, 0xFFF9F9FBu}, {255, 0xFFFBFBFEu}},
     },
     {
-        .w = 17, .h = 17, .radius = 0,
+        .w = 17, .h = 17, .radius = 3,
         .lines = {2, 2, 2, 2},
         .edge = {{{0xFFC2C3D7u, 0xFFC2C3D7u}, {0xFFD3D7E3u, 0xFFD3D7E3u}}, {{0xFFD3D9E5u, 0xFFF6F6FDu}, {0xFFD3D9E5u, 0xFFF6F6FDu}}, {{0xFFC2C3D7u, 0xFFC2C3D7u}, {0xFFF6F6FDu, 0xFFF6F6FDu}}, {{0xFFD3D9E5u, 0xFFF6F6FDu}, {0xFFD3D9E5u, 0xFFF6F6FDu}}},
         .nv = 2, .v = {{0, 0xFFE8E9F1u}, {255, 0xFFE8E9F1u}},
@@ -1145,35 +1145,35 @@ static const xd_shape luna_silver_scrolltrack[4] = {
 /* Tab TabItem (images/metallic/tabitem.png, states 1 to 5). */
 static const xd_shape luna_silver_tab[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF91A7B4u, 0xFF91A7B4u}, {0xFFFDFDFCu, 0xFFD5D7E9u}, {0xFFFFFFFFu, 0xFFD5D7E9u}}, {{0xFF91A7B4u, 0xFFA1B3BBu}, {0xFFFFFFFFu, 0xFFEDF1F3u}, {0xFFFFFFFFu, 0xFFFEFEFDu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF91A7B4u, 0xFF91A7B4u}, {0xFFF6F4F2u, 0xFFD5D7E9u}}, {{0xFFBEBFD8u, 0xFFBEBED8u}, {0xFFC6C8DDu, 0xFFC6C8DDu}, {0xFFCCCDE2u, 0xFFCCCDE2u}}},
         .nv = 4, .v = {{0, 0xFFFFFFFFu}, {70, 0xFFFAF9FEu}, {232, 0xFFDBDDEDu}, {255, 0xFFD5D7E9u}},
         .nh = 2, .hs = {{0, 0xFFEEEEF8u}, {255, 0xFFEEEEF8u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFD5D6E6u, 0xFFD5D5E6u}, {0xFFDADCE9u, 0xFFDADCE9u}, {0xFFDEDFECu, 0xFFDEDFECu}}},
         .nv = 5, .v = {{0, 0xFFFFFFFFu}, {46, 0xFFFFFFFFu}, {139, 0xFFF1F1FBu}, {185, 0xFFEEEFF8u}, {255, 0xFFE4E5F1u}},
         .nh = 2, .hs = {{0, 0xFFF4F4FAu}, {255, 0xFFF4F4FAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFE68B2Cu, 0xFFE68B2Cu}, {0xFFFFC83Cu, 0xFFFFC83Cu}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFC9C7BAu, 0xFFD0CEC0u}, {0xFFF5F4EAu, 0xFFEEEDE2u}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}},
         .nv = 2, .v = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
         .nh = 2, .hs = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFD5D6E6u, 0xFFD5D5E6u}, {0xFFDADCE9u, 0xFFDADCE9u}, {0xFFDEDFECu, 0xFFDEDFECu}}},
         .nv = 5, .v = {{0, 0xFFFFFFFFu}, {46, 0xFFFFFFFFu}, {139, 0xFFF1F1FBu}, {185, 0xFFEEEFF8u}, {255, 0xFFE4E5F1u}},
@@ -1183,35 +1183,35 @@ static const xd_shape luna_silver_tab[5] = {
 /* Tab TopTabItem (images/metallic/tabitemtop.png, states 1 to 5). */
 static const xd_shape luna_silver_tabtop[5] = {
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF91A7B4u, 0xFF91A7B4u}, {0xFFFDFDFCu, 0xFFD5D7E9u}, {0xFFFFFFFFu, 0xFFD5D7E9u}}, {{0xFF91A7B4u, 0xFFA1B3BBu}, {0xFFFFFFFFu, 0xFFEDF1F3u}, {0xFFFFFFFFu, 0xFFFEFEFDu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF91A7B4u, 0xFF91A7B4u}, {0xFFF6F4F2u, 0xFFD5D7E9u}}, {{0xFFBEBFD8u, 0xFFBEBED8u}, {0xFFC6C8DDu, 0xFFC6C8DDu}, {0xFFCCCDE2u, 0xFFCCCDE2u}}},
         .nv = 4, .v = {{0, 0xFFFFFFFFu}, {70, 0xFFFAF9FEu}, {232, 0xFFDBDDEDu}, {255, 0xFFD5D7E9u}},
         .nh = 2, .hs = {{0, 0xFFEEEEF8u}, {255, 0xFFEEEEF8u}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFD5D6E6u, 0xFFD5D5E6u}, {0xFFDADCE9u, 0xFFDADCE9u}, {0xFFDEDFECu, 0xFFDEDFECu}}},
         .nv = 5, .v = {{0, 0xFFFFFFFFu}, {46, 0xFFFFFFFFu}, {139, 0xFFF1F1FBu}, {185, 0xFFEEEFF8u}, {255, 0xFFE4E5F1u}},
         .nh = 2, .hs = {{0, 0xFFF4F4FAu}, {255, 0xFFF4F4FAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFE68B2Cu, 0xFFE68B2Cu}, {0xFFFFC83Cu, 0xFFFFC83Cu}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFF919B9Cu, 0xFF919B9Cu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}, {{0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}, {0xFFFCFCFEu, 0xFFFCFCFEu}}},
         .nv = 2, .v = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
         .nh = 2, .hs = {{0, 0xFFFCFCFEu}, {255, 0xFFFCFCFEu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFC9C7BAu, 0xFFD0CEC0u}, {0xFFF5F4EAu, 0xFFEEEDE2u}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFFC9C7BAu, 0xFFC9C7BAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}, {{0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}, {0xFFF5F4EAu, 0xFFF5F4EAu}}},
         .nv = 2, .v = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
         .nh = 2, .hs = {{0, 0xFFF5F4EAu}, {255, 0xFFF5F4EAu}},
     },
     {
-        .w = 18, .h = 18, .radius = 0,
+        .w = 18, .h = 18, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFE68B2Cu, 0xFFE4973Cu}, {0xFFFFC83Cu, 0xFFFBBE39u}, {0xFFFFC73Cu, 0xFFFFC73Cu}}, {{0xFFE3E3DFu, 0xFFE3E3DFu}, {0xFF99A0A3u, 0xFF99A0A3u}, {0xFFFFFFFFu, 0xFFE4E5F1u}}, {{0xFFD5D6E6u, 0xFFD5D5E6u}, {0xFFDADCE9u, 0xFFDADCE9u}, {0xFFDEDFECu, 0xFFDEDFECu}}},
         .nv = 5, .v = {{0, 0xFFFFFFFFu}, {46, 0xFFFFFFFFu}, {139, 0xFFF1F1FBu}, {185, 0xFFEEEFF8u}, {255, 0xFFE4E5F1u}},
@@ -1231,7 +1231,7 @@ static const xd_shape luna_silver_tabpane[1] = {
 /* Button GroupBox (images/metallic/groupbox.png, states 1 to 1). */
 static const xd_shape luna_silver_groupbox[1] = {
     {
-        .w = 22, .h = 20, .radius = 2,
+        .w = 22, .h = 20, .radius = 4,
         .lines = {3, 3, 3, 3},
         .edge = {{{0xFFBFB8BFu, 0xFFBFB8BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFBFB8BFu, 0xFFBFB8BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFBFB8BFu, 0xFFBFB8BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}, {{0xFFBFB8BFu, 0xFFBFB8BFu}, {0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}}},
         .nv = 2, .v = {{0, 0x00000000u}, {255, 0x00000000u}},
