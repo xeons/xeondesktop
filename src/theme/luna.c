@@ -147,12 +147,14 @@ static uint32_t scale_alpha(uint32_t argb, double k) {
     return out;
 }
 
-/* The shape drawn w x h (96 DPI px) into a new image. */
-static bool shape_image(image *im, const xd_shape *shape, int width, int height) {
+/* The shape drawn width x height px into a new image, each of its lines
+ * `unit` px thick and its corners `rad` px round. */
+static bool shape_image(image *im, const xd_shape *shape, int width, int height, int unit,
+                        double rad) {
     if (!image_new(im, width, height))
         return false;
     int nl = shape->lines[0], nt = shape->lines[1], nr = shape->lines[2], nb = shape->lines[3];
-    int top = nt, bottom = height - nb, left = nl, right = width - nr;
+    int top = nt * unit, bottom = height - nb * unit, left = nl * unit, right = width - nr * unit;
     uint32_t *vs = XD_NEW_ARRAY(uint32_t, (size_t)height);
     uint32_t *hs = XD_NEW_ARRAY(uint32_t, (size_t)width);
     for (int y = 0; y < height; y++)
@@ -162,7 +164,6 @@ static bool shape_image(image *im, const xd_shape *shape, int width, int height)
         hs[x] = along(shape->hs, shape->nh,
                       XD_CLAMP((x - left) * 255.0 / XD_MAX(right - 1 - left, 1), 0, 255));
     uint32_t hm = along(shape->hs, shape->nh, 127.5);
-    double rad = shape->radius;
     for (int y = 0; y < height; y++) {
         double ty = XD_CLAMP((y - top) / (double)XD_MAX(bottom - 1 - top, 1), 0, 1);
         for (int x = 0; x < width; x++) {
@@ -192,7 +193,7 @@ static bool shape_image(image *im, const xd_shape *shape, int width, int height)
                     }
                 }
             }
-            int layer = depth < 0 ? 0 : (int)depth;
+            int layer = depth < 0 ? 0 : (int)(depth / unit);
             uint32_t pixel;
             if (side >= 0 && layer < shape->lines[side]) {
                 bool upright = side == 0 || side == 2;
@@ -216,9 +217,22 @@ static bool shape_image(image *im, const xd_shape *shape, int width, int height)
 }
 
 void xd_shape_draw(const xd_theme *theme, cairo_t *cairo, const xd_shape *shape, xd_rect rect) {
+    if (rect.w <= 0 || rect.h <= 0)
+        return;
     image im;
-    if (rect.w > 0 && rect.h > 0 &&
-        shape_image(&im, shape, logical(theme, rect.w), logical(theme, rect.h)))
+    /* At a whole-number scale, drawn at 96 DPI and each pixel made a block
+     * (image_paint). At others that would be smoothed, blurring the lines
+     * and the few pixels that round a corner, so it's drawn at the
+     * monitor's resolution: its lines whole pixels thick, its corners'
+     * arcs scaled. */
+    double scale = theme->scale;
+    double unit_px = floor(scale + 0.25);
+    int unit = unit_px < 1 ? 1 : (int)unit_px;
+    bool drawn = fabs(scale - round(scale)) < 0.01
+                     ? shape_image(&im, shape, logical(theme, rect.w), logical(theme, rect.h), 1,
+                                   shape->radius)
+                     : shape_image(&im, shape, rect.w, rect.h, unit, shape->radius * scale);
+    if (drawn)
         image_paint(cairo, &im, rect);
 }
 
@@ -1382,7 +1396,8 @@ void xd_luna_draw_dropdown_button(const xd_theme *theme, cairo_t *cairo, xd_rect
     image im;
     int width = logical(theme, rect.w), height = logical(theme, rect.h);
     if (rect.w <= 0 || rect.h <= 0 ||
-        !shape_image(&im, &luna_art->dropdown[state_index], width, height))
+        !shape_image(&im, &luna_art->dropdown[state_index], width, height, 1,
+                     luna_art->dropdown[state_index].radius))
         return;
     /* The glyph is a 10 x 7 image centred, the chevron one pixel in. */
     put_chevron(&im, (width - 10) / 2 + 1, (height - 7) / 2 + 1, false,
@@ -1397,7 +1412,8 @@ static void scroll_arrow(const xd_theme *theme, cairo_t *cairo, const luna_contr
     image im;
     int width = logical(theme, rect.w), height = logical(theme, rect.h);
     if (rect.w <= 0 || rect.h <= 0 ||
-        !shape_image(&im, &luna_art->scrollarrow[(up ? 0 : 4) + state_index], width, height))
+        !shape_image(&im, &luna_art->scrollarrow[(up ? 0 : 4) + state_index], width, height, 1,
+                     luna_art->scrollarrow[(up ? 0 : 4) + state_index].radius))
         return;
     put_chevron(&im, (width - 9) / 2, (height - 9) / 2 + (up ? 1 : 2), up,
                 luna_art->scrollarrow_glyph[state_index]);
@@ -1420,7 +1436,8 @@ void xd_luna_draw_vscrollbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect
         return;
     image im;
     int width = logical(theme, thumb.w), height = logical(theme, thumb.h);
-    if (!shape_image(&im, &luna_art->scrollthumb[0], width, height))
+    if (!shape_image(&im, &luna_art->scrollthumb[0], width, height, 1,
+                     luna_art->scrollthumb[0].radius))
         return;
     /* The gripper, 8 x 8 and centred, where the thumb has room for it:
      * four light lines over four dark ones a pixel to the right. */
