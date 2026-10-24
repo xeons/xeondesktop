@@ -285,12 +285,15 @@ static void draw_aero_glyph(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
         const aero_rect *part_rect = &glyph->r[i];
         int ax, ay, bx, by;
         if (fractional) {
-            ax = snap_px(part_rect->x0 * k + 1) - 1, ay = snap_px(part_rect->y0 * k + 1) - 1;
+            ax = snap_px(part_rect->x0 * k + 1) - 1;
+            ay = snap_px(part_rect->y0 * k + 1) - 1;
             bx = ax + snap_px((part_rect->x1 - part_rect->x0 + 1) * k);
             by = ay + snap_px((part_rect->y1 - part_rect->y0 + 1) * k);
         } else {
-            ax = (int)lround(part_rect->x0 * k), ay = (int)lround(part_rect->y0 * k);
-            bx = (int)lround((part_rect->x1 + 1) * k), by = (int)lround((part_rect->y1 + 1) * k);
+            ax = (int)lround(part_rect->x0 * k);
+            ay = (int)lround(part_rect->y0 * k);
+            bx = (int)lround((part_rect->x1 + 1) * k);
+            by = (int)lround((part_rect->y1 + 1) * k);
         }
         cairo_rectangle(mask_cairo, ax, ay, bx - ax, by - ay);
     }
