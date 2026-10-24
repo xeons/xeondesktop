@@ -99,6 +99,13 @@ static uint8_t *tile_at(saver_maze *maze, int x, int y) {
     return &maze->map[(size_t)y * (size_t)maze->side + (size_t)x];
 }
 
+/* Writes inside the map only; make_maze's are, but this keeps it so. */
+static void set_tile(saver_maze *maze, int x, int y, uint8_t value) {
+    uint8_t *at = tile_at(maze, x, y);
+    if (at != nullptr)
+        *at = value;
+}
+
 static bool open_at(saver_maze *maze, int x, int y) {
     const uint8_t *at = tile_at(maze, x, y);
     return at != nullptr && *at == T_FLOOR;
@@ -335,7 +342,7 @@ static void make_maze(saver_maze *maze) {
     int top = 0;
     stack[top++] = 0;
     distance[0] = 0;
-    *tile_at(maze, 1, 1) = T_FLOOR;
+    set_tile(maze, 1, 1, T_FLOOR);
     int far = 0;
     while (top > 0) {
         int cell = stack[top - 1];
@@ -355,8 +362,8 @@ static void make_maze(saver_maze *maze) {
         distance[next] = distance[cell] + 1;
         if (distance[next] > distance[far])
             far = next;
-        *tile_at(maze, 2 * cx + 1 + step_x[d], 2 * cy + 1 + step_y[d]) = T_FLOOR;
-        *tile_at(maze, 2 * cx + 1 + 2 * step_x[d], 2 * cy + 1 + 2 * step_y[d]) = T_FLOOR;
+        set_tile(maze, 2 * cx + 1 + step_x[d], 2 * cy + 1 + step_y[d], T_FLOOR);
+        set_tile(maze, 2 * cx + 1 + 2 * step_x[d], 2 * cy + 1 + 2 * step_y[d], T_FLOOR);
         stack[top++] = next;
     }
     xd_free(stack);
@@ -391,8 +398,8 @@ static void make_maze(saver_maze *maze) {
             maze->exit_dir = d;
     }
     if (maze->exit_dir >= 0) {
-        *tile_at(maze, maze->exit_x + step_x[maze->exit_dir],
-                 maze->exit_y + step_y[maze->exit_dir]) = T_EXIT;
+        set_tile(maze, maze->exit_x + step_x[maze->exit_dir],
+                 maze->exit_y + step_y[maze->exit_dir], T_EXIT);
         maze->light[(maze->exit_y + step_y[maze->exit_dir]) * side + maze->exit_x +
                     step_x[maze->exit_dir]] = 255;
     }
