@@ -195,8 +195,15 @@ static bool shape_image(image *im, const xd_shape *shape, int width, int height)
             int layer = depth < 0 ? 0 : (int)depth;
             uint32_t pixel;
             if (side >= 0 && layer < shape->lines[side]) {
-                double fraction = side == 0 || side == 2 ? ty : tx;
-                pixel = mix(shape->edge[side][layer][0], shape->edge[side][layer][1], fraction);
+                bool upright = side == 0 || side == 2;
+                double fraction = upright ? ty : tx;
+                int count = upright && shape->sides != nullptr
+                                ? shape->sides->count[side / 2][layer]
+                                : 0;
+                pixel = count > 0 ? along(shape->sides->stops[side / 2][layer], count,
+                                          fraction * 255)
+                                  : mix(shape->edge[side][layer][0],
+                                        shape->edge[side][layer][1], fraction);
             } else {
                 pixel = shape_face(vs[y], hs[x], hm);
             }
@@ -471,6 +478,7 @@ static xd_shape *recolor_shapes(const xd_shape *shapes, size_t count,
                                 uint32_t (*recolor)(uint32_t)) {
     xd_shape *out = XD_NEW_ARRAY(xd_shape, count);
     for (size_t i = 0; i < count; i++) {
+        XD_ASSERT(shapes[i].sides == nullptr); /* Luna's have none to recolour */
         out[i] = shapes[i];
         for (int side = 0; side < 4; side++)
             for (int line = 0; line < 4; line++)

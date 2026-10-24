@@ -10,6 +10,26 @@
 
 #include "style.h"
 
+static const xd_side_lines aero_pushbutton_0_sides = {
+    .count = {{0, 0, 6, 0}, {0, 0, 6, 0}},
+    .stops = {{{}, {}, {{0, 0xFFEAEAEAu}, {16, 0xFFFCFCFCu}, {112, 0xFFFAFAFAu}, {143, 0xFFF6F6F6u}, {239, 0xFFF3F3F3u}, {255, 0xFFE2E2E2u}}, {}}, {{}, {}, {{0, 0xFFEAEAEAu}, {16, 0xFFFCFCFCu}, {112, 0xFFFAFAFAu}, {143, 0xFFF6F6F6u}, {239, 0xFFF3F3F3u}, {255, 0xFFE2E2E2u}}, {}}},
+};
+static const xd_side_lines aero_pushbutton_1_sides = {
+    .count = {{0, 0, 6, 0}, {0, 0, 6, 0}},
+    .stops = {{{}, {}, {{0, 0xFFE1EDF4u}, {16, 0xFFF9FDFEu}, {112, 0xFFF5FBFEu}, {128, 0xFFEFF9FEu}, {239, 0xFFE9F6FDu}, {255, 0xFFD3E6F2u}}, {}}, {{}, {}, {{0, 0xFFE1EDF4u}, {16, 0xFFF9FDFEu}, {112, 0xFFF5FBFEu}, {128, 0xFFEFF9FEu}, {239, 0xFFE9F6FDu}, {255, 0xFFD3E6F2u}}, {}}},
+};
+static const xd_side_lines aero_pushbutton_2_sides = {
+    .count = {{0, 0, 6, 0}, {0, 0, 6, 0}},
+    .stops = {{{}, {}, {{0, 0xFF869DABu}, {16, 0xFFAABCC7u}, {32, 0xFFB0C3CEu}, {128, 0xFF9ABACBu}, {143, 0xFF78AAC5u}, {255, 0xFF5592B5u}}, {}}, {{}, {}, {{0, 0xFF95ABB8u}, {16, 0xFFAABCC7u}, {32, 0xFFB0C3CEu}, {128, 0xFF9ABACBu}, {143, 0xFF78AAC5u}, {255, 0xFF5592B5u}}, {}}},
+};
+static const xd_side_lines aero_pushbutton_4_sides = {
+    .count = {{0, 4, 0, 0}, {0, 4, 0, 0}},
+    .stops = {{{}, {{0, 0xDE346F9Au}, {16, 0xFF3C7FB1u}, {239, 0xFF3C7FB1u}, {255, 0xDE346F9Au}}, {}, {}}, {{}, {{0, 0xDE346F9Au}, {16, 0xFF3C7FB1u}, {239, 0xFF3C7FB1u}, {255, 0xDE346F9Au}}, {}, {}}},
+};
+static const xd_side_lines aero_pushbutton_5_sides = {
+    .count = {{0, 4, 0, 0}, {0, 4, 0, 0}},
+    .stops = {{{}, {{0, 0xDE346F9Au}, {16, 0xFF3C7FB1u}, {239, 0xFF3C7FB1u}, {255, 0xDE346F9Au}}, {}, {}}, {{}, {{0, 0xDE346F9Au}, {16, 0xFF3C7FB1u}, {239, 0xFF3C7FB1u}, {255, 0xDE346F9Au}}, {}, {}}},
+};
 /* Button PushButton (images/516.png, states 1 to 6). */
 static const xd_shape aero_pushbutton[6] = {
     {
@@ -18,6 +38,7 @@ static const xd_shape aero_pushbutton[6] = {
         .edge = {{{0x00000000u, 0x00000000u}, {0xFF757575u, 0xFF757575u}, {0xFFEAEAEAu, 0xFFE2E2E2u}}, {{0x00000000u, 0x00000000u}, {0xFF777777u, 0xFF777777u}, {0xFFE8E8E8u, 0xFFE8E8E8u}}, {{0x00000000u, 0x00000000u}, {0xFF757575u, 0xFF757575u}, {0xFFEAEAEAu, 0xFFE2E2E2u}}, {{0x00000000u, 0x00000000u}, {0xFF757575u, 0xFF757575u}, {0xFFE4E4E4u, 0xFFE4E4E4u}}},
         .nv = 5, .v = {{0, 0xFFF4F4F4u}, {112, 0xFFEBEBEBu}, {128, 0xFFDDDDDDu}, {239, 0xFFD1D1D1u}, {255, 0xFFD7D7D7u}},
         .nh = 2, .hs = {{0, 0xFFE4E4E4u}, {255, 0xFFE4E4E4u}},
+        .sides = &aero_pushbutton_0_sides,
     },
     {
         .w = 13, .h = 23, .radius = 4,
@@ -25,6 +46,7 @@ static const xd_shape aero_pushbutton[6] = {
         .edge = {{{0x00000000u, 0x00000000u}, {0xFF3E80B2u, 0xFF3E81B2u}, {0xFFE1EDF4u, 0xFFD3E6F2u}}, {{0x00000000u, 0x00000000u}, {0xFF4283B3u, 0xFF4283B3u}, {0xFFDFEBF3u, 0xFFDFEBF3u}}, {{0x00000000u, 0x00000000u}, {0xFF3E80B2u, 0xFF3E81B2u}, {0xFFE1EDF4u, 0xFFD3E6F2u}}, {{0x00000000u, 0x00000000u}, {0xFF3E80B2u, 0xFF3E80B2u}, {0xFFD4E7F3u, 0xFFD4E7F3u}}},
         .nv = 6, .v = {{0, 0xFFEEF7FDu}, {32, 0xFFE6F5FDu}, {112, 0xFFD9F0FCu}, {128, 0xFFBEE6FDu}, {239, 0xFFA9DBF6u}, {255, 0xFFB6E0F7u}},
         .nh = 4, .hs = {{0, 0xFFCDEBFBu}, {85, 0xFFC9E9FBu}, {212, 0xFFC9E9FBu}, {255, 0xFFCDEBFBu}},
+        .sides = &aero_pushbutton_1_sides,
     },
     {
         .w = 13, .h = 23, .radius = 4,
@@ -32,6 +54,7 @@ static const xd_shape aero_pushbutton[6] = {
         .edge = {{{0x00000000u, 0x00000000u}, {0xFF2C5F86u, 0xFF2D6188u}, {0xFF869DABu, 0xFF5592B5u}}, {{0x00000000u, 0x00000000u}, {0xFF2E6086u, 0xFF2E6086u}, {0xFF869DABu, 0xFF95ABB8u}}, {{0x00000000u, 0x00000000u}, {0xFF2C5F86u, 0xFF2D6188u}, {0xFF95ABB8u, 0xFF5592B5u}}, {{0x00000000u, 0x00000000u}, {0xFF2E648Cu, 0xFF2E648Cu}, {0xFF63ACD3u, 0xFF63ACD3u}}},
         .nv = 6, .v = {{0, 0xFFD6E6EFu}, {16, 0xFFE1F0F9u}, {64, 0xFFD8EEFAu}, {128, 0xFFC4E5F6u}, {143, 0xFF98D1EFu}, {255, 0xFF6DB5DCu}},
         .nh = 3, .hs = {{0, 0xFFACD7EEu}, {170, 0xFFAFDAF0u}, {255, 0xFFACD7EEu}},
+        .sides = &aero_pushbutton_2_sides,
     },
     {
         .w = 13, .h = 23, .radius = 4,
@@ -46,6 +69,7 @@ static const xd_shape aero_pushbutton[6] = {
         .edge = {{{0x00000000u, 0x00000000u}, {0xDE346F9Au, 0xDE346F9Au}, {0xFF46CCF1u, 0xFF3EC3E9u}}, {{0x00000000u, 0x00000000u}, {0xDB346D98u, 0xDB346D98u}, {0xFF46CBF1u, 0xFF46CBF1u}}, {{0x00000000u, 0x00000000u}, {0xDE346F9Au, 0xDE346F9Au}, {0xFF46CCF1u, 0xFF3EC3E9u}}, {{0x00000000u, 0x00000000u}, {0xE134709Cu, 0xE134709Cu}, {0xFF3DC4E9u, 0xFF3DC4E9u}}},
         .nv = 6, .v = {{0, 0xFFCBECF4u}, {16, 0xFFF2F2F2u}, {112, 0xFFEBEBEBu}, {128, 0xFFDDDDDDu}, {239, 0xFFD1D1D1u}, {255, 0xFFAECED7u}},
         .nh = 4, .hs = {{0, 0xFFD3E0E4u}, {42, 0xFFE2E2E2u}, {212, 0xFFE2E2E2u}, {255, 0xFFD3E0E4u}},
+        .sides = &aero_pushbutton_4_sides,
     },
     {
         .w = 13, .h = 23, .radius = 4,
@@ -53,6 +77,7 @@ static const xd_shape aero_pushbutton[6] = {
         .edge = {{{0x00000000u, 0x00000000u}, {0xDE346F9Au, 0xDE346F9Au}, {0xFF24C7F5u, 0xFF1DC4F4u}}, {{0x00000000u, 0x00000000u}, {0xDB346D98u, 0xDB346D98u}, {0xFF23C6F4u, 0xFF23C6F4u}}, {{0x00000000u, 0x00000000u}, {0xDE346F9Au, 0xDE346F9Au}, {0xFF24C7F5u, 0xFF1DC4F4u}}, {{0x00000000u, 0x00000000u}, {0xE134709Cu, 0xE134709Cu}, {0xFF1DC5F5u, 0xFF1DC5F5u}}},
         .nv = 6, .v = {{0, 0xFF83E4FEu}, {16, 0xFFCFF1FDu}, {112, 0xFFCAEFFDu}, {128, 0xFFB2E7FCu}, {239, 0xFF9FDDF8u}, {255, 0xFF63D6FAu}},
         .nh = 4, .hs = {{0, 0xFF79DFFDu}, {42, 0xFFC7EBFBu}, {212, 0xFFC7EBFBu}, {255, 0xFF79DFFDu}},
+        .sides = &aero_pushbutton_5_sides,
     },
 };
 /* Button CheckBox (images/508.png, states 1 to 4). */
@@ -127,6 +152,10 @@ static const xd_shape aero_field[4] = {
         .nh = 1, .hs = {{0, 0xFFFFFFFFu}},
     },
 };
+static const xd_side_lines aero_dropdown_2_sides = {
+    .count = {{0, 6, 0, 0}, {0, 6, 0, 0}},
+    .stops = {{{}, {{0, 0xFF95ABB8u}, {16, 0xFFAABCC7u}, {32, 0xFFB0C3CEu}, {128, 0xFF9ABACBu}, {143, 0xFF78AAC5u}, {255, 0xFF5592B5u}}, {}, {}}, {{}, {{0, 0xFF9EB0BAu}, {16, 0xFFAABCC7u}, {32, 0xFFB0C3CEu}, {128, 0xFF9ABACBu}, {143, 0xFF78AAC5u}, {255, 0xFF5592B5u}}, {}, {}}},
+};
 /* ComboBox DropDownButtonRight (images/524.png, states 1 to 4). */
 static const xd_shape aero_dropdown[4] = {
     {
@@ -149,6 +178,7 @@ static const xd_shape aero_dropdown[4] = {
         .edge = {{{0xFF2C628Bu, 0xFF2C628Bu}, {0xFF95ABB8u, 0xFF5592B5u}}, {{0xFF2C628Bu, 0xFF2C628Bu}, {0xFF9EB0BAu, 0xFF9EB0BAu}}, {{0xFF2C628Bu, 0xFF2C628Bu}, {0xFF9EB0BAu, 0xFF5592B5u}}, {{0xFF2C628Bu, 0xFF2C628Bu}, {0xFF63ACD3u, 0xFF63ACD3u}}},
         .nv = 6, .v = {{0, 0xFFDEEDF6u}, {16, 0xFFDEEDF5u}, {32, 0xFFE0F1FAu}, {128, 0xFFC4E5F6u}, {143, 0xFF98D1EFu}, {255, 0xFF6DB5DCu}},
         .nh = 1, .hs = {{0, 0xFFAED9F0u}},
+        .sides = &aero_dropdown_2_sides,
     },
     {
         .w = 5, .h = 21, .radius = 4,
@@ -369,6 +399,22 @@ static const xd_shape aero_tabtop[5] = {
         .nh = 1, .hs = {{0, 0xFFEEF6FCu}},
     },
 };
+static const xd_side_lines aero_dwm_min_0_sides = {
+    .count = {{6, 6, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xC1575757u}, {85, 0xAC383838u}, {102, 0xAC383838u}, {119, 0x82000000u}, {187, 0x8A08080Au}, {255, 0x94212124u}}, {{0, 0xC1575757u}, {85, 0xAC383838u}, {102, 0xAC383838u}, {119, 0x82000000u}, {187, 0x8A08080Au}, {255, 0x94212124u}}, {{0, 0xCBC8C8C8u}, {102, 0xBCB1B1B1u}, {119, 0x9B848484u}, {221, 0xA8959599u}, {238, 0xAA9A9A9Eu}, {255, 0xCCC5C5C8u}}, {}}, {{{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_1_sides = {
+    .count = {{6, 6, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xFB576B7Au}, {85, 0xF9395467u}, {102, 0xF9395467u}, {119, 0xF5002845u}, {187, 0xF6092E4Au}, {255, 0xF7224660u}}, {{0, 0xFB576B7Au}, {85, 0xF9395467u}, {102, 0xF9395467u}, {119, 0xF5002845u}, {187, 0xF6092E4Au}, {255, 0xF7224660u}}, {{0, 0xFBD2E2EFu}, {102, 0xFABFD6E5u}, {119, 0xF584ACC8u}, {204, 0xF68FB4CFu}, {238, 0xF799BCD8u}, {255, 0xFCCFE5EFu}}, {}}, {{{0, 0xF9BDD8E7u}, {102, 0xF8A6C5DBu}, {119, 0xF2528BB1u}, {204, 0xF36297BDu}, {238, 0xF470A2C8u}, {255, 0xF997CEE2u}}, {{0, 0xF9BDD8E7u}, {102, 0xF8A6C5DBu}, {119, 0xF2528BB1u}, {204, 0xF36297BDu}, {238, 0xF470A2C8u}, {255, 0xF997CEE2u}}, {{0, 0xF7A2C7DFu}, {102, 0xF47DABCBu}, {119, 0xEB045890u}, {204, 0xED1B689Fu}, {238, 0xEE2F78AEu}, {255, 0xF995D4E5u}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_2_sides = {
+    .count = {{6, 6, 5, 0}, {6, 6, 5, 0}},
+    .stops = {{{{0, 0xFF6F7E89u}, {68, 0xFF4A6373u}, {102, 0xFF465A6Eu}, {119, 0xFF021323u}, {238, 0xFF10233Au}, {255, 0xFF132840u}}, {{0, 0xFF6F7E89u}, {68, 0xFF4A6373u}, {102, 0xFF465A6Eu}, {119, 0xFF021323u}, {238, 0xFF10233Au}, {255, 0xFF132840u}}, {{0, 0xFFCAD8E1u}, {102, 0xFFAEC0CFu}, {119, 0xFF8694A3u}, {238, 0xFF90A2B5u}, {255, 0xFFCADAE2u}}, {}}, {{{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Du}, {238, 0xFF647C97u}, {255, 0xFF8FB7C8u}}, {{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Du}, {238, 0xFF647C97u}, {255, 0xFF8FB7C8u}}, {{0, 0xFF90AEC1u}, {102, 0xFF597E9Cu}, {119, 0xFF072343u}, {238, 0xFF1B3F68u}, {255, 0xFF8EC0CFu}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_3_sides = {
+    .count = {{6, 6, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xC1575757u}, {85, 0xAC383838u}, {102, 0xAC383838u}, {119, 0x82000000u}, {187, 0x8A08080Au}, {255, 0x94212124u}}, {{0, 0xC1575757u}, {85, 0xAC383838u}, {102, 0xAC383838u}, {119, 0x82000000u}, {187, 0x8A08080Au}, {255, 0x94212124u}}, {{0, 0xCBC8C8C8u}, {102, 0xBCB1B1B1u}, {119, 0x9B848484u}, {221, 0xA8959599u}, {238, 0xAA9A9A9Eu}, {255, 0xCCC5C5C8u}}, {}}, {{{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}}, {}}},
+};
 /* DWMWindow MinButton (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_min[4] = {
     {
@@ -377,6 +423,7 @@ static const xd_shape aero_dwm_min[4] = {
         .edge = {{{0xC1575757u, 0x94212124u}, {0xC1575757u, 0x94212124u}, {0xCBC8C8C8u, 0xCCC5C5C8u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0x928B8B8Bu, 0x928B8B8Bu}}, {{0xB5B0B0B0u, 0x9588898Cu}, {0xB5B0B0B0u, 0x9588898Cu}, {0x928B8B8Bu, 0x9588898Cu}}, {{0xA9A8A8A8u, 0xA9A8A8A8u}, {0xA9A8A8A8u, 0xA9A8A8A8u}, {0xAF121213u, 0xAF121213u}}},
         .nv = 6, .v = {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}},
         .nh = 2, .hs = {{0, 0x60444446u}, {255, 0x60444446u}},
+        .sides = &aero_dwm_min_0_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -384,6 +431,7 @@ static const xd_shape aero_dwm_min[4] = {
         .edge = {{{0xFB576B7Au, 0xF7224660u}, {0xFB576B7Au, 0xF7224660u}, {0xFBD2E2EFu, 0xFCCFE5EFu}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xF7A0C5DEu, 0xF6A3C8DFu}}, {{0xF9BDD8E7u, 0xF997CEE2u}, {0xF9BDD8E7u, 0xF997CEE2u}, {0xF7A2C7DFu, 0xF995D4E5u}}, {{0xA9A8A8A8u, 0xA9A8A8A8u}, {0xA9A8A8A8u, 0xA9A8A8A8u}, {0xF812344Au, 0xF715374Cu}}},
         .nv = 6, .v = {{0, 0xF6ABCFE6u}, {102, 0xF389B7D4u}, {119, 0xEA1A6BA1u}, {153, 0xED167AA9u}, {238, 0xF831B6D3u}, {255, 0xFD3BF2F5u}},
         .nh = 4, .hs = {{0, 0xF1508DB7u}, {85, 0xF557B7D3u}, {181, 0xF459B6D3u}, {255, 0xF05592BAu}},
+        .sides = &aero_dwm_min_1_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -391,6 +439,7 @@ static const xd_shape aero_dwm_min[4] = {
         .edge = {{{0xFF6F7E89u, 0xFF132840u}, {0xFF6F7E89u, 0xFF132840u}, {0xFFCAD8E1u, 0xFFCADAE2u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFF8FACC1u, 0xFF93B1C3u}}, {{0xFFB3C8D5u, 0xFF8FB7C8u}, {0xFFB3C8D5u, 0xFF8FB7C8u}, {0xFF90AEC1u, 0xFF8EC0CFu}}, {{0xA9A8A8A8u, 0xA9A8A8A8u}, {0xA9A8A8A8u, 0xA9A8A8A8u}, {0xFF021830u, 0xFF084073u}}},
         .nv = 5, .v = {{0, 0xFF9CB7C9u}, {102, 0xFF5E98AEu}, {119, 0xFF0C5068u}, {238, 0xFF1A9DA6u}, {255, 0xFF38ECEEu}},
         .nh = 6, .hs = {{0, 0xFF416381u}, {42, 0xFF45839Au}, {85, 0xFF43A6B0u}, {159, 0xFF43AAB3u}, {202, 0xFF4592A5u}, {255, 0xFF456986u}},
+        .sides = &aero_dwm_min_2_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -398,7 +447,24 @@ static const xd_shape aero_dwm_min[4] = {
         .edge = {{{0xC1575757u, 0x94212124u}, {0xC1575757u, 0x94212124u}, {0xCBC8C8C8u, 0xCCC5C5C8u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0x928B8B8Bu, 0x928B8B8Bu}}, {{0xB5B0B0B0u, 0x9588898Cu}, {0xB5B0B0B0u, 0x9588898Cu}, {0x928B8B8Bu, 0x9588898Cu}}, {{0xA9A8A8A8u, 0xA9A8A8A8u}, {0xA9A8A8A8u, 0xA9A8A8A8u}, {0xAF121213u, 0xAF121213u}}},
         .nv = 6, .v = {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}},
         .nh = 2, .hs = {{0, 0x60444446u}, {255, 0x60444446u}},
+        .sides = &aero_dwm_min_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_min_inactive_0_sides = {
+    .count = {{0, 0, 3, 0}, {0, 0, 3, 0}},
+    .stops = {{{}, {}, {{0, 0x4B4A4A4Au}, {238, 0x4B4A4A4Au}, {255, 0x66666666u}}, {}}, {{}, {}, {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_inactive_1_sides = {
+    .count = {{6, 6, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xFB576B7Au}, {85, 0xF9395467u}, {102, 0xF9395467u}, {119, 0xF5002845u}, {187, 0xF6092E4Au}, {255, 0xF7224660u}}, {{0, 0xFB576B7Au}, {85, 0xF9395467u}, {102, 0xF9395467u}, {119, 0xF5002845u}, {187, 0xF6092E4Au}, {255, 0xF7224660u}}, {{0, 0xFBD2E2EFu}, {102, 0xFABFD6E5u}, {119, 0xF584ACC8u}, {204, 0xF68FB4CFu}, {238, 0xF799BCD8u}, {255, 0xFCCFE5EFu}}, {}}, {{{0, 0xF9BDD8E7u}, {102, 0xF8A6C5DBu}, {119, 0xF2528BB1u}, {204, 0xF36297BDu}, {238, 0xF470A2C8u}, {255, 0xF997CEE2u}}, {{0, 0xF9BDD8E7u}, {102, 0xF8A6C5DBu}, {119, 0xF2528BB1u}, {204, 0xF36297BDu}, {238, 0xF470A2C8u}, {255, 0xF997CEE2u}}, {{0, 0xF7A2C7DFu}, {102, 0xF47DABCBu}, {119, 0xEB045890u}, {204, 0xED1B689Fu}, {238, 0xEE2F78AEu}, {255, 0xF995D4E5u}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_inactive_2_sides = {
+    .count = {{6, 6, 5, 0}, {6, 6, 5, 0}},
+    .stops = {{{{0, 0xFF6F7E89u}, {68, 0xFF4A6373u}, {102, 0xFF465A6Eu}, {119, 0xFF021323u}, {238, 0xFF10233Au}, {255, 0xFF132840u}}, {{0, 0xFF6F7E89u}, {68, 0xFF4A6373u}, {102, 0xFF465A6Eu}, {119, 0xFF021323u}, {238, 0xFF10233Au}, {255, 0xFF132840u}}, {{0, 0xFFCAD8E1u}, {102, 0xFFAEC0CFu}, {119, 0xFF8694A3u}, {238, 0xFF90A2B5u}, {255, 0xFFCADAE2u}}, {}}, {{{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Du}, {238, 0xFF647C97u}, {255, 0xFF8FB7C8u}}, {{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Du}, {238, 0xFF647C97u}, {255, 0xFF8FB7C8u}}, {{0, 0xFF90AEC1u}, {102, 0xFF597E9Cu}, {119, 0xFF072343u}, {238, 0xFF1B3F68u}, {255, 0xFF8EC0CFu}}, {}}},
+};
+static const xd_side_lines aero_dwm_min_inactive_3_sides = {
+    .count = {{0, 0, 3, 0}, {0, 0, 3, 0}},
+    .stops = {{{}, {}, {{0, 0x4B4A4A4Au}, {238, 0x4B4A4A4Au}, {255, 0x66666666u}}, {}}, {{}, {}, {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}}, {}}},
 };
 /* DWMWindow MinButtonInactive (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_min_inactive[4] = {
@@ -408,6 +474,7 @@ static const xd_shape aero_dwm_min_inactive[4] = {
         .edge = {{{0x39000000u, 0x39000000u}, {0x39000000u, 0x39000000u}, {0x4B4A4A4Au, 0x66666666u}}, {{0x23222222u, 0x23222222u}, {0x23222222u, 0x23222222u}, {0x00000000u, 0x00000000u}}, {{0x2E2D2D2Du, 0x3A393939u}, {0x2E2D2D2Du, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x5F5E5E5Eu}, {0x5F5E5E5Eu, 0x5F5E5E5Eu}, {0x56000000u, 0x56000000u}}},
         .nv = 3, .v = {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}},
         .nh = 2, .hs = {{0, 0x04040404u}, {255, 0x04040404u}},
+        .sides = &aero_dwm_min_inactive_0_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -415,6 +482,7 @@ static const xd_shape aero_dwm_min_inactive[4] = {
         .edge = {{{0xFB576B7Au, 0xF7224660u}, {0xFB576B7Au, 0xF7224660u}, {0xFBD2E2EFu, 0xFCCFE5EFu}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xF7A0C5DEu, 0xF6A3C8DFu}}, {{0xF9BDD8E7u, 0xF997CEE2u}, {0xF9BDD8E7u, 0xF997CEE2u}, {0xF7A2C7DFu, 0xF995D4E5u}}, {{0x7F7E7E7Eu, 0x7F7E7E7Eu}, {0x7F7E7E7Eu, 0x7F7E7E7Eu}, {0xF812344Au, 0xF715374Cu}}},
         .nv = 6, .v = {{0, 0xF6ABCFE6u}, {102, 0xF389B7D4u}, {119, 0xEA1A6BA1u}, {153, 0xED167AA9u}, {238, 0xF831B6D3u}, {255, 0xFD3BF2F5u}},
         .nh = 4, .hs = {{0, 0xF1508DB7u}, {85, 0xF557B7D3u}, {181, 0xF459B6D3u}, {255, 0xF05592BAu}},
+        .sides = &aero_dwm_min_inactive_1_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -422,6 +490,7 @@ static const xd_shape aero_dwm_min_inactive[4] = {
         .edge = {{{0xFF6F7E89u, 0xFF132840u}, {0xFF6F7E89u, 0xFF132840u}, {0xFFCAD8E1u, 0xFFCADAE2u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFF8FACC1u, 0xFF93B1C3u}}, {{0xFFB3C8D5u, 0xFF8FB7C8u}, {0xFFB3C8D5u, 0xFF8FB7C8u}, {0xFF90AEC1u, 0xFF8EC0CFu}}, {{0x7F7E7E7Eu, 0x7F7E7E7Eu}, {0x7F7E7E7Eu, 0x7F7E7E7Eu}, {0xFF021830u, 0xFF084073u}}},
         .nv = 5, .v = {{0, 0xFF9CB7C9u}, {102, 0xFF5E98AEu}, {119, 0xFF0C5068u}, {238, 0xFF1A9CA6u}, {255, 0xFF38ECEEu}},
         .nh = 6, .hs = {{0, 0xFF416381u}, {42, 0xFF45839Au}, {85, 0xFF43A6B0u}, {159, 0xFF43AAB3u}, {202, 0xFF4592A5u}, {255, 0xFF456986u}},
+        .sides = &aero_dwm_min_inactive_2_sides,
     },
     {
         .w = 31, .h = 22, .radius = 22,
@@ -429,7 +498,24 @@ static const xd_shape aero_dwm_min_inactive[4] = {
         .edge = {{{0x39000000u, 0x39000000u}, {0x39000000u, 0x39000000u}, {0x4B4A4A4Au, 0x66666666u}}, {{0x23222222u, 0x23222222u}, {0x23222222u, 0x23222222u}, {0x00000000u, 0x00000000u}}, {{0x2E2D2D2Du, 0x3A393939u}, {0x2E2D2D2Du, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x5F5E5E5Eu}, {0x5F5E5E5Eu, 0x5F5E5E5Eu}, {0x56000000u, 0x56000000u}}},
         .nv = 3, .v = {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}},
         .nh = 2, .hs = {{0, 0x04040404u}, {255, 0x04040404u}},
+        .sides = &aero_dwm_min_inactive_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_max_0_sides = {
+    .count = {{4, 4, 5, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0x99000000u}, {187, 0x99000000u}, {221, 0x85030303u}, {238, 0x6E1A1A1Au}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_1_sides = {
+    .count = {{4, 4, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0xFB3A4B57u}, {102, 0xF9253C4Au}, {119, 0xF6002138u}, {221, 0xF2133550u}, {238, 0xD62D4F68u}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xF8BED8E8u}, {102, 0xF7A6C7DBu}, {119, 0xEF528CB3u}, {204, 0xF26297BFu}, {238, 0xF270A2C9u}, {255, 0xF798CAE1u}}, {{0, 0xF8BED8E8u}, {102, 0xF7A6C7DBu}, {119, 0xEF528CB3u}, {204, 0xF26297BFu}, {238, 0xF270A2C9u}, {255, 0xF798CAE1u}}, {{0, 0xF5A2C7DEu}, {102, 0xF37EACCCu}, {119, 0xE8045891u}, {204, 0xEB1B68A1u}, {238, 0xED2E7BB1u}, {255, 0xF899D2E5u}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_2_sides = {
+    .count = {{6, 6, 6, 0}, {6, 6, 5, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {68, 0xA9A8A8A8u}, {85, 0xE2E1E1E1u}, {102, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {255, 0x34333333u}}, {{0, 0xA9A8A8A8u}, {68, 0xA9A8A8A8u}, {85, 0xE2E1E1E1u}, {102, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {255, 0x34333333u}}, {{0, 0xFF35434Bu}, {102, 0xFF142535u}, {119, 0xFF020E19u}, {221, 0xFC0D1D2Eu}, {238, 0xEB273A4Cu}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Eu}, {238, 0xFF647C97u}, {255, 0xFF8FB1C1u}}, {{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Eu}, {238, 0xFF647C97u}, {255, 0xFF8FB1C1u}}, {{0, 0xFF90AEC1u}, {102, 0xFF587D9Cu}, {119, 0xFF062243u}, {238, 0xFF1A3F68u}, {255, 0xFF8FB9CAu}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_3_sides = {
+    .count = {{4, 4, 5, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0xA9A8A8A8u}, {221, 0xA9A8A8A8u}, {238, 0x80808080u}, {255, 0x34333333u}}, {{0, 0x99000000u}, {187, 0x99000000u}, {221, 0x85030303u}, {238, 0x6E1A1A1Au}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0xB5B0B0B0u}, {102, 0xA1939393u}, {119, 0x72525252u}, {187, 0x7B5B5C5Eu}, {238, 0x88717276u}, {255, 0x9588898Cu}}, {{0, 0x928B8B8Bu}, {102, 0x745F5F5Fu}, {119, 0x2E000000u}, {204, 0x4418181Eu}, {238, 0x4E2B2D34u}, {255, 0x9588898Cu}}, {}}},
 };
 /* DWMWindow MaxButton (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_max[4] = {
@@ -439,6 +525,7 @@ static const xd_shape aero_dwm_max[4] = {
         .edge = {{{0xA9A8A8A8u, 0x34333333u}, {0xA9A8A8A8u, 0x34333333u}, {0x99000000u, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xBEB9B9B9u, 0x928B8B8Bu}}, {{0xB5B0B0B0u, 0x9588898Cu}, {0xB5B0B0B0u, 0x9588898Cu}, {0x928B8B8Bu, 0x9588898Cu}}, {{0x37363636u, 0xA9A8A8A8u}, {0x37363636u, 0xA9A8A8A8u}, {0x988D8D8Du, 0x99000000u}}},
         .nv = 6, .v = {{0, 0x948D8D8Du}, {102, 0x76626262u}, {119, 0x31040404u}, {204, 0x481C1C22u}, {238, 0x552F3138u}, {255, 0x97808184u}},
         .nh = 4, .hs = {{0, 0xA2818182u}, {11, 0x66444546u}, {53, 0x60444446u}, {255, 0x60444446u}},
+        .sides = &aero_dwm_max_0_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -446,6 +533,7 @@ static const xd_shape aero_dwm_max[4] = {
         .edge = {{{0xA9A8A8A8u, 0x34333333u}, {0xA9A8A8A8u, 0x34333333u}, {0xFB3A4B57u, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xF9C6DDEAu, 0xF5A2C9E1u}}, {{0xF8BED8E8u, 0xF798CAE1u}, {0xF8BED8E8u, 0xF798CAE1u}, {0xF5A2C7DEu, 0xF899D2E5u}}, {{0x37363636u, 0xA9A8A8A8u}, {0x37363636u, 0xA9A8A8A8u}, {0x988D8D8Du, 0xF8143C50u}}},
         .nv = 6, .v = {{0, 0xF6ABCFE6u}, {102, 0xF38AB8D5u}, {119, 0xE91A6DA3u}, {153, 0xED177BABu}, {238, 0xF737B6D2u}, {255, 0xFD47E4E9u}},
         .nh = 6, .hs = {{0, 0xF68CAFC7u}, {11, 0xF0538EB6u}, {74, 0xF25CACCEu}, {128, 0xF556BAD6u}, {191, 0xF457B5D3u}, {255, 0xF05495BDu}},
+        .sides = &aero_dwm_max_1_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -453,6 +541,7 @@ static const xd_shape aero_dwm_max[4] = {
         .edge = {{{0xA9A8A8A8u, 0x34333333u}, {0xA9A8A8A8u, 0x34333333u}, {0xFF35434Bu, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFBCCEDAu, 0xFF92B0C2u}}, {{0xFFB3C8D5u, 0xFF8FB1C1u}, {0xFFB3C8D5u, 0xFF8FB1C1u}, {0xFF90AEC1u, 0xFF8FB9CAu}}, {{0x37363636u, 0xA9A8A8A8u}, {0x37363636u, 0xA9A8A8A8u}, {0x988D8D8Du, 0xFF274553u}}},
         .nv = 5, .v = {{0, 0xFF9CB7C9u}, {102, 0xFF6097AEu}, {119, 0xFF0F4F68u}, {238, 0xFF229CA6u}, {255, 0xFF42DCDFu}},
         .nh = 6, .hs = {{0, 0xFF8497A8u}, {11, 0xFF456581u}, {64, 0xFF488DA1u}, {117, 0xFF42ABB2u}, {181, 0xFF42A0ADu}, {255, 0xFF446885u}},
+        .sides = &aero_dwm_max_2_sides,
     },
     {
         .w = 31, .h = 22, .radius = 0,
@@ -460,7 +549,24 @@ static const xd_shape aero_dwm_max[4] = {
         .edge = {{{0xA9A8A8A8u, 0x34333333u}, {0xA9A8A8A8u, 0x34333333u}, {0x99000000u, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xBEB9B9B9u, 0x928B8B8Bu}}, {{0xB5B0B0B0u, 0x9588898Cu}, {0xB5B0B0B0u, 0x9588898Cu}, {0x928B8B8Bu, 0x9588898Cu}}, {{0x37363636u, 0xA9A8A8A8u}, {0x37363636u, 0xA9A8A8A8u}, {0x988D8D8Du, 0x99000000u}}},
         .nv = 6, .v = {{0, 0x948D8D8Du}, {102, 0x76626262u}, {119, 0x31040404u}, {204, 0x481C1C22u}, {238, 0x57313339u}, {255, 0x9A818285u}},
         .nh = 4, .hs = {{0, 0xA5838384u}, {11, 0x6A464748u}, {32, 0x61444547u}, {255, 0x60444446u}},
+        .sides = &aero_dwm_max_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_max_inactive_0_sides = {
+    .count = {{4, 4, 5, 0}, {0, 0, 3, 0}},
+    .stops = {{{{0, 0x5F5E5E5Eu}, {221, 0x5F5E5E5Eu}, {238, 0x48474747u}, {255, 0x1D1C1C1Cu}}, {{0, 0x5F5E5E5Eu}, {221, 0x5F5E5E5Eu}, {238, 0x48474747u}, {255, 0x1D1C1C1Cu}}, {{0, 0x56000000u}, {187, 0x56000000u}, {221, 0x4B010101u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}, {{}, {}, {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_inactive_1_sides = {
+    .count = {{4, 4, 6, 0}, {6, 6, 6, 0}},
+    .stops = {{{{0, 0x7F7E7E7Eu}, {221, 0x7F7E7E7Eu}, {238, 0x60606060u}, {255, 0x27262626u}}, {{0, 0x7F7E7E7Eu}, {221, 0x7F7E7E7Eu}, {238, 0x60606060u}, {255, 0x27262626u}}, {{0, 0xFB3A4B57u}, {102, 0xF9253C4Au}, {119, 0xF6002138u}, {221, 0xF2133550u}, {238, 0xD62D4F68u}, {255, 0x7A696969u}}, {}}, {{{0, 0xF8BED8E8u}, {102, 0xF7A6C7DBu}, {119, 0xEF528CB3u}, {204, 0xF26297BFu}, {238, 0xF270A2C9u}, {255, 0xF798CAE1u}}, {{0, 0xF8BED8E8u}, {102, 0xF7A6C7DBu}, {119, 0xEF528CB3u}, {204, 0xF26297BFu}, {238, 0xF270A2C9u}, {255, 0xF798CAE1u}}, {{0, 0xF5A2C7DEu}, {102, 0xF37EACCCu}, {119, 0xE8045891u}, {204, 0xEB1B68A1u}, {238, 0xED2E7BB1u}, {255, 0xF899D2E5u}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_inactive_2_sides = {
+    .count = {{4, 4, 6, 0}, {6, 6, 5, 0}},
+    .stops = {{{{0, 0x7F7E7E7Eu}, {221, 0x7F7E7E7Eu}, {238, 0x60606060u}, {255, 0x27262626u}}, {{0, 0x7F7E7E7Eu}, {221, 0x7F7E7E7Eu}, {238, 0x60606060u}, {255, 0x27262626u}}, {{0, 0xFF35434Bu}, {102, 0xFF142535u}, {119, 0xFF020E19u}, {221, 0xFC0D1D2Eu}, {238, 0xEB273A4Cu}, {255, 0x7A696969u}}, {}}, {{{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Eu}, {238, 0xFF647C97u}, {255, 0xFF8FB1C1u}}, {{0, 0xFFB3C8D5u}, {51, 0xFF9DB8CAu}, {102, 0xFF8EA6BBu}, {119, 0xFF55697Eu}, {238, 0xFF647C97u}, {255, 0xFF8FB1C1u}}, {{0, 0xFF90AEC1u}, {102, 0xFF587D9Cu}, {119, 0xFF062243u}, {238, 0xFF1A3F68u}, {255, 0xFF8FB9CAu}}, {}}},
+};
+static const xd_side_lines aero_dwm_max_inactive_3_sides = {
+    .count = {{4, 4, 5, 0}, {0, 0, 3, 0}},
+    .stops = {{{{0, 0x5F5E5E5Eu}, {221, 0x5F5E5E5Eu}, {238, 0x48474747u}, {255, 0x1D1C1C1Cu}}, {{0, 0x5F5E5E5Eu}, {221, 0x5F5E5E5Eu}, {238, 0x48474747u}, {255, 0x1D1C1C1Cu}}, {{0, 0x56000000u}, {187, 0x56000000u}, {221, 0x4B010101u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}, {{}, {}, {{0, 0x00000000u}, {238, 0x00000000u}, {255, 0x3A393939u}}, {}}},
 };
 /* DWMWindow MaxButtonInactive (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_max_inactive[4] = {
@@ -470,6 +576,7 @@ static const xd_shape aero_dwm_max_inactive[4] = {
         .edge = {{{0x5F5E5E5Eu, 0x1D1C1C1Cu}, {0x5F5E5E5Eu, 0x1D1C1C1Cu}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x3A393939u, 0x23222222u}, {0x3A393939u, 0x23222222u}, {0x3A393939u, 0x00000000u}}, {{0x2E2D2D2Du, 0x3A393939u}, {0x2E2D2D2Du, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x1F1E1E1Eu, 0x5F5E5E5Eu}, {0x1F1E1E1Eu, 0x5F5E5E5Eu}, {0x55505050u, 0x56000000u}}},
         .nv = 4, .v = {{0, 0x02020202u}, {221, 0x04030303u}, {238, 0x07050505u}, {255, 0x3E373737u}},
         .nh = 4, .hs = {{0, 0x41373737u}, {11, 0x0A070707u}, {42, 0x04040404u}, {255, 0x04040404u}},
+        .sides = &aero_dwm_max_inactive_0_sides,
     },
     {
         .w = 31, .h = 22, .radius = 4,
@@ -477,6 +584,7 @@ static const xd_shape aero_dwm_max_inactive[4] = {
         .edge = {{{0x7F7E7E7Eu, 0x27262626u}, {0x7F7E7E7Eu, 0x27262626u}, {0xFB3A4B57u, 0x7A696969u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xF9C6DDEAu, 0xF5A2C9E1u}}, {{0xF8BED8E8u, 0xF798CAE1u}, {0xF8BED8E8u, 0xF798CAE1u}, {0xF5A2C7DEu, 0xF899D2E5u}}, {{0x29282828u, 0x7F7E7E7Eu}, {0x29282828u, 0x7F7E7E7Eu}, {0x726A6A6Au, 0xF8143C50u}}},
         .nv = 6, .v = {{0, 0xF5ABCFE6u}, {102, 0xF38AB8D5u}, {119, 0xE91A6DA3u}, {153, 0xED177BABu}, {238, 0xF737B6D2u}, {255, 0xFD47E4E9u}},
         .nh = 6, .hs = {{0, 0xF68CAFC7u}, {11, 0xF0538EB6u}, {74, 0xF25CACCEu}, {117, 0xF456B9D5u}, {191, 0xF457B5D3u}, {255, 0xF05495BDu}},
+        .sides = &aero_dwm_max_inactive_1_sides,
     },
     {
         .w = 31, .h = 22, .radius = 4,
@@ -484,6 +592,7 @@ static const xd_shape aero_dwm_max_inactive[4] = {
         .edge = {{{0x7F7E7E7Eu, 0x27262626u}, {0x7F7E7E7Eu, 0x27262626u}, {0xFF35434Bu, 0x7A696969u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFBCCEDAu, 0xFF92B0C2u}}, {{0xFFB3C8D5u, 0xFF8FB1C1u}, {0xFFB3C8D5u, 0xFF8FB1C1u}, {0xFF90AEC1u, 0xFF8FB9CAu}}, {{0x29282828u, 0x7F7E7E7Eu}, {0x29282828u, 0x7F7E7E7Eu}, {0x726A6A6Au, 0xFF274553u}}},
         .nv = 5, .v = {{0, 0xFF9CB7C9u}, {102, 0xFF6097AEu}, {119, 0xFF0F5068u}, {238, 0xFF229DA6u}, {255, 0xFF43DCDFu}},
         .nh = 6, .hs = {{0, 0xFF8497A8u}, {11, 0xFF456581u}, {64, 0xFF488DA1u}, {117, 0xFF42ABB2u}, {181, 0xFF42A0ADu}, {255, 0xFF446885u}},
+        .sides = &aero_dwm_max_inactive_2_sides,
     },
     {
         .w = 31, .h = 22, .radius = 22,
@@ -491,7 +600,24 @@ static const xd_shape aero_dwm_max_inactive[4] = {
         .edge = {{{0x5F5E5E5Eu, 0x1D1C1C1Cu}, {0x5F5E5E5Eu, 0x1D1C1C1Cu}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x3A393939u, 0x23222222u}, {0x3A393939u, 0x23222222u}, {0x3A393939u, 0x00000000u}}, {{0x2E2D2D2Du, 0x3A393939u}, {0x2E2D2D2Du, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x1F1E1E1Eu, 0x5F5E5E5Eu}, {0x1F1E1E1Eu, 0x5F5E5E5Eu}, {0x55505050u, 0x56000000u}}},
         .nv = 4, .v = {{0, 0x02020202u}, {221, 0x04030303u}, {238, 0x07050505u}, {255, 0x3E373737u}},
         .nh = 4, .hs = {{0, 0x41373737u}, {11, 0x0A070707u}, {42, 0x04040404u}, {255, 0x04040404u}},
+        .sides = &aero_dwm_max_inactive_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_close_0_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xF88D6058u}, {85, 0xF5824438u}, {102, 0xF5824438u}, {119, 0xF16E1100u}, {187, 0xF26E190Bu}, {255, 0xF37F3124u}}, {{0, 0xF88D6058u}, {85, 0xF5824438u}, {102, 0xF5824438u}, {119, 0xF16E1100u}, {187, 0xF26E190Bu}, {255, 0xF37F3124u}}, {{0, 0xCCC1A8A4u}, {102, 0xCCB89590u}, {119, 0xCCA8746Cu}, {170, 0xCCA87871u}, {238, 0xCCB19089u}, {255, 0xCCC0ACA8u}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFA523D3Au}, {102, 0xF9472A25u}, {119, 0xF6320800u}, {221, 0xF3441B15u}, {238, 0xD6603631u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_1_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xFF3F2B28u}, {85, 0xFF3A1D19u}, {102, 0xFF3A1D19u}, {119, 0xFF2C0701u}, {170, 0xFF2E0A04u}, {255, 0xFF3A1F11u}}, {{0, 0xFF3F2B28u}, {85, 0xFF3A1D19u}, {102, 0xFF3A1D19u}, {119, 0xFF2C0701u}, {170, 0xFF2E0A04u}, {255, 0xFF3A1F11u}}, {{0, 0xFFF3CEC8u}, {102, 0xFFEBB9B1u}, {119, 0xFFD39087u}, {204, 0xFFDDA492u}, {238, 0xFFE6B49Cu}, {255, 0xFFF2D4C2u}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_2_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xFF57514Cu}, {85, 0xFF4E443Du}, {102, 0xFF4E443Du}, {119, 0xFF1A0901u}, {187, 0xFF1B0F05u}, {255, 0xFF211B0Eu}}, {{0, 0xFF57514Cu}, {85, 0xFF4E443Du}, {102, 0xFF4E443Du}, {119, 0xFF1A0901u}, {187, 0xFF1B0F05u}, {255, 0xFF211B0Eu}}, {{0, 0xFFD7C8BEu}, {102, 0xFFC9B2A6u}, {119, 0xFFA28984u}, {221, 0xFFA9978Au}, {238, 0xFFAB9E8Bu}, {255, 0xFFD0C8BBu}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_3_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xE07F574Fu}, {85, 0xDD753D32u}, {102, 0xDD753D32u}, {119, 0xD9630F00u}, {187, 0xDA63160Au}, {255, 0xDB722C20u}}, {{0, 0xE07F574Fu}, {85, 0xDD753D32u}, {102, 0xDD753D32u}, {119, 0xD9630F00u}, {187, 0xDA63160Au}, {255, 0xDB722C20u}}, {{0, 0x79726360u}, {102, 0x796C5854u}, {119, 0x79634440u}, {170, 0x79634742u}, {238, 0x79695451u}, {255, 0x79716563u}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xE14A3734u}, {102, 0xE1402621u}, {119, 0xDE2D0700u}, {221, 0xDB3D1813u}, {238, 0xC156312Cu}, {255, 0xA38D8D8Du}}, {}}},
 };
 /* DWMWindow CloseButton (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_close[4] = {
@@ -501,6 +627,7 @@ static const xd_shape aero_dwm_close[4] = {
         .edge = {{{0xF88D6058u, 0xF37F3124u}, {0xF88D6058u, 0xF37F3124u}, {0xCCC1A8A4u, 0xCCC0ACA8u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xCCB6847Cu, 0xCCC0A19Cu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFA523D3Au, 0xA38D8D8Du}}, {{0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xF6491B13u, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xCCC18276u}, {102, 0xCCB25D4Fu}, {119, 0xCC981A04u}, {187, 0xCC9A2F18u}, {238, 0xCCA75842u}, {255, 0xCDB8897Cu}},
         .nh = 5, .hs = {{0, 0xCC994C40u}, {87, 0xCCB5523Du}, {174, 0xCCB3513Du}, {249, 0xCC974D42u}, {255, 0xCEA27670u}},
+        .sides = &aero_dwm_close_0_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -508,6 +635,7 @@ static const xd_shape aero_dwm_close[4] = {
         .edge = {{{0xFF3F2B28u, 0xFF3A1F11u}, {0xFF3F2B28u, 0xFF3A1F11u}, {0xFFF3CEC8u, 0xFFF2D4C2u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFE6988Cu, 0xFFEFBCB4u}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF5C3F3Au, 0xA38D8D8Du}}, {{0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xFF582E15u, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xFFF49C8Cu}, {102, 0xFFE7735Fu}, {119, 0xFFC12105u}, {170, 0xFFC62F0Du}, {238, 0xFFDC8432u}, {255, 0xFFECCC78u}},
         .nh = 6, .hs = {{0, 0xFFC85E46u}, {81, 0xFFE66E44u}, {174, 0xFFE56D44u}, {243, 0xFFC96047u}, {249, 0xFFC65F49u}, {255, 0xFFCE8C7Eu}},
+        .sides = &aero_dwm_close_1_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -515,6 +643,7 @@ static const xd_shape aero_dwm_close[4] = {
         .edge = {{{0xFF57514Cu, 0xFF211B0Eu}, {0xFF57514Cu, 0xFF211B0Eu}, {0xFFD7C8BEu, 0xFFD0C8BBu}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFAB8D78u, 0xFFCEBBAEu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF3F3229u, 0xA38D8D8Du}}, {{0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xD528200Fu, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xFFC6A18Bu}, {102, 0xFFB0765Cu}, {119, 0xFF741403u}, {187, 0xFF752C07u}, {238, 0xFF805F1Cu}, {255, 0xFED4B148u}},
         .nh = 5, .hs = {{0, 0xFF734833u}, {87, 0xFFAA683Du}, {180, 0xFFA8673Eu}, {249, 0xFE7B4E3Au}, {255, 0xFCA2897Eu}},
+        .sides = &aero_dwm_close_2_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -522,7 +651,24 @@ static const xd_shape aero_dwm_close[4] = {
         .edge = {{{0xE07F574Fu, 0xDB722C20u}, {0xE07F574Fu, 0xDB722C20u}, {0x79726360u, 0x79716563u}}, {{0xA8A5A5A5u, 0xA8A5A5A5u}, {0xA8A5A5A5u, 0xA8A5A5A5u}, {0x796C4D49u, 0x79715F5Cu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xE14A3734u, 0xA38D8D8Du}}, {{0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xA9A8A8A8u, 0x3F3E3E3Eu}, {0xDE421811u, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0x79724C46u}, {102, 0x7969372Eu}, {119, 0x795A0F02u}, {187, 0x795B1B0Eu}, {238, 0x79623426u}, {255, 0x7B6D5149u}},
         .nh = 5, .hs = {{0, 0x795A2D26u}, {87, 0x796B3024u}, {180, 0x79693024u}, {249, 0x79592D27u}, {255, 0x7F614642u}},
+        .sides = &aero_dwm_close_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_close_inactive_0_sides = {
+    .count = {{0, 0, 3, 0}, {3, 3, 5, 0}},
+    .stops = {{{}, {}, {{0, 0x4B4A4A4Au}, {238, 0x4B4A4A4Au}, {255, 0x66666666u}}, {}}, {{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_inactive_1_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xFF3F2B28u}, {85, 0xFF3A1D19u}, {102, 0xFF3A1D19u}, {119, 0xFF2C0701u}, {170, 0xFF2E0A04u}, {255, 0xFF3A1F11u}}, {{0, 0xFF3F2B28u}, {85, 0xFF3A1D19u}, {102, 0xFF3A1D19u}, {119, 0xFF2C0701u}, {170, 0xFF2E0A04u}, {255, 0xFF3A1F11u}}, {{0, 0xFFF3CEC8u}, {102, 0xFFEBB9B1u}, {119, 0xFFD39087u}, {204, 0xFFDDA492u}, {238, 0xFFE6B49Cu}, {255, 0xFFF2D4C2u}}, {}}, {{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0x7A696969u}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_inactive_2_sides = {
+    .count = {{6, 6, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xFF57514Cu}, {85, 0xFF4E443Du}, {102, 0xFF4E443Du}, {119, 0xFF1A0901u}, {187, 0xFF1B0F05u}, {255, 0xFF211B0Eu}}, {{0, 0xFF57514Cu}, {85, 0xFF4E443Du}, {102, 0xFF4E443Du}, {119, 0xFF1A0901u}, {187, 0xFF1B0F05u}, {255, 0xFF211B0Eu}}, {{0, 0xFFD7C8BEu}, {102, 0xFFC9B2A6u}, {119, 0xFFA28984u}, {221, 0xFFA9978Au}, {238, 0xFFAB9E8Bu}, {255, 0xFFD0C8BBu}}, {}}, {{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0x7A696969u}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_inactive_3_sides = {
+    .count = {{0, 0, 3, 0}, {3, 3, 5, 0}},
+    .stops = {{{}, {}, {{0, 0x4B4A4A4Au}, {238, 0x4B4A4A4Au}, {255, 0x66666666u}}, {}}, {{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}},
 };
 /* DWMWindow CloseButtonInactive (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_close_inactive[4] = {
@@ -532,6 +678,7 @@ static const xd_shape aero_dwm_close_inactive[4] = {
         .edge = {{{0x39000000u, 0x39000000u}, {0x39000000u, 0x39000000u}, {0x4B4A4A4Au, 0x66666666u}}, {{0x23222222u, 0x3A393939u}, {0x23222222u, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x5F5E5E5Eu, 0x231D1D1Du}, {0x5F5E5E5Eu, 0x231D1D1Du}, {0x56000000u, 0x55505050u}}},
         .nv = 4, .v = {{0, 0x01010101u}, {221, 0x02020202u}, {238, 0x04030303u}, {255, 0x3C383838u}},
         .nh = 4, .hs = {{0, 0x04040404u}, {243, 0x06050505u}, {249, 0x0A070707u}, {255, 0x40373737u}},
+        .sides = &aero_dwm_close_inactive_0_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -539,6 +686,7 @@ static const xd_shape aero_dwm_close_inactive[4] = {
         .edge = {{{0xFF3F2B28u, 0xFF3A1F11u}, {0xFF3F2B28u, 0xFF3A1F11u}, {0xFFF3CEC8u, 0xFFF2D4C2u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFE6988Cu, 0xFFEFBCB4u}}, {{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF5C3F3Au, 0x7A696969u}}, {{0x7F7E7E7Eu, 0x2F272727u}, {0x7F7E7E7Eu, 0x2F272727u}, {0xFF582E15u, 0x726A6A6Au}}},
         .nv = 6, .v = {{0, 0xFFF49C8Cu}, {102, 0xFFE7735Fu}, {119, 0xFFC12105u}, {170, 0xFFC62F0Du}, {238, 0xFFDC8432u}, {255, 0xFFECCC78u}},
         .nh = 6, .hs = {{0, 0xFFC85E46u}, {81, 0xFFE66E44u}, {174, 0xFFE56D44u}, {243, 0xFFC96047u}, {249, 0xFFC65F49u}, {255, 0xFFCE8C7Eu}},
+        .sides = &aero_dwm_close_inactive_1_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -546,6 +694,7 @@ static const xd_shape aero_dwm_close_inactive[4] = {
         .edge = {{{0xFF57514Cu, 0xFF211B0Eu}, {0xFF57514Cu, 0xFF211B0Eu}, {0xFFD7C8BEu, 0xFFD0C8BBu}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFAB8D78u, 0xFFCEBBAEu}}, {{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF3F3229u, 0x7A696969u}}, {{0x7F7E7E7Eu, 0x2F272727u}, {0x7F7E7E7Eu, 0x2F272727u}, {0xD528200Fu, 0x726A6A6Au}}},
         .nv = 6, .v = {{0, 0xFFC6A18Bu}, {102, 0xFFB0765Cu}, {119, 0xFF741403u}, {187, 0xFF752C07u}, {238, 0xFF805F1Cu}, {255, 0xFED4B148u}},
         .nh = 5, .hs = {{0, 0xFF734833u}, {87, 0xFFAA683Du}, {180, 0xFFA8673Eu}, {249, 0xFE7B4E3Au}, {255, 0xFCA2897Eu}},
+        .sides = &aero_dwm_close_inactive_2_sides,
     },
     {
         .w = 51, .h = 22, .radius = 22,
@@ -553,7 +702,24 @@ static const xd_shape aero_dwm_close_inactive[4] = {
         .edge = {{{0x39000000u, 0x39000000u}, {0x39000000u, 0x39000000u}, {0x4B4A4A4Au, 0x66666666u}}, {{0x23222222u, 0x3A393939u}, {0x23222222u, 0x3A393939u}, {0x00000000u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x5F5E5E5Eu, 0x231D1D1Du}, {0x5F5E5E5Eu, 0x231D1D1Du}, {0x56000000u, 0x55505050u}}},
         .nv = 4, .v = {{0, 0x01010101u}, {221, 0x02020202u}, {238, 0x04030303u}, {255, 0x3C383838u}},
         .nh = 4, .hs = {{0, 0x04040404u}, {243, 0x06050505u}, {249, 0x0A070707u}, {255, 0x40373737u}},
+        .sides = &aero_dwm_close_inactive_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_close_alone_0_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFA523D3Au}, {102, 0xF9472A25u}, {119, 0xF6320800u}, {221, 0xF3441B15u}, {238, 0xD6603631u}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFA523D3Au}, {102, 0xF9472A25u}, {119, 0xF6320800u}, {221, 0xF3441B15u}, {238, 0xD6603631u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_1_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_2_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0xA38D8D8Du}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_3_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xE14A3734u}, {102, 0xE1402621u}, {119, 0xDE2D0700u}, {221, 0xDB3D1813u}, {238, 0xC156312Cu}, {255, 0xA38D8D8Du}}, {}}, {{{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xA9A8A8A8u}, {238, 0xA9A8A8A8u}, {255, 0x3C3C3C3Cu}}, {{0, 0xE14A3734u}, {102, 0xE1402621u}, {119, 0xDE2D0700u}, {221, 0xDB3D1813u}, {238, 0xC156312Cu}, {255, 0xA38D8D8Du}}, {}}},
 };
 /* DWMWindow CloseButtonAlone (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_close_alone[4] = {
@@ -563,6 +729,7 @@ static const xd_shape aero_dwm_close_alone[4] = {
         .edge = {{{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFA523D3Au, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xCCC0A19Cu, 0xCCC0A19Cu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFA523D3Au, 0xA38D8D8Du}}, {{0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x988D8D8Du, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xCCC18277u}, {102, 0xCCB25E50u}, {119, 0xCC991B06u}, {187, 0xCC9B301Au}, {238, 0xCEA85A45u}, {255, 0xD0B5877Au}},
         .nh = 6, .hs = {{0, 0xD1A47871u}, {6, 0xCF994F43u}, {99, 0xCCB5523Du}, {185, 0xCCB0513Eu}, {249, 0xCF994F43u}, {255, 0xD1A47871u}},
+        .sides = &aero_dwm_close_alone_0_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -570,6 +737,7 @@ static const xd_shape aero_dwm_close_alone[4] = {
         .edge = {{{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF5C3F3Au, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFEFBCB4u, 0xFFEFBCB4u}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF5C3F3Au, 0xA38D8D8Du}}, {{0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x988D8D8Du, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xFFF49C8Du}, {102, 0xFFE77460u}, {119, 0xFFC22207u}, {170, 0xFFC6310Eu}, {238, 0xFFDC8635u}, {255, 0xFFE7C875u}},
         .nh = 6, .hs = {{0, 0xFFCE8C7Eu}, {6, 0xFFC65F49u}, {93, 0xFFE76E44u}, {180, 0xFFE46C44u}, {249, 0xFFC65F49u}, {255, 0xFFCE8C7Eu}},
+        .sides = &aero_dwm_close_alone_1_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -577,6 +745,7 @@ static const xd_shape aero_dwm_close_alone[4] = {
         .edge = {{{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF3F3229u, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFCEBBAEu, 0xFFCEBBAEu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xFF3F3229u, 0xA38D8D8Du}}, {{0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x988D8D8Du, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0xFFC8A28Du}, {102, 0xFFB3785Eu}, {119, 0xFF771605u}, {187, 0xFF782F0Au}, {238, 0xFF836321u}, {255, 0xFDCEAD48u}},
         .nh = 6, .hs = {{0, 0xFCA2897Eu}, {6, 0xFE7B4E3Au}, {81, 0xFFAA683Eu}, {180, 0xFFA8673Eu}, {249, 0xFE7B4E3Au}, {255, 0xFCA2897Eu}},
+        .sides = &aero_dwm_close_alone_2_sides,
     },
     {
         .w = 51, .h = 22, .radius = 0,
@@ -584,7 +753,24 @@ static const xd_shape aero_dwm_close_alone[4] = {
         .edge = {{{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xE14A3734u, 0xA38D8D8Du}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0x79715F5Cu, 0x79715F5Cu}}, {{0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xA9A8A8A8u, 0x3C3C3C3Cu}, {0xE14A3734u, 0xA38D8D8Du}}, {{0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x3F3E3E3Eu, 0x3F3E3E3Eu}, {0x988D8D8Du, 0x988D8D8Du}}},
         .nv = 6, .v = {{0, 0x79724D46u}, {102, 0x7969382Fu}, {119, 0x795A1003u}, {187, 0x795B1C0Fu}, {238, 0x7A633528u}, {255, 0x7F6C5048u}},
         .nh = 6, .hs = {{0, 0x81624743u}, {6, 0x7B5A2E27u}, {93, 0x796B3024u}, {180, 0x79693024u}, {249, 0x7B5A2E27u}, {255, 0x81624743u}},
+        .sides = &aero_dwm_close_alone_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_close_alone_inactive_0_sides = {
+    .count = {{3, 3, 5, 0}, {3, 3, 5, 0}},
+    .stops = {{{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}, {{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_inactive_1_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0x7A696969u}}, {}}, {{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF5C3F3Au}, {102, 0xFF552B25u}, {119, 0xFF400A02u}, {221, 0xFC5A2813u}, {238, 0xDC734633u}, {255, 0x7A696969u}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_inactive_2_sides = {
+    .count = {{3, 3, 6, 0}, {3, 3, 6, 0}},
+    .stops = {{{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0x7A696969u}}, {}}, {{{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0x7F7E7E7Eu}, {238, 0x7F7E7E7Eu}, {255, 0x2D2C2C2Cu}}, {{0, 0xFF3F3229u}, {102, 0xFF2F170Du}, {153, 0xFF1A0501u}, {221, 0xE8271608u}, {238, 0xB0342D26u}, {255, 0x7A696969u}}, {}}},
+};
+static const xd_side_lines aero_dwm_close_alone_inactive_3_sides = {
+    .count = {{3, 3, 5, 0}, {3, 3, 5, 0}},
+    .stops = {{{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}, {{{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x5F5E5E5Eu}, {238, 0x5F5E5E5Eu}, {255, 0x22222222u}}, {{0, 0x56000000u}, {204, 0x54000000u}, {221, 0x4C000000u}, {238, 0x3D0E0E0Eu}, {255, 0x5B4E4E4Eu}}, {}}},
 };
 /* DWMWindow CloseButtonAloneInactive (images/stream-971.png, states 1 to 4). */
 static const xd_shape aero_dwm_close_alone_inactive[4] = {
@@ -594,6 +780,7 @@ static const xd_shape aero_dwm_close_alone_inactive[4] = {
         .edge = {{{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}, {0x3A393939u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x23222222u, 0x23222222u}, {0x23222222u, 0x23222222u}, {0x55505050u, 0x55505050u}}},
         .nv = 4, .v = {{0, 0x03030303u}, {221, 0x04040404u}, {238, 0x08060606u}, {255, 0x3F373737u}},
         .nh = 6, .hs = {{0, 0x40373737u}, {6, 0x0A070707u}, {24, 0x04040404u}, {243, 0x06050505u}, {249, 0x0A070707u}, {255, 0x40373737u}},
+        .sides = &aero_dwm_close_alone_inactive_0_sides,
     },
     {
         .w = 50, .h = 22, .radius = 4,
@@ -601,6 +788,7 @@ static const xd_shape aero_dwm_close_alone_inactive[4] = {
         .edge = {{{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF5C3F3Au, 0x7A696969u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFEFBCB4u, 0xFFEFBCB4u}}, {{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF5C3F3Au, 0x7A696969u}}, {{0x2F2E2E2Eu, 0x2F2E2E2Eu}, {0x2F2E2E2Eu, 0x2F2E2E2Eu}, {0x726A6A6Au, 0x726A6A6Au}}},
         .nv = 6, .v = {{0, 0xFFF49C8Du}, {102, 0xFFE77460u}, {119, 0xFFC12207u}, {170, 0xFFC6300Eu}, {238, 0xFFDB8535u}, {255, 0xFFE7C775u}},
         .nh = 6, .hs = {{0, 0xFFCE8C7Eu}, {6, 0xFFC65F49u}, {95, 0xFFE76E44u}, {184, 0xFFE26B44u}, {249, 0xFFC65F49u}, {255, 0xFFCE8C7Eu}},
+        .sides = &aero_dwm_close_alone_inactive_1_sides,
     },
     {
         .w = 50, .h = 22, .radius = 4,
@@ -608,6 +796,7 @@ static const xd_shape aero_dwm_close_alone_inactive[4] = {
         .edge = {{{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF3F3229u, 0x7A696969u}}, {{0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFFCFCFCu, 0xFFFCFCFCu}, {0xFFCEBBAEu, 0xFFCEBBAEu}}, {{0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0x7F7E7E7Eu, 0x2D2C2C2Cu}, {0xFF3F3229u, 0x7A696969u}}, {{0x2F2E2E2Eu, 0x2F2E2E2Eu}, {0x2F2E2E2Eu, 0x2F2E2E2Eu}, {0x726A6A6Au, 0x726A6A6Au}}},
         .nv = 6, .v = {{0, 0xFFC8A28Cu}, {102, 0xFFB2775Eu}, {119, 0xFF771605u}, {187, 0xFF782F0Au}, {238, 0xFF836321u}, {255, 0xFCCEAD49u}},
         .nh = 6, .hs = {{0, 0xFCA2897Eu}, {6, 0xFE7B4E3Au}, {83, 0xFFAA683Eu}, {178, 0xFFA8673Eu}, {249, 0xFE7B4E3Au}, {255, 0xFCA2897Eu}},
+        .sides = &aero_dwm_close_alone_inactive_2_sides,
     },
     {
         .w = 50, .h = 22, .radius = 22,
@@ -615,7 +804,12 @@ static const xd_shape aero_dwm_close_alone_inactive[4] = {
         .edge = {{{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}, {0x3A393939u, 0x3A393939u}}, {{0x5F5E5E5Eu, 0x22222222u}, {0x5F5E5E5Eu, 0x22222222u}, {0x56000000u, 0x5B4E4E4Eu}}, {{0x23222222u, 0x23222222u}, {0x23222222u, 0x23222222u}, {0x55505050u, 0x55505050u}}},
         .nv = 4, .v = {{0, 0x03030303u}, {221, 0x04040404u}, {238, 0x08060606u}, {255, 0x3F373737u}},
         .nh = 6, .hs = {{0, 0x40373737u}, {6, 0x0A070707u}, {24, 0x04040404u}, {243, 0x06050505u}, {249, 0x0A070707u}, {255, 0x40373737u}},
+        .sides = &aero_dwm_close_alone_inactive_3_sides,
     },
+};
+static const xd_side_lines aero_dwm_glow_0_sides = {
+    .count = {{0, 0, 0, 4}, {0, 0, 4, 5}},
+    .stops = {{{}, {}, {}, {{0, 0x07020506u}, {74, 0x210C1A20u}, {181, 0x200B1920u}, {255, 0x06020406u}}}, {{}, {}, {{0, 0x05020405u}, {90, 0x19091318u}, {165, 0x18081218u}, {255, 0x04010204u}}, {{0, 0x08020508u}, {74, 0x280E2028u}, {156, 0x2A0F2129u}, {214, 0x1A091419u}, {255, 0x07020506u}}}},
 };
 /* DWMWindow ButtonGlow (images/stream-971.png, states 1 to 1). */
 static const xd_shape aero_dwm_glow[1] = {
@@ -625,7 +819,12 @@ static const xd_shape aero_dwm_glow[1] = {
         .edge = {{{0x01000101u, 0x01000101u}, {0x01000101u, 0x01000101u}, {0x04010204u, 0x04010204u}, {0x07020506u, 0x06020406u}}, {{0x02000202u, 0x02000202u}, {0x02000202u, 0x02000202u}, {0x03010203u, 0x04010204u}, {0x06020406u, 0x07020506u}}, {{0x02000202u, 0x02000202u}, {0x02000202u, 0x02000202u}, {0x05020405u, 0x04010204u}, {0x08020508u, 0x07020506u}}, {{0x00000000u, 0x00000000u}, {0x00000000u, 0x00000000u}, {0x04010204u, 0x04010204u}, {0x06020406u, 0x07020506u}}},
         .nv = 6, .v = {{0, 0x3F17323Du}, {33, 0xB44491B1u}, {41, 0x200C1A1Fu}, {206, 0x3012262Fu}, {214, 0xAC418BA9u}, {255, 0x3A162E39u}},
         .nh = 6, .hs = {{0, 0x2A0F2128u}, {38, 0xAC418BA9u}, {45, 0x3012272Fu}, {217, 0x2D11242Cu}, {223, 0x95387893u}, {255, 0x2F11252Du}},
+        .sides = &aero_dwm_glow_0_sides,
     },
+};
+static const xd_side_lines aero_dwm_close_glow_0_sides = {
+    .count = {{0, 0, 4, 4}, {0, 0, 0, 4}},
+    .stops = {{{}, {}, {{0, 0x04040101u}, {90, 0x18180B08u}, {189, 0x14140908u}, {255, 0x03030201u}}, {{0, 0x07060302u}, {74, 0x2423110Du}, {181, 0x2322110Du}, {255, 0x05050302u}}}, {{}, {}, {}, {{0, 0x05050302u}, {74, 0x1B1A0D09u}, {181, 0x19180C09u}, {255, 0x03030201u}}}},
 };
 /* DWMWindow CloseGlow (images/stream-971.png, states 1 to 1). */
 static const xd_shape aero_dwm_close_glow[1] = {
@@ -635,7 +834,28 @@ static const xd_shape aero_dwm_close_glow[1] = {
         .edge = {{{0x02020000u, 0x02020000u}, {0x02020000u, 0x02020000u}, {0x04040101u, 0x03030201u}, {0x07060302u, 0x05050302u}}, {{0x02020000u, 0x01010100u}, {0x02020000u, 0x01010100u}, {0x03030201u, 0x02020000u}, {0x06060202u, 0x05050302u}}, {{0x01010100u, 0x00000000u}, {0x01010100u, 0x00000000u}, {0x03030201u, 0x02020000u}, {0x05050302u, 0x03030201u}}, {{0x01010100u, 0x00000000u}, {0x01010100u, 0x00000000u}, {0x02020000u, 0x01010100u}, {0x04040101u, 0x02020000u}}},
         .nv = 6, .v = {{0, 0x37351A14u}, {33, 0xAFAC5843u}, {41, 0x11110806u}, {206, 0x1B1A0D0Au}, {214, 0x97944C3Au}, {255, 0x2A291510u}},
         .nh = 6, .hs = {{0, 0x2827130Eu}, {27, 0x8A884535u}, {31, 0x2524130Eu}, {228, 0x2120100Du}, {233, 0x817F4031u}, {255, 0x2120100Cu}},
+        .sides = &aero_dwm_close_glow_0_sides,
     },
+};
+static const xd_side_lines aero_basic_button_0_sides = {
+    .count = {{0, 5, 0, 0}, {0, 5, 0, 0}},
+    .stops = {{{}, {{0, 0xFFDFE8F2u}, {106, 0xFFDCE7F2u}, {128, 0xFFC8D5E4u}, {170, 0xFFCAD7E5u}, {255, 0xFFD8E6F3u}}, {}, {}}, {{}, {{0, 0xFFDFE8F2u}, {106, 0xFFDCE7F3u}, {128, 0xFFC8D5E4u}, {170, 0xFFCAD7E6u}, {255, 0xFFD8E6F3u}}, {}, {}}},
+};
+static const xd_side_lines aero_basic_button_1_sides = {
+    .count = {{0, 6, 0, 0}, {0, 6, 0, 0}},
+    .stops = {{{}, {{0, 0xFFD1E8F9u}, {106, 0xFFBBDDF3u}, {128, 0xFF8EB4CEu}, {170, 0xFF8EB7D2u}, {234, 0xFF8CD1EEu}, {255, 0xFF89E0F4u}}, {}, {}}, {{}, {{0, 0xFFD1E8F9u}, {106, 0xFFBBDCF3u}, {128, 0xFF8EB4CEu}, {170, 0xFF8EB6D2u}, {234, 0xFF8CD1EEu}, {255, 0xFF89E0F4u}}, {}, {}}},
+};
+static const xd_side_lines aero_basic_button_2_sides = {
+    .count = {{0, 6, 0, 0}, {0, 5, 0, 0}},
+    .stops = {{{}, {{0, 0xFFA7BAC6u}, {85, 0xFF93A4B3u}, {106, 0xFF90A2B0u}, {128, 0xFF667888u}, {170, 0xFF657D8Cu}, {255, 0xFF6BDAD9u}}, {}, {}}, {{}, {{0, 0xFFA7BAC6u}, {106, 0xFF90A1B0u}, {128, 0xFF667888u}, {170, 0xFF657D8Cu}, {255, 0xFF6BDAD9u}}, {}, {}}},
+};
+static const xd_side_lines aero_basic_button_5_sides = {
+    .count = {{0, 6, 0, 0}, {0, 6, 0, 0}},
+    .stops = {{{}, {{0, 0xFFD1E8F9u}, {106, 0xFFBBDDF3u}, {128, 0xFF8EB4CEu}, {170, 0xFF8EB7D3u}, {234, 0xFF8CD1EEu}, {255, 0xFF89E0F4u}}, {}, {}}, {{}, {{0, 0xFFD1E8F9u}, {106, 0xFFBBDCF4u}, {128, 0xFF8EB4CEu}, {170, 0xFF8EB7D2u}, {234, 0xFF8CD1EEu}, {255, 0xFF89E0F4u}}, {}, {}}},
+};
+static const xd_side_lines aero_basic_button_6_sides = {
+    .count = {{0, 5, 0, 0}, {0, 6, 0, 0}},
+    .stops = {{{}, {{0, 0xFFA7BAC6u}, {106, 0xFF90A1B1u}, {128, 0xFF667888u}, {170, 0xFF667D8Cu}, {255, 0xFF6BDAD9u}}, {}, {}}, {{}, {{0, 0xFFA7BAC6u}, {85, 0xFF93A4B2u}, {106, 0xFF90A2B1u}, {128, 0xFF667888u}, {170, 0xFF657D8Cu}, {255, 0xFF6BDAD9u}}, {}, {}}},
 };
 /* Window MaxButton (images/947.png, states 1 to 8). */
 static const xd_shape aero_basic_button[8] = {
@@ -645,6 +865,7 @@ static const xd_shape aero_basic_button[8] = {
         .edge = {{{0xFF5F7089u, 0xFF687991u}, {0xFFDFE8F2u, 0xFFD8E6F3u}}, {{0xFF5D6F88u, 0xFF5D6F88u}, {0xFFDFE8F2u, 0xFFDFE8F2u}}, {{0xFF5F7089u, 0xFF687991u}, {0xFFDFE8F2u, 0xFFD8E6F3u}}, {{0xFF697A92u, 0xFF697A92u}, {0xFFD9E7F4u, 0xFFD9E7F4u}}},
         .nv = 6, .v = {{0, 0xFFC3D4E7u}, {106, 0xFFBFD3E8u}, {128, 0xFF98B1CCu}, {170, 0xFF9DB5CFu}, {234, 0xFFB2CBE5u}, {255, 0xFFB7D0E9u}},
         .nh = 1, .hs = {{0, 0xFFB2C8DFu}},
+        .sides = &aero_basic_button_0_sides,
     },
     {
         .w = 5, .h = 17, .radius = 0,
@@ -652,6 +873,7 @@ static const xd_shape aero_basic_button[8] = {
         .edge = {{{0xFF535F6Du, 0xFF5C6875u}, {0xFFD1E8F9u, 0xFF89E0F4u}}, {{0xFF515E6Cu, 0xFF515E6Cu}, {0xFFD6EBFAu, 0xFFD6EBFAu}}, {{0xFF535F6Du, 0xFF5C6875u}, {0xFFD1E8F9u, 0xFF89E0F4u}}, {{0xFF5D6976u, 0xFF5D6976u}, {0xFF85EFF9u, 0xFF85EFF9u}}},
         .nv = 6, .v = {{0, 0xFFAAD5F3u}, {106, 0xFF81C0EAu}, {128, 0xFF2D73A3u}, {170, 0xFF2C78ACu}, {234, 0xFF29A9DFu}, {255, 0xFF24C6EBu}},
         .nh = 1, .hs = {{0, 0xFF5BAAD6u}},
+        .sides = &aero_basic_button_1_sides,
     },
     {
         .w = 5, .h = 17, .radius = 0,
@@ -659,6 +881,7 @@ static const xd_shape aero_basic_button[8] = {
         .edge = {{{0xFF535F6Du, 0xFF5C6875u}, {0xFFA7BAC6u, 0xFF6BDAD9u}}, {{0xFF515E6Cu, 0xFF515E6Cu}, {0xFFACBEC9u, 0xFFACBEC9u}}, {{0xFF535F6Du, 0xFF5C6875u}, {0xFFA7BAC6u, 0xFF6BDAD9u}}, {{0xFF5D6976u, 0xFF5D6976u}, {0xFF67E6E4u, 0xFF67E6E4u}}},
         .nv = 6, .v = {{0, 0xFF7F9AACu}, {85, 0xFF617A90u}, {106, 0xFF5D778Cu}, {128, 0xFF203B52u}, {170, 0xFF1F4158u}, {255, 0xFF27C9C8u}},
         .nh = 1, .hs = {{0, 0xFF457A8Bu}},
+        .sides = &aero_basic_button_2_sides,
     },
     {
         .w = 5, .h = 17, .radius = 0,
@@ -680,6 +903,7 @@ static const xd_shape aero_basic_button[8] = {
         .edge = {{{0xFF656C73u, 0xFF6E757Cu}, {0xFFD1E8F9u, 0xFF89E0F4u}}, {{0xFF646B72u, 0xFF646B72u}, {0xFFD6EBFAu, 0xFFD6EBFAu}}, {{0xFF656C73u, 0xFF6E757Cu}, {0xFFD1E8F9u, 0xFF89E0F4u}}, {{0xFF6F767Du, 0xFF6F767Du}, {0xFF85EFF9u, 0xFF85EFF9u}}},
         .nv = 6, .v = {{0, 0xFFAAD5F3u}, {106, 0xFF80C0EAu}, {128, 0xFF2D73A3u}, {170, 0xFF2D78ABu}, {234, 0xFF29A9DFu}, {255, 0xFF24C6EBu}},
         .nh = 1, .hs = {{0, 0xFF5BABD6u}},
+        .sides = &aero_basic_button_5_sides,
     },
     {
         .w = 5, .h = 17, .radius = 0,
@@ -687,6 +911,7 @@ static const xd_shape aero_basic_button[8] = {
         .edge = {{{0xFF656C73u, 0xFF6E757Cu}, {0xFFA7BAC6u, 0xFF6BDAD9u}}, {{0xFF646B72u, 0xFF646B72u}, {0xFFACBEC9u, 0xFFACBEC9u}}, {{0xFF656C73u, 0xFF6E757Cu}, {0xFFA7BAC6u, 0xFF6BDAD9u}}, {{0xFF6F767Du, 0xFF6F767Du}, {0xFF67E6E4u, 0xFF67E6E4u}}},
         .nv = 6, .v = {{0, 0xFF7F9AACu}, {85, 0xFF61798Fu}, {106, 0xFF5D778Du}, {128, 0xFF203B52u}, {170, 0xFF204158u}, {255, 0xFF27C9C8u}},
         .nh = 1, .hs = {{0, 0xFF457A8Bu}},
+        .sides = &aero_basic_button_6_sides,
     },
     {
         .w = 5, .h = 17, .radius = 0,
@@ -696,6 +921,26 @@ static const xd_shape aero_basic_button[8] = {
         .nh = 1, .hs = {{0, 0xFFCCDAE8u}},
     },
 };
+static const xd_side_lines aero_basic_close_0_sides = {
+    .count = {{0, 5, 5, 0}, {0, 5, 5, 0}},
+    .stops = {{{}, {{0, 0xFFF2CEC8u}, {102, 0xFFEDC4BDu}, {128, 0xFFD99A8Eu}, {204, 0xFFDDA398u}, {255, 0xFFE4B4ABu}}, {{0, 0xFFE7A699u}, {102, 0xFFDF9587u}, {128, 0xFFB8432Cu}, {178, 0xFFBF533Eu}, {255, 0xFFCE7564u}}, {}}, {{}, {{0, 0xFFF2CEC8u}, {102, 0xFFEDC4BDu}, {128, 0xFFD99A8Eu}, {204, 0xFFDDA398u}, {255, 0xFFE4B4ABu}}, {{0, 0xFFE8A699u}, {102, 0xFFE09487u}, {128, 0xFFB8432Cu}, {178, 0xFFBF533Eu}, {255, 0xFFCE7564u}}, {}}},
+};
+static const xd_side_lines aero_basic_close_1_sides = {
+    .count = {{0, 5, 5, 0}, {0, 5, 5, 0}},
+    .stops = {{{}, {{0, 0xFFFDDED8u}, {102, 0xFFFCCEC6u}, {128, 0xFFE78977u}, {204, 0xFFE8917Du}, {255, 0xFFEEB495u}}, {{0, 0xFFFCC4BAu}, {102, 0xFFFAA99Au}, {128, 0xFFD22302u}, {178, 0xFFD74116u}, {255, 0xFFE28242u}}, {}}, {{}, {{0, 0xFFFDDED8u}, {102, 0xFFFCCEC6u}, {128, 0xFFE78977u}, {204, 0xFFE8917Du}, {255, 0xFFEEB495u}}, {{0, 0xFFFCC4B9u}, {102, 0xFFFAA89Au}, {128, 0xFFD22302u}, {178, 0xFFD74116u}, {255, 0xFFE38241u}}, {}}},
+};
+static const xd_side_lines aero_basic_close_2_sides = {
+    .count = {{0, 6, 6, 0}, {0, 6, 6, 0}},
+    .stops = {{{}, {{0, 0xFFD1BAAFu}, {102, 0xFFCCB0A5u}, {128, 0xFFB28176u}, {178, 0xFFB28176u}, {230, 0xFFB9947Eu}, {255, 0xFFC2A489u}}, {{0, 0xFFAE836Eu}, {102, 0xFFA6705Bu}, {128, 0xFF741500u}, {178, 0xFF741500u}, {204, 0xFF742401u}, {255, 0xFF915825u}}, {}}, {{}, {{0, 0xFFD1BAAFu}, {102, 0xFFCCB0A5u}, {128, 0xFFB28176u}, {178, 0xFFB28176u}, {230, 0xFFB9947Eu}, {255, 0xFFC2A489u}}, {{0, 0xFFAE836Eu}, {102, 0xFFA6705Bu}, {128, 0xFF741500u}, {178, 0xFF741500u}, {204, 0xFF742401u}, {255, 0xFF915825u}}, {}}},
+};
+static const xd_side_lines aero_basic_close_5_sides = {
+    .count = {{0, 6, 6, 0}, {0, 6, 6, 0}},
+    .stops = {{{}, {{0, 0xFFE5C9C4u}, {102, 0xFFE4BCB6u}, {128, 0xFFD38577u}, {178, 0xFFD38577u}, {230, 0xFFD69884u}, {255, 0xFFD9A78Eu}}, {{0, 0xFFD59F96u}, {102, 0xFFD4877Bu}, {128, 0xFFB21D02u}, {178, 0xFFB21D02u}, {230, 0xFFB8431Bu}, {255, 0xFFBD5F2Fu}}, {}}, {{}, {{0, 0xFFE5C9C4u}, {102, 0xFFE4BCB6u}, {128, 0xFFD38577u}, {178, 0xFFD38577u}, {230, 0xFFD69884u}, {255, 0xFFD9A78Eu}}, {{0, 0xFFD59F96u}, {102, 0xFFD4877Bu}, {128, 0xFFB21D02u}, {178, 0xFFB21D02u}, {230, 0xFFB8431Bu}, {255, 0xFFBD5F2Fu}}, {}}},
+};
+static const xd_side_lines aero_basic_close_6_sides = {
+    .count = {{0, 6, 6, 0}, {0, 6, 6, 0}},
+    .stops = {{{}, {{0, 0xFFD1BAAFu}, {102, 0xFFCCB0A5u}, {128, 0xFFB28176u}, {178, 0xFFB28176u}, {230, 0xFFB9947Eu}, {255, 0xFFC2A489u}}, {{0, 0xFFAE836Eu}, {102, 0xFFA6705Bu}, {128, 0xFF741500u}, {178, 0xFF741500u}, {204, 0xFF742401u}, {255, 0xFF915825u}}, {}}, {{}, {{0, 0xFFD1BAAFu}, {102, 0xFFCCB0A5u}, {128, 0xFFB28176u}, {178, 0xFFB28176u}, {230, 0xFFB9947Eu}, {255, 0xFFC2A489u}}, {{0, 0xFFAE836Eu}, {102, 0xFFA6705Bu}, {128, 0xFF741500u}, {178, 0xFF741500u}, {204, 0xFF742401u}, {255, 0xFF915825u}}, {}}},
+};
 /* Window CloseButton (images/936.png, states 1 to 8). */
 static const xd_shape aero_basic_close[8] = {
     {
@@ -704,6 +949,7 @@ static const xd_shape aero_basic_close[8] = {
         .edge = {{{0xFF431422u, 0xFF431422u}, {0xFFF2CEC8u, 0xFFE4B4ABu}, {0xFFE7A699u, 0xFFCE7564u}}, {{0xFF431422u, 0xFF431422u}, {0xFFF4D3CCu, 0xFFF4D3CCu}, {0xFFE9A99Cu, 0xFFE9A99Cu}}, {{0xFF431422u, 0xFF431422u}, {0xFFF2CEC8u, 0xFFE4B4ABu}, {0xFFE8A699u, 0xFFCE7564u}}, {{0xFF431422u, 0xFF431422u}, {0xFFECC6C0u, 0xFFECC6C0u}, {0xFFD27E6Fu, 0xFFD27E6Fu}}},
         .nv = 5, .v = {{0, 0xFFE8A699u}, {102, 0xFFDF9587u}, {128, 0xFFB8432Cu}, {178, 0xFFBF533Eu}, {255, 0xFFCE7564u}},
         .nh = 2, .hs = {{0, 0xFFD17968u}, {255, 0xFFD17968u}},
+        .sides = &aero_basic_close_0_sides,
     },
     {
         .w = 28, .h = 17, .radius = 0,
@@ -711,6 +957,7 @@ static const xd_shape aero_basic_close[8] = {
         .edge = {{{0xFF431422u, 0xFF431422u}, {0xFFFDDED8u, 0xFFEEB495u}, {0xFFFCC4BAu, 0xFFE28242u}}, {{0xFF431422u, 0xFF431422u}, {0xFFFDE4E0u, 0xFFFDE4E0u}, {0xFFFCC8BFu, 0xFFFCC8BFu}}, {{0xFF431422u, 0xFF431422u}, {0xFFFDDED8u, 0xFFEEB495u}, {0xFFFCC4B9u, 0xFFE38241u}}, {{0xFF431422u, 0xFF431422u}, {0xFFF7E5ABu, 0xFFF7E4B2u}, {0xFFE6944Eu, 0xFFE5944Du}}},
         .nv = 6, .v = {{0, 0xFFFCC4BAu}, {102, 0xFFFAA89Au}, {128, 0xFFD22302u}, {153, 0xFFD42F0Au}, {204, 0xFFDB5624u}, {255, 0xFFE38242u}},
         .nh = 2, .hs = {{0, 0xFFE97D5Eu}, {255, 0xFFE97E5Eu}},
+        .sides = &aero_basic_close_1_sides,
     },
     {
         .w = 28, .h = 17, .radius = 0,
@@ -718,6 +965,7 @@ static const xd_shape aero_basic_close[8] = {
         .edge = {{{0xFF431422u, 0xFF431422u}, {0xFFD1BAAFu, 0xFFC2A489u}, {0xFFAE836Eu, 0xFF915825u}}, {{0xFF431422u, 0xFF431422u}, {0xFFDDC7BCu, 0xFFDDC7BCu}, {0xFFBB917Cu, 0xFFBB917Cu}}, {{0xFF431422u, 0xFF431422u}, {0xFFD1BAAFu, 0xFFC2A489u}, {0xFFAE836Eu, 0xFF915825u}}, {{0xFF431422u, 0xFF431422u}, {0xFFE6D7A3u, 0xFFE5D6AAu}, {0xFFB18543u, 0xFFB18543u}}},
         .nv = 6, .v = {{0, 0xFFC89A81u}, {102, 0xFFBD8269u}, {128, 0xFF841800u}, {178, 0xFF851800u}, {204, 0xFF852B01u}, {255, 0xFFA7682Cu}},
         .nh = 4, .hs = {{0, 0xFF995236u}, {73, 0xFFA95D3Cu}, {194, 0xFFA85C3Bu}, {255, 0xFF995236u}},
+        .sides = &aero_basic_close_2_sides,
     },
     {
         .w = 28, .h = 17, .radius = 0,
@@ -739,6 +987,7 @@ static const xd_shape aero_basic_close[8] = {
         .edge = {{{0xFF720000u, 0xFF720000u}, {0xFFE5C9C4u, 0xFFD9A78Eu}, {0xFFD59F96u, 0xFFBD5F2Fu}}, {{0xFF720000u, 0xFF720000u}, {0xFFF1D8D5u, 0xFFF1D8D5u}, {0xFFE3B1A9u, 0xFFE3B1A9u}}, {{0xFF720000u, 0xFF720000u}, {0xFFE5C9C4u, 0xFFD9A78Eu}, {0xFFD59F96u, 0xFFBD5F2Fu}}, {{0xFF720000u, 0xFF720000u}, {0xFFECD9A4u, 0xFFEBD8ABu}, {0xFFD18E4Cu, 0xFFD18E4Cu}}},
         .nv = 6, .v = {{0, 0xFFF5BBB1u}, {102, 0xFFF09D8Eu}, {128, 0xFFCA2102u}, {178, 0xFFCB2202u}, {230, 0xFFD34E20u}, {255, 0xFFD97037u}},
         .nh = 4, .hs = {{0, 0xFFCF634Au}, {61, 0xFFE46E53u}, {194, 0xFFE46E53u}, {255, 0xFFCF634Au}},
+        .sides = &aero_basic_close_5_sides,
     },
     {
         .w = 28, .h = 17, .radius = 0,
@@ -746,6 +995,7 @@ static const xd_shape aero_basic_close[8] = {
         .edge = {{{0xFF672E31u, 0xFF672E31u}, {0xFFD1BAAFu, 0xFFC2A489u}, {0xFFAE836Eu, 0xFF915825u}}, {{0xFF672E31u, 0xFF672E31u}, {0xFFDDC7BCu, 0xFFDDC7BCu}, {0xFFBB917Cu, 0xFFBB917Cu}}, {{0xFF672E31u, 0xFF672E31u}, {0xFFD1BAAFu, 0xFFC2A489u}, {0xFFAE836Eu, 0xFF915825u}}, {{0xFF672E31u, 0xFF672E31u}, {0xFFE6D7A3u, 0xFFE5D6AAu}, {0xFFB18543u, 0xFFB18543u}}},
         .nv = 6, .v = {{0, 0xFFC89A81u}, {102, 0xFFBD8269u}, {128, 0xFF841800u}, {178, 0xFF851800u}, {204, 0xFF852B01u}, {255, 0xFFA7682Cu}},
         .nh = 4, .hs = {{0, 0xFF995236u}, {73, 0xFFA95D3Cu}, {194, 0xFFA85C3Bu}, {255, 0xFF995236u}},
+        .sides = &aero_basic_close_6_sides,
     },
     {
         .w = 28, .h = 17, .radius = 0,

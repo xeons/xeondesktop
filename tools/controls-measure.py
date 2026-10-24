@@ -29,6 +29,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 MAX_STOPS = 6  # a gradient's stops at most
+SIDE_TOLERANCE = 16  # how far a side line's gradient may miss before it gets stops
 
 # What each style measures: (C name, class, part, lines, states). Lines
 # are those along each side; states None: every state.
@@ -184,7 +185,7 @@ def corner_radius(pm, lines):
     return 2 * k
 
 
-def shape(name, g, margins, lines):
+def shape(name, g, margins, lines, luna):
     """The shape model of one state (see the module comment)."""
     h, w = len(g), len(g[0])
     pm = [[premul(p) for p in row] for row in g]
@@ -217,6 +218,31 @@ def shape(name, g, margins, lines):
         return "{" + ", ".join(
             f"{{{round(i * 255 / max(length - 1, 1))}, {argb(c)}}}" for i, c in st) + "}"
 
+    # Left and right lines that their two ends' gradient misses (Windows
+    # 7's glass buttons step from light to dark at their middle): stops
+    # down the face's rows, as v.
+    # (Not Luna's yet: luna.c's recolouring for Dark doesn't take them.)
+    side_counts = [[0] * 4 for _ in range(2)]
+    side_stops = [["{}"] * 4 for _ in range(2)]
+    for s_, x_of in ((0, lambda i: i), (1, lambda i: w - 1 - i)) if not luna else ():
+        for i in range(nl):
+            px = [pm[y][x_of(i)] for y in ys]
+            last = max(len(px) - 1, 1)
+            misses = max(abs(px[0][ch] + (px[-1][ch] - px[0][ch]) * k / last - px[k][ch])
+                         for k in range(len(px)) for ch in range(4))
+            if misses > SIDE_TOLERANCE:
+                st = fit_stops(px)
+                side_counts[s_][i] = len(st)
+                side_stops[s_][i] = stops(st, len(px))
+    decl = []
+    if any(c for side in side_counts for c in side):
+        decl = [f"static const xd_side_lines {name}_sides = {{",
+                "    .count = {" + ", ".join(
+                    "{" + ", ".join(str(c) for c in side) + "}" for side in side_counts) + "},",
+                "    .stops = {" + ", ".join(
+                    "{" + ", ".join(side) + "}" for side in side_stops) + "},",
+                "};"]
+
     lines_c = []
     k = 0
     for side in range(4):
@@ -231,7 +257,9 @@ def shape(name, g, margins, lines):
             "    .edge = {" + ", ".join(lines_c) + "},",
             f"    .nv = {len(v)}, .v = {stops(v, len(col))},",
             f"    .nh = {len(hz)}, .hs = {stops(hz, len(row))},"]
-    return [], body
+    if decl:
+        body.append(f"    .sides = &{name}_sides,")
+    return decl, body
 
 
 def measure(style_dir, style_file, prefix, parts):
@@ -262,7 +290,7 @@ def measure(style_dir, style_file, prefix, parts):
                 sg = [row[n * sw:(n + 1) * sw] for row in g]
             else:
                 sg = g[n * sh:(n + 1) * sh]
-            decl, body = shape(f"{prefix}_{cname}_{n}", sg, m, band)
+            decl, body = shape(f"{prefix}_{cname}_{n}", sg, m, band, prefix.startswith("luna"))
             out += decl
             bodies.append(body)
         out.append(f"/* {cls} {part} ({img}, states {idx[0] + 1} to {idx[-1] + 1}). */")

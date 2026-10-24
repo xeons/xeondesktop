@@ -362,10 +362,19 @@ static void aero_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect r
             const xd_shape *glow = close ? aero_dwm_close_glow : aero_dwm_glow;
             xd_shape_draw(theme, cairo, glow, shape_centred(theme, glow, rect));
         }
-        xd_shape_draw(theme, cairo, &bg[state_index], rect);
+        /* DWM's images reach 2 px past the button either side, its outline
+         * on the left and a soft edge on the right: drawn left to right,
+         * each button's outline covers its neighbour's edge, one dark line
+         * between them as on Windows 7. */
+        int overhang = xd_tpx(theme, 2);
+        xd_shape_draw(theme, cairo, &bg[state_index],
+                      (xd_rect){rect.x - overhang, rect.y, rect.w + 2 * overhang, rect.h});
+        /* DWM's glyphs are outlined 2 px at the sides, but Maximize's
+         * box 1 px, which leaves it hollow. */
         draw_aero_glyph(theme, cairo, rect, &caption_glyphs[glyph_index],
                         aero_dwm_glyph[glyph_index][state_index][0],
-                        aero_dwm_glyph[glyph_index][state_index][1], 1, 2, 1);
+                        aero_dwm_glyph[glyph_index][state_index][1], 1, glyph_index == 1 ? 1 : 2,
+                        1);
         return;
     }
     int k = (frame->active ? 0 : 4) + state_index;
@@ -435,8 +444,9 @@ static void aero_draw_frame(const xd_theme *theme, cairo_t *cairo, xd_rect outer
     }
     xd_frame_layout frame_layout = {0};
     aero_frame_layout(theme, outer, frame, &frame_layout);
-    for (size_t i = 0; i < frame_layout.button_count; i++) {
-        /* Laid out right to left: the last is leftmost. */
+    /* Laid out right to left (the last is leftmost), drawn left to right:
+     * on glass each button overlaps the one before. */
+    for (size_t i = frame_layout.button_count; i-- > 0;) {
         caption_button(theme, cairo, frame_layout.button_rects[i], frame_layout.button_parts[i],
                        frame, i + 1 == frame_layout.button_count, i == 0);
     }

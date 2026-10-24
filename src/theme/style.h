@@ -253,6 +253,12 @@ typedef struct xd_stop {
     uint8_t at;
     uint32_t argb;
 } xd_stop;
+/* Left and right lines a two-colour gradient can't follow (Windows 7's
+ * glass buttons: lighter above their middle), down the face as v is. */
+typedef struct xd_side_lines {
+    uint8_t count[2][4]; /* per side (left, right) and line; 0: its edge */
+    xd_stop stops[2][4][6];
+} xd_side_lines;
 typedef struct xd_shape {
     uint8_t w, h; /* its natural size */
     uint8_t radius;
@@ -260,6 +266,7 @@ typedef struct xd_shape {
     uint32_t edge[4][4][2]; /* per side and line: from its start to its end */
     uint8_t nv, nh;
     xd_stop v[6], hs[6];
+    const xd_side_lines *sides; /* or nullptr */
 } xd_shape;
 /* An XP check box's or radio button's state, measured by the same tool:
  * the border, the face's gradient along the diagonal (x + y, at 0-255 of
