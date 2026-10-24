@@ -10278,14 +10278,16 @@ static void test_previous_versions(void) {
     }
     g_ptr_array_unref(versions);
 
-    /* A version the same as the item now says nothing new. */
+    /* A version the same as the item now says nothing new. Root reads the
+     * locked snapshot, the newest ZFS one, so s3 comes after it. */
     put_file(live, "notes.txt", "shifted");
     set_versions_mtime(live, "notes.txt", 3000);
     versions = xd_versions_list(notes, nullptr);
     CHECK(versions->len == (is_root ? 3u : 2u));
-    if (versions->len > 0)
-        CHECK(strstr(((const xd_version *)g_ptr_array_index(versions, 0))->path, "/s3/") !=
-              nullptr);
+    guint s3_index = is_root ? 1 : 0;
+    if (versions->len > s3_index)
+        CHECK(strstr(((const xd_version *)g_ptr_array_index(versions, s3_index))->path,
+                     "/s3/") != nullptr);
     g_ptr_array_unref(versions);
 
     /* A folder, through a link to the folder it's in: the path as it
