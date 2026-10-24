@@ -68,9 +68,12 @@ SCENARIOS = {}
 SCENARIO_OPTIONS = {}
 
 
-def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11=False):
+def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11=False,
+             showcase=False):
     """Registers a scenario: a function of the session (Session), run with
-    that desktop.ini; it's skipped without the Python modules it requires."""
+    that desktop.ini; it's skipped without the Python modules it requires.
+    A showcase one takes a README screenshot (tools/screenshots.sh) and
+    runs only when named, never in the suite."""
 
     def register(fn):
         SCENARIOS[fn.__name__] = (fn, desktop_ini, requires)
@@ -78,6 +81,7 @@ def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11
             "outputs": outputs or [(WIDTH, HEIGHT, 1)],
             "setup": setup,
             "x11": x11,
+            "showcase": showcase,
         }
         return fn
 
@@ -234,6 +238,23 @@ def populate(base, home_src, desktop_ini, outputs):
         f.write("Shopping list\n")
 
 
+STANDIN_NAME = "User"
+STANDIN_HOST = "xeondesktop"
+
+
+def standin_identity():
+    """/etc/passwd with our full name as STANDIN_NAME, and /etc/hostname."""
+    uid = os.getuid()
+    lines = []
+    with open("/etc/passwd") as f:
+        for line in f:
+            fields = line.rstrip("\n").split(":")
+            if len(fields) == 7 and fields[2] == str(uid):
+                fields[4] = STANDIN_NAME
+            lines.append(":".join(fields))
+    return {"/etc/passwd": "\n".join(lines) + "\n", "/etc/hostname": STANDIN_HOST + "\n"}
+
+
 def run_scenario(name, build, keep, keep_all=False):
     """Runs one scenario in a session of its own; True if it passed."""
     desktop_ini = SCENARIOS[name][1]
@@ -307,6 +328,17 @@ def run_scenario(name, build, keep, keep_all=False):
             binds.append(f"mkdir -p {shlex.quote(inside)}")
             binds.append(f"mount --bind {shlex.quote(path)} {shlex.quote(inside)}")
     binds.append(f"mount --rbind {shlex.quote(home_src)} {shlex.quote(home)}")
+    # A showcase's screenshots are published: a stand-in for whoever runs
+    # it (their full name in the passwd file, and the computer's name),
+    # in this namespace only.
+    showcase = SCENARIO_OPTIONS[name]["showcase"]
+    if showcase:
+        for path, text in standin_identity().items():
+            fake = os.path.join(base, os.path.basename(path))
+            with open(fake, "w") as f:
+                f.write(text)
+            binds.append(f"mount --bind {shlex.quote(fake)} {shlex.quote(path)}")
+        binds.append(f"hostname {STANDIN_HOST}")
     # Xwayland's sockets: an empty directory of the session's own, ours
     # (as root here is) once back to our uid.
     if SCENARIO_OPTIONS[name]["x11"]:
@@ -317,7 +349,7 @@ def run_scenario(name, build, keep, keep_all=False):
     )
     script = "set -e\n" + "\n".join(binds)
     cmd = [
-        "unshare", "-r", "-m", "sh", "-c", script,
+        "unshare", "-r", "-m", *(["--uts"] if showcase else []), "sh", "-c", script,
         "timeout", "-k", "5", str(SCENARIO_LIMIT),
         "dbus-run-session", "--",
         sys.executable, os.path.abspath(__file__), "--inner", name,
@@ -361,9 +393,14 @@ def run_scenario(name, build, keep, keep_all=False):
     return passed
 
 
+def suite():
+    """The scenarios run by default and by meson: all but the showcase."""
+    return [n for n in SCENARIOS if not SCENARIO_OPTIONS[n]["showcase"]]
+
+
 def outer(args):
     build = os.path.realpath(args.build_dir)
-    names = args.scenarios or list(SCENARIOS)
+    names = args.scenarios or suite()
     for n in names:
         if n not in SCENARIOS:
             print(f"run.py: no scenario {n} (try --list)", file=sys.stderr)
@@ -8321,6 +8358,198 @@ def alt_tab_package(s):
     s.log("ok: Alt+Tab's window is the package's, and closes with Alt")
 
 
+# ---- showcase: the README's screenshots ----------------------------------------
+#
+# tools/screenshots.sh runs these (the Aero ones on the GPU, for blurred
+# glass) and copies each one's last screenshot, labelled "showcase", into
+# docs/screenshots. They run only when named.
+
+WALLPAPERS = os.path.join(SOURCE_ROOT, "data", "wallpapers")
+
+
+def showcase_ini(style, start_menu, scheme=None, wallpaper=None, extra=""):
+    """A desktop.ini for a showcase: the style and Start menu, a colour
+    scheme and one of our own wallpapers."""
+    ini = f"[Appearance]\nStyle={style}\n"
+    if scheme:
+        ini += f"Scheme={scheme}\n"
+    ini += f"\n[StartMenu]\nStyle={start_menu}\n"
+    if wallpaper:
+        ini += (f"\n[Desktop]\nWallpaper={os.path.join(WALLPAPERS, wallpaper)}\n"
+                "WallpaperMode=fill\n")  # fmt: skip
+    return ini + extra
+
+
+def showcase_shot(s):
+    """The README's screenshot: once everything has settled."""
+    s.settle("settled")
+    s.shot("showcase")
+
+
+@scenario(showcase_ini("classic", "classic"), showcase=True)
+def showcase_classic(s):
+    """Classic: Windows 2000's Start menu, Programs and Accessories open,
+    over My Computer."""
+    s.launch("xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    s.settle("my-computer")
+    # P opens Programs; Right opens its first folder, Accessories.
+    s.inject("key", "ctrl+Escape", "sleep", 600, "key", "p", "sleep", 600, "key", "Right",
+             "sleep", 600)  # fmt: skip
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-blue", "Storm Hill.jpg"), setup=mock_laptop,
+          requires=("dbusmock",), showcase=True)  # fmt: skip
+def showcase_luna(s):
+    """Luna (Blue): XP's Start menu over My Documents, a battery in the
+    notification area."""
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(title="Documents", state="activated")
+    s.settle("documents")
+    s.inject("key", "ctrl+Escape", "sleep", 800)
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-olive", "Olive Forest.jpg"), showcase=True)
+def showcase_olive(s):
+    """Luna (Olive Green): Control Panel's categories."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-silver", "Silver Factory.jpg"), showcase=True)
+def showcase_silver(s):
+    """Luna (Silver): My Computer with its task pane, and Folder Options.
+    (Not System Properties: it shows the computer's own hardware.)"""
+    s.launch("xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    s.settle("my-computer")
+    s.launch("xd-folders")
+    s.wait_window(title="Folder Options", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-dark", "Energy.jpg"), showcase=True)
+def showcase_dark(s):
+    """Luna (Dark): Display Properties' Appearance tab."""
+    s.launch("xd-desk", "--page", "3")
+    s.wait_window(title="Display Properties", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("aero", "win7", None, "Storm Hill.jpg"), setup=glass_setup,
+          showcase=True)  # fmt: skip
+def showcase_aero(s):
+    """Aero: Windows 7's Start menu over a window, on blurred glass."""
+    s.launch("xd-files", os.path.join(s.home, "Pictures"))
+    s.wait_window(title="Pictures", state="activated")
+    s.settle("pictures")
+    s.inject("key", "ctrl+Escape", "sleep", 800)
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("aero", "win7", None, "Storm Hill.jpg"), setup=glass_setup,
+          showcase=True)  # fmt: skip
+def showcase_aero_snap(s):
+    """Aero Snap: Control Panel and Task Manager side by side."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "super+Left")
+    s.launch("xd-taskmgr")
+    s.wait_window(title="Task Manager", state="activated")
+    s.inject("key", "super+Right", "sleep", 300, "key", "ctrl+Tab", "key", "ctrl+Tab")
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "sleep", 2500)
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("aero", "win7", None, "Storm Hill.jpg"), setup=glass_setup,
+          showcase=True)  # fmt: skip
+def showcase_aero_thumbnails(s):
+    """Aero: a program's window thumbnails above its taskbar button."""
+    bar = (0, HEIGHT - 40, WIDTH, 40)
+    before = s.settle("taskbar")
+    for folder in ("Documents", "Pictures"):
+        s.launch("xd-files", os.path.join(s.home, folder))
+        s.wait_window(title=folder, state="activated")
+    after = s.settle("two-windows")
+    button = after.changed_box(before, bar)
+    s.inject("move", button[0] + button[2] // 2, HEIGHT - 20, "sleep", 1200)
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("aero", "win7", None, "Storm Hill.jpg"), setup=glass_setup,
+          showcase=True)  # fmt: skip
+def showcase_alt_tab(s):
+    """Alt+Tab's window over three windows, on glass."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(title="Documents", state="activated")
+    s.launch("xd-desk")
+    s.wait_window(title="Display Properties", state="activated")
+    s.settle("three")
+    held = subprocess.Popen([s.tool("xd-inject"), "hold", "alt", "key", "Tab", "sleep", "5000",
+                             "release", "alt"])  # fmt: skip
+    time.sleep(1.5)
+    s.shot("showcase")
+    held.wait(timeout=30)
+
+
+@scenario(showcase_ini("whistler", "xp", None, "Watercolor Blue.jpg"), showcase=True)
+def showcase_watercolor(s):
+    """Watercolor: Taskbar and Start Menu Properties over My Computer."""
+    s.launch("xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    s.settle("my-computer")
+    s.launch("xd-taskbar")
+    s.wait_window(title="Taskbar and Start Menu Properties", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-blue", "Storm Hill.jpg"), requires=("dbusmock",),
+          showcase=True)  # fmt: skip
+def showcase_date_time(s):
+    """Date and Time Properties' Time Zone tab with its map."""
+    mock_timedate(s, {"SystemNTPServers": ["time.example.org"],
+                      "ServerName": "time.example.org", "Received": time.time() - 3600})
+    s.launch("xd-timedate", "--page", "1")
+    s.wait_window(title="Date and Time Properties", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-blue", "Storm Hill.jpg"), showcase=True)
+def showcase_minefield(s):
+    """Minefield, a game under way."""
+    desktop = s.settle("desktop")
+    s.launch(s.tool("xd-mines"), "--seed", "5")  # its first click opens a good area
+    s.wait_window(title="Minefield", state="activated")
+    board = s.settle("board")
+    x, y, w, h = board.changed_box(desktop, (0, 0, WIDTH, HEIGHT - 40))
+    # The 9 x 9 squares fill the window's lower part.
+    s.inject("move", x + w // 2, y + h - h // 3, "click", "sleep", 300, "move", x - 40, y + h // 2)
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("luna", "xp", "luna-blue", "Storm Hill.jpg"), showcase=True)
+def showcase_shut_down(s):
+    """XP's Turn Off Computer, from the Start menu."""
+    s.inject("key", "ctrl+Escape", "sleep", 600, "key", "u")
+    s.wait_window(title="Shut Down XeonDesktop", state="activated")
+    showcase_shot(s)
+
+
+@scenario(showcase_ini("classic", "classic"), showcase=True)
+def showcase_security(s):
+    """Ctrl+Alt+Delete: XeonDesktop Security."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.settle("control-panel")
+    s.inject("key", "ctrl+alt+Delete", "sleep", 1500)
+    showcase_shot(s)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))
@@ -8334,11 +8563,12 @@ def main():
     p.add_argument("scenarios", nargs="*")
     args = p.parse_args()
     if args.names:
-        print("\n".join(SCENARIOS))
+        print("\n".join(suite()))
         return 0
     if args.list:
         for name, (fn, _, _) in SCENARIOS.items():
-            print(f"{name}: {' '.join(fn.__doc__.split())}")
+            mark = " (showcase)" if SCENARIO_OPTIONS[name]["showcase"] else ""
+            print(f"{name}{mark}: {' '.join(fn.__doc__.split())}")
         return 0
     if args.inner:
         return inner(args)

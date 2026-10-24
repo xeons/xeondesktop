@@ -6,22 +6,29 @@ the design.
 
 | Classic (Windows 2000) | Luna (XP) |
 |---|---|
-| ![Classic style: the Windows 2000 Start menu with Programs and Accessories open over My Computer](docs/screenshots/classic-start-menu.png) | ![Luna style: the Windows XP Start menu over My Documents in Tiles view](docs/screenshots/luna-desktop.png) |
+| ![Classic style: the Windows 2000 Start menu with Programs and Accessories open over My Computer](docs/screenshots/classic.png) | ![Luna style: the Windows XP Start menu over My Documents, a battery in the notification area](docs/screenshots/luna.png) |
+| **Luna, Olive Green** | **Luna, Silver** |
+| ![Luna in Olive Green: Control Panel's categories](docs/screenshots/olive.png) | ![Luna in Silver: My Computer with its task pane, and Folder Options](docs/screenshots/silver.png) |
+| **Luna, Dark** | **Watercolor (Whistler)** |
+| ![Luna in the Dark colour scheme: Display Properties' Appearance tab](docs/screenshots/dark.png) | ![Watercolor style: Taskbar and Start Menu Properties over My Computer](docs/screenshots/watercolor.png) |
 | **Aero (Windows 7)** | **Aero Snap** |
-| ![Aero style: the Windows 7 Start menu and a window, with blurred glass](docs/screenshots/aero-desktop.png) | ![Two windows snapped side by side, with Task Manager's Performance tab and its CPU meter in the notification area](docs/screenshots/aero-snap.png) |
-| **Watercolor (Whistler)** | **Display Properties** |
-| ![Watercolor style: Taskbar and Start Menu Properties over My Computer](docs/screenshots/watercolor-desktop.png) | ![Display Properties, Appearance tab](docs/screenshots/display-properties.png) |
+| ![Aero style: the Windows 7 Start menu over a window, on blurred glass](docs/screenshots/aero.png) | ![Control Panel and Task Manager snapped side by side, Task Manager's Performance tab showing](docs/screenshots/aero-snap.png) |
+| **Taskbar thumbnails** | **Alt+Tab** |
+| ![Two windows' thumbnails above their taskbar button](docs/screenshots/aero-thumbnails.png) | ![Alt+Tab's window over three windows](docs/screenshots/alt-tab.png) |
+| **Date and Time** | **Minefield** |
+| ![Date and Time Properties' Time Zone tab with its map](docs/screenshots/date-time.png) | ![Minefield, a game under way](docs/screenshots/minefield.png) |
 | **Shut Down** | **Windows Security (Ctrl+Alt+Delete)** |
-| ![Shut Down dialog](docs/screenshots/shut-down.png) | ![The XeonDesktop Security dialog](docs/screenshots/windows-security.png) |
+| ![The Shut Down dialog](docs/screenshots/shut-down.png) | ![The XeonDesktop Security dialog](docs/screenshots/security.png) |
 
 All artwork is drawn by the theme engine; no Microsoft assets are used.
 The Time Zone map draws Natural Earth's land outlines (public domain,
 naturalearthdata.com).
 The Start button logo is Tux, the Linux mascot originally drawn by Larry
 Ewing (lewing@isc.tamu.edu) with The GIMP; ours is a simplified procedural
-rendition. Screenshots are from headless test sessions at 1024x768; the
-Aero ones use the GPU build (blurred glass), and their wallpaper is a
-gradient made for them.
+rendition. Screenshots are from headless sessions at 1024x768, with a
+stand-in user and our own wallpapers; the Aero ones use the GPU build
+(blurred glass). `tools/screenshots.sh` takes them again (the UI tests'
+showcase scenarios).
 
 ## Build
 
