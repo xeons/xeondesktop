@@ -326,14 +326,14 @@ int xd_dnd_session_init(xd_dnd_session *session, xd_hgcm *hgcm, const char *drop
     };
     g_mutex_init(&session->lock);
     xd_dnd_receiver_init(&session->receiver, drop_base);
-    xd_hgcm_parm connect[] = {xd_hgcm_u32(0), xd_hgcm_u32(PROTOCOL), xd_hgcm_u32(0)};
+    xd_hgcm_parm connect[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(PROTOCOL), XD_HGCM_PARM_U32(0)};
     int rc = hgcm->call(hgcm, XD_DND_GUEST_CONNECT, connect, 3);
     if (rc < 0)
         return rc;
     if (connect[1].u32 < PROTOCOL)
         return XD_VERR_NOT_SUPPORTED;
     /* No features of ours; an older host not knowing the call is fine. */
-    xd_hgcm_parm features[] = {xd_hgcm_u64(0), xd_hgcm_u64(FEATURES_MUST_BE_ONE)};
+    xd_hgcm_parm features[] = {XD_HGCM_PARM_U64(0), XD_HGCM_PARM_U64(FEATURES_MUST_BE_ONE)};
     hgcm->call(hgcm, XD_DND_GUEST_REPORT_FEATURES, features, 2);
     return XD_VINF_SUCCESS;
 }
@@ -356,9 +356,9 @@ static xd_dnd_event *event_new(xd_dnd_event_kind kind) {
 static xd_dnd_event *fetch_position(xd_dnd_session *session, uint32_t message,
                                     xd_dnd_event_kind kind) {
     xd_hgcm_parm parms[] = {
-        xd_hgcm_u32(0), xd_hgcm_u32(0), xd_hgcm_u32(0), xd_hgcm_u32(0),
-        xd_hgcm_u32(0), xd_hgcm_u32(0), xd_hgcm_buffer(session->formats_buffer, XD_DND_CHUNK),
-        xd_hgcm_u32(0),
+        XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_BUFFER(session->formats_buffer, XD_DND_CHUNK), XD_HGCM_PARM_U32(0),
     };
     int rc = session->hgcm->call(session->hgcm, message, parms, 8);
     if (rc < 0) {
@@ -430,18 +430,18 @@ static xd_dnd_event *receive_piece(xd_dnd_session *session, uint32_t message, ui
     case XD_DND_HOST_HG_DATA_HEADER: {
         char checksum[64];
         xd_hgcm_parm parms[] = {
-            xd_hgcm_u32(0),
-            xd_hgcm_u32(0),
-            xd_hgcm_u32(0),
-            xd_hgcm_u64(0),
-            xd_hgcm_u32(0), /* the meta data's size: 32 bits, whatever the comment says */
-            xd_hgcm_buffer(session->formats_buffer, XD_DND_CHUNK),
-            xd_hgcm_u32(0),
-            xd_hgcm_u64(0),
-            xd_hgcm_u32(0),
-            xd_hgcm_u32(0),
-            xd_hgcm_buffer(checksum, sizeof(checksum)),
-            xd_hgcm_u32(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_U64(0),
+            XD_HGCM_PARM_U32(0), /* the meta data's size: 32 bits, whatever the comment says */
+            XD_HGCM_PARM_BUFFER(session->formats_buffer, XD_DND_CHUNK),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_U64(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_BUFFER(checksum, sizeof(checksum)),
+            XD_HGCM_PARM_U32(0),
         };
         rc = hgcm->call(hgcm, message, parms, 12);
         if (rc < 0)
@@ -457,11 +457,11 @@ static xd_dnd_event *receive_piece(xd_dnd_session *session, uint32_t message, ui
     case XD_DND_HOST_HG_FILE_DATA: {
         char checksum[64];
         xd_hgcm_parm parms[] = {
-            xd_hgcm_u32(0),
-            xd_hgcm_buffer(session->chunk, XD_DND_CHUNK),
-            xd_hgcm_u32(0),
-            xd_hgcm_buffer(checksum, sizeof(checksum)),
-            xd_hgcm_u32(0),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_BUFFER(session->chunk, XD_DND_CHUNK),
+            XD_HGCM_PARM_U32(0),
+            XD_HGCM_PARM_BUFFER(checksum, sizeof(checksum)),
+            XD_HGCM_PARM_U32(0),
         };
         rc = hgcm->call(hgcm, message, parms, 5);
         if (rc < 0)
@@ -476,8 +476,8 @@ static xd_dnd_event *receive_piece(xd_dnd_session *session, uint32_t message, ui
     }
     case XD_DND_HOST_HG_DIR: {
         char name[NAME_MAX_BYTES];
-        xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_buffer(name, sizeof(name)),
-                                xd_hgcm_u32(0), xd_hgcm_u32(0)};
+        xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_BUFFER(name, sizeof(name)),
+                                XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0)};
         rc = hgcm->call(hgcm, message, parms, 4);
         if (rc < 0)
             return transfer_failed(session, rc);
@@ -487,9 +487,9 @@ static xd_dnd_event *receive_piece(xd_dnd_session *session, uint32_t message, ui
     }
     case XD_DND_HOST_HG_FILE_HEADER: {
         char name[NAME_MAX_BYTES];
-        xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_buffer(name, sizeof(name)),
-                                xd_hgcm_u32(0), xd_hgcm_u32(0),
-                                xd_hgcm_u32(0), xd_hgcm_u64(0)};
+        xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_BUFFER(name, sizeof(name)),
+                                XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0),
+                                XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U64(0)};
         rc = hgcm->call(hgcm, message, parms, 6);
         if (rc < 0)
             return transfer_failed(session, rc);
@@ -515,7 +515,7 @@ static bool is_transfer_message(uint32_t message) {
 xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
     xd_hgcm *hgcm = session->hgcm;
     for (;;) {
-        xd_hgcm_parm next[] = {xd_hgcm_u32(0), xd_hgcm_u32(0), xd_hgcm_u32(1)};
+        xd_hgcm_parm next[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(1)};
         int rc = hgcm->call(hgcm, XD_DND_GUEST_GET_NEXT, next, 3);
         uint32_t message = next[0].u32, count = next[1].u32;
         if (rc == XD_VERR_INTERRUPTED)
@@ -544,13 +544,13 @@ xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
             event = fetch_position(session, message, XD_DND_EVENT_DROPPED);
             break;
         case XD_DND_HOST_HG_LEAVE: {
-            xd_hgcm_parm parms[] = {xd_hgcm_u32(0)};
+            xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0)};
             if (hgcm->call(hgcm, message, parms, 1) >= 0)
                 event = event_new(XD_DND_EVENT_LEAVE);
             break;
         }
         case XD_DND_HOST_CANCEL: {
-            xd_hgcm_parm parms[] = {xd_hgcm_u32(0)};
+            xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0)};
             hgcm->call(hgcm, message, parms, 1);
             g_mutex_lock(&session->lock);
             bool receiving = session->receiving;
@@ -562,9 +562,9 @@ xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
             break;
         }
         case XD_DND_HOST_GH_DROPPED: {
-            xd_hgcm_parm parms[] = {xd_hgcm_u32(0),
-                                    xd_hgcm_buffer(session->formats_buffer, XD_DND_CHUNK),
-                                    xd_hgcm_u32(0), xd_hgcm_u32(0)};
+            xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0),
+                                    XD_HGCM_PARM_BUFFER(session->formats_buffer, XD_DND_CHUNK),
+                                    XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0)};
             if (hgcm->call(hgcm, message, parms, 4) >= 0) {
                 event = event_new(XD_DND_EVENT_TAKEN);
                 uint32_t length = MIN(parms[2].u32, (uint32_t)XD_DND_CHUNK);
@@ -574,7 +574,7 @@ xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
             break;
         }
         case XD_DND_HOST_GH_PENDING: {
-            xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_u32(0)};
+            xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(0)};
             if (hgcm->call(hgcm, message, parms, 2) >= 0) {
                 event = event_new(XD_DND_EVENT_PENDING);
                 event->screen = parms[1].u32;
@@ -599,7 +599,7 @@ xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
 }
 
 int xd_dnd_ack(xd_hgcm *hgcm, uint32_t action) {
-    xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_u32(action)};
+    xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(action)};
     return hgcm->call(hgcm, XD_DND_GUEST_HG_ACK_OP, parms, 2);
 }
 
@@ -610,9 +610,9 @@ int xd_dnd_request_data(xd_dnd_session *session, const char *format) {
     session->receiving = true;
     g_mutex_unlock(&session->lock);
     g_autofree char *copy = g_strdup(format);
-    xd_hgcm_parm parms[] = {xd_hgcm_u32(0),
-                            xd_hgcm_buffer(copy, (uint32_t)strlen(copy) + 1),
-                            xd_hgcm_u32((uint32_t)strlen(copy) + 1)};
+    xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0),
+                            XD_HGCM_PARM_BUFFER(copy, (uint32_t)strlen(copy) + 1),
+                            XD_HGCM_PARM_U32((uint32_t)strlen(copy) + 1)};
     return session->hgcm->call(session->hgcm, XD_DND_GUEST_HG_REQ_DATA, parms, 3);
 }
 
@@ -620,14 +620,14 @@ int xd_dnd_ack_pending(xd_hgcm *hgcm, uint32_t default_action, uint32_t allowed_
                        const char *const *formats) {
     g_autofree char *list = xd_dnd_formats_join(formats);
     uint32_t size = (uint32_t)strlen(list) + 1;
-    xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_u32(default_action),
-                            xd_hgcm_u32(allowed_actions), xd_hgcm_buffer(list, size),
-                            xd_hgcm_u32(size)};
+    xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32(default_action),
+                            XD_HGCM_PARM_U32(allowed_actions), XD_HGCM_PARM_BUFFER(list, size),
+                            XD_HGCM_PARM_U32(size)};
     return hgcm->call(hgcm, XD_DND_GUEST_GH_ACK_PENDING, parms, 5);
 }
 
 int xd_dnd_report_error(xd_hgcm *hgcm, int rc) {
-    xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_u32((uint32_t)rc)};
+    xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0), XD_HGCM_PARM_U32((uint32_t)rc)};
     return hgcm->call(hgcm, XD_DND_GUEST_ERROR, parms, 2);
 }
 
@@ -638,18 +638,18 @@ static int send_header(xd_hgcm *hgcm, uint64_t total, uint32_t meta_size, const 
     g_autofree char *format = g_strdup(meta_format);
     uint32_t format_size = format != nullptr ? (uint32_t)strlen(format) + 1 : 0;
     xd_hgcm_parm parms[] = {
-        xd_hgcm_u32(0),
-        xd_hgcm_u32(0),
-        xd_hgcm_u32(0),
-        xd_hgcm_u64(total),
-        xd_hgcm_u32(meta_size), /* 32 bits, whatever the header says */
-        xd_hgcm_buffer(format, format_size),
-        xd_hgcm_u32(format_size),
-        xd_hgcm_u64(objects),
-        xd_hgcm_u32(0),
-        xd_hgcm_u32(0),
-        xd_hgcm_buffer(nullptr, 0),
-        xd_hgcm_u32(0),
+        XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_U64(total),
+        XD_HGCM_PARM_U32(meta_size), /* 32 bits, whatever the header says */
+        XD_HGCM_PARM_BUFFER(format, format_size),
+        XD_HGCM_PARM_U32(format_size),
+        XD_HGCM_PARM_U64(objects),
+        XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_U32(0),
+        XD_HGCM_PARM_BUFFER(nullptr, 0),
+        XD_HGCM_PARM_U32(0),
     };
     return hgcm->call(hgcm, XD_DND_GUEST_GH_DATA_HEADER, parms, 12);
 }
@@ -659,8 +659,10 @@ static int send_chunks(xd_hgcm *hgcm, uint32_t function, const void *data, size_
     const unsigned char *at = data;
     for (size_t sent = 0; sent < size;) {
         uint32_t chunk = (uint32_t)MIN(size - sent, (size_t)XD_DND_CHUNK);
-        xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_buffer((void *)(uintptr_t)(at + sent), chunk),
-                                xd_hgcm_u32(chunk), xd_hgcm_buffer(nullptr, 0), xd_hgcm_u32(0)};
+        xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0),
+                                XD_HGCM_PARM_BUFFER((void *)(uintptr_t)(at + sent), chunk),
+                                XD_HGCM_PARM_U32(chunk), XD_HGCM_PARM_BUFFER(nullptr, 0),
+                                XD_HGCM_PARM_U32(0)};
         int rc = hgcm->call(hgcm, function, parms, 5);
         if (rc < 0)
             return rc;
@@ -762,8 +764,9 @@ static int send_objects(xd_hgcm *hgcm, GPtrArray *objects) {
         const outgoing_object *object = g_ptr_array_index(objects, i);
         uint32_t path_size = (uint32_t)strlen(object->relative) + 1;
         if (object->dir) {
-            xd_hgcm_parm parms[] = {xd_hgcm_u32(0), xd_hgcm_buffer(object->relative, path_size),
-                                    xd_hgcm_u32(path_size), xd_hgcm_u32(object->mode)};
+            xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(0),
+                                    XD_HGCM_PARM_BUFFER(object->relative, path_size),
+                                    XD_HGCM_PARM_U32(path_size), XD_HGCM_PARM_U32(object->mode)};
             rc = hgcm->call(hgcm, XD_DND_GUEST_GH_DIR, parms, 4);
             continue;
         }
@@ -772,9 +775,10 @@ static int send_objects(xd_hgcm *hgcm, GPtrArray *objects) {
             rc = status_of_errno(errno);
             break;
         }
-        xd_hgcm_parm header[] = {xd_hgcm_u32(0), xd_hgcm_buffer(object->relative, path_size),
-                                 xd_hgcm_u32(path_size), xd_hgcm_u32(0),
-                                 xd_hgcm_u32(object->mode), xd_hgcm_u64(object->size)};
+        xd_hgcm_parm header[] = {XD_HGCM_PARM_U32(0),
+                                 XD_HGCM_PARM_BUFFER(object->relative, path_size),
+                                 XD_HGCM_PARM_U32(path_size), XD_HGCM_PARM_U32(0),
+                                 XD_HGCM_PARM_U32(object->mode), XD_HGCM_PARM_U64(object->size)};
         rc = hgcm->call(hgcm, XD_DND_GUEST_GH_FILE_HEADER, header, 6);
         /* Exactly the size announced, even if the file changed since. */
         for (uint64_t left = object->size; rc >= 0 && left > 0;) {

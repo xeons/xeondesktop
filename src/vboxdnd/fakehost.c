@@ -84,19 +84,19 @@ static message *message_new(uint32_t id) {
 }
 
 static void add_u32(message *msg, uint32_t value) {
-    xd_hgcm_parm parm = xd_hgcm_u32(value);
+    xd_hgcm_parm parm = XD_HGCM_PARM_U32(value);
     g_array_append_val(msg->parms, parm);
 }
 
 static void add_u64(message *msg, uint64_t value) {
-    xd_hgcm_parm parm = xd_hgcm_u64(value);
+    xd_hgcm_parm parm = XD_HGCM_PARM_U64(value);
     g_array_append_val(msg->parms, parm);
 }
 
 static void add_buffer(message *msg, const void *bytes, uint32_t size) {
     void *copy = g_memdup2(bytes, size);
     g_ptr_array_add(msg->data, copy);
-    xd_hgcm_parm parm = xd_hgcm_buffer(copy, size);
+    xd_hgcm_parm parm = XD_HGCM_PARM_BUFFER(copy, size);
     g_array_append_val(msg->parms, parm);
 }
 

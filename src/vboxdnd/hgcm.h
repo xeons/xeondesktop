@@ -44,15 +44,12 @@ typedef struct xd_hgcm_parm {
     uint32_t size; /* the buffer's */
 } xd_hgcm_parm;
 
-static inline xd_hgcm_parm xd_hgcm_u32(uint32_t value) {
-    return (xd_hgcm_parm){.type = XD_HGCM_U32, .u32 = value};
-}
-static inline xd_hgcm_parm xd_hgcm_u64(uint64_t value) {
-    return (xd_hgcm_parm){.type = XD_HGCM_U64, .u64 = value};
-}
-static inline xd_hgcm_parm xd_hgcm_buffer(void *buffer, uint32_t size) {
-    return (xd_hgcm_parm){.type = XD_HGCM_BUFFER, .buffer = buffer, .size = size};
-}
+/* Macros, not inline functions: GCC's analyzer misreads arrays built from
+ * structs that functions return, and reports writes past their end. */
+#define XD_HGCM_PARM_U32(value) ((xd_hgcm_parm){.type = XD_HGCM_U32, .u32 = (value)})
+#define XD_HGCM_PARM_U64(value) ((xd_hgcm_parm){.type = XD_HGCM_U64, .u64 = (value)})
+#define XD_HGCM_PARM_BUFFER(pointer, length) \
+    ((xd_hgcm_parm){.type = XD_HGCM_BUFFER, .buffer = (pointer), .size = (length)})
 
 /* Where calls go: the real host, or a scripted one. `call` may be made
  * from two threads at once (one blocked waiting for the host). */

@@ -118,6 +118,8 @@ typedef struct device {
     uint32_t client_id;
     atomic_bool disconnected;
 } device;
+/* device_free and xd_hgcm_open turn one pointer into the other. */
+static_assert(offsetof(device, base) == 0);
 
 static int device_call(xd_hgcm *hgcm, uint32_t function, xd_hgcm_parm *parms, uint32_t count) {
     device *dev = (device *)hgcm;
@@ -190,5 +192,7 @@ xd_hgcm *xd_hgcm_open(const char *service, int *rc) {
     dev->fd = fd;
     dev->client_id = request.u.out.client_id;
     *rc = XD_VINF_SUCCESS;
-    return &dev->base;
+    /* base is the first member, so this is &dev->base; GCC's analyzer
+     * takes &dev->base for a different pointer and reports dev leaked. */
+    return (xd_hgcm *)dev;
 }

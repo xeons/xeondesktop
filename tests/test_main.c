@@ -6526,8 +6526,8 @@ static bool log_has(const char *path, const char *line) {
 static void test_vboxdnd(void) {
     /* The driver's layout: a 40-byte header, then 16-byte parameters. */
     char buffer[5] = "abcd";
-    xd_hgcm_parm parms[] = {xd_hgcm_u32(7), xd_hgcm_u64(UINT64_C(0x1122334455667788)),
-                            xd_hgcm_buffer(buffer, 5)};
+    xd_hgcm_parm parms[] = {XD_HGCM_PARM_U32(7), XD_HGCM_PARM_U64(UINT64_C(0x1122334455667788)),
+                            XD_HGCM_PARM_BUFFER(buffer, 5)};
     unsigned char call[40 + 16 * 3];
     CHECK(xd_hgcm_encode(9, 300, parms, 3, call, sizeof(call)) == sizeof(call));
     uint32_t word;
