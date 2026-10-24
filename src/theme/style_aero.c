@@ -558,9 +558,15 @@ void xd_aero_draw_radio([[maybe_unused]] const xd_theme *theme, cairo_t *cairo, 
     cairo_restore(cairo);
 }
 
-xd_rect xd_aero_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool disabled) {
+xd_rect xd_aero_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state) {
+    bool disabled = state & XD_STATE_DISABLED;
+    /* Normal, Hot (light blue), Focused (blue), Disabled. */
+    int state_index = disabled                      ? 3
+                      : (state & XD_STATE_FOCUSED) ? 2
+                      : (state & XD_STATE_HOT)     ? 1
+                                                   : 0;
     xd_fill_rect(cairo, rect, xd_rgba_hex(disabled ? 0xF0F0F0 : 0xFFFFFF));
-    xd_shape_draw(theme, cairo, &aero_field[disabled ? 3 : 0], rect);
+    xd_shape_draw(theme, cairo, &aero_field[state_index], rect);
     return xd_rect_inset(rect, xd_tpx(theme, 1), xd_tpx(theme, 1));
 }
 

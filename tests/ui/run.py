@@ -758,6 +758,39 @@ def aero_glass_caption_buttons(s):
     s.check(share > 0.9, f"a hot Close is red ({share:.2f})")
 
 
+@scenario(AERO_INI)
+def start7_search_caret(s):
+    """Windows 7's Start menu opens with the focus in its search box: the
+    box has Windows 7's blue focused border and its caret blinks."""
+    s.inject("key", "ctrl+Escape")
+    menu = s.settle("start-menu")
+    focused = (0x3D, 0x7B, 0xAD)  # Edit's focused border, measured
+    area = (0, HEIGHT - 120, 360, 80)  # the menu's bottom left, over the taskbar
+    xs, ys = [], []
+    for y in range(area[1], area[1] + area[3]):
+        for x in range(area[0], area[0] + area[2]):
+            if max(abs(p - q) for p, q in zip(menu.pixel(x, y), focused)) <= 4:
+                xs.append(x)
+                ys.append(y)
+    # Its top edge: the sides and bottom are lighter, as in Windows 7.
+    s.check(len(xs) > 200, f"the search box has the focused border ({len(xs)} px)")
+    box = (min(xs) + 2, min(ys) + 2, max(xs) - min(xs) - 3, 18)
+    # Over three blink times the box changes (the caret) and nothing
+    # else in the menu does.
+    shots = [s.shot("caret")]
+    for _ in range(6):
+        time.sleep(0.27)
+        shots.append(s.shot("caret"))
+    changes = [b.changed_box(a, box, step=1, tolerance=40) for a, b in zip(shots, shots[1:])]
+    changes = [c for c in changes if c is not None]
+    s.check(changes != [], "the caret blinks")
+    s.check(all(c[2] <= 3 for c in changes), f"only the caret changes ({changes})")
+    s.inject("type", "cal")
+    time.sleep(0.1)
+    typed = s.shot("typed")
+    s.check(typed.differs(menu, box, step=1) > 0, "typing shows in the box")
+
+
 def taskbar_top(shot):
     """The taskbar's top row: the first, going down the middle from above
     where the tallest one starts, that isn't the desktop's colour."""

@@ -200,6 +200,8 @@ struct xd_start7 {
     const char **folder_icons;
     size_t folder_count;
     xd_textedit search;
+    guint caret_timer;     /* the search box's caret blinking, or 0 */
+    bool caret_hidden;     /* in its off phase */
 
     int hot_left;          /* row index or -1 */
     int hot_right;         /* right_kind, HIT_*, or -1 */
@@ -1120,9 +1122,11 @@ static void draw_left(xd_start7 *menu, cairo_t *cairo, const xd_theme *theme,
                      menu->mode == MODE_ALL ? "Back" : "All Programs", &st);
     }
 
-    /* Search box: takes any typing. */
+    /* Search box: takes any typing, so it has the focus while the menu
+     * is open. */
     xd_rect sr = D(search_rect(menu), scale);
-    xd_rect inner = xd_theme_draw_field(theme, cairo, sr, false);
+    xd_rect inner = xd_theme_draw_field_state(theme, cairo, sr, XD_STATE_FOCUSED);
+    bool caret = !menu->caret_hidden;
     xd_str query = xd_textedit_view(&menu->search);
     int pad = xd_tpx(theme, 4);
     xd_rect tr = xd_rect_inset4(inner, pad, 0, pad, 0);
@@ -1132,19 +1136,21 @@ static void draw_left(xd_start7 *menu, cairo_t *cairo, const xd_theme *theme,
         xd_text_style st = xd_text(theme, XD_FONT_MENU, menu_colors->left_dim, XD_ALIGN_START);
         st.font = &it;
         xd_draw_text(cairo, tr, "Search programs and files", &st);
-        xd_fill_rect(cairo,
-                     (xd_rect){tr.x, tr.y + xd_tpx(theme, 4), XD_MAX(xd_tpx(theme, 1), 1),
-                               tr.h - xd_tpx(theme, 8)},
-                     menu_colors->left_text);
+        if (caret)
+            xd_fill_rect(cairo,
+                         (xd_rect){tr.x, tr.y + xd_tpx(theme, 4), XD_MAX(xd_tpx(theme, 1), 1),
+                                   tr.h - xd_tpx(theme, 8)},
+                         menu_colors->left_text);
     } else {
         xd_text_style st = xd_text(theme, XD_FONT_MENU, menu_colors->left_text, XD_ALIGN_START);
         char *text = xd_str_dup_cstr(query);
         xd_draw_text(cairo, tr, text, &st);
         int width = XD_MIN(xd_text_width(cairo, text, &st), tr.w - 1);
-        xd_fill_rect(cairo,
-                     (xd_rect){tr.x + width + 1, tr.y + xd_tpx(theme, 4),
-                               XD_MAX(xd_tpx(theme, 1), 1), tr.h - xd_tpx(theme, 8)},
-                     menu_colors->left_text);
+        if (caret)
+            xd_fill_rect(cairo,
+                         (xd_rect){tr.x + width + 1, tr.y + xd_tpx(theme, 4),
+                                   XD_MAX(xd_tpx(theme, 1), 1), tr.h - xd_tpx(theme, 8)},
+                         menu_colors->left_text);
         xd_free(text);
     }
     /* Magnifier glyph on the right of the box. */
@@ -1153,6 +1159,7 @@ static void draw_left(xd_start7 *menu, cairo_t *cairo, const xd_theme *theme,
     double gy = inner.y + (inner.h - glyph_size) / 2.0;
     xd_set_color(cairo, menu_colors->classic ? menu_colors->left_text : xd_rgba_hex(0x2C628B));
     cairo_set_line_width(cairo, XD_MAX(xd_tpx(theme, 1), 1) * 1.5);
+    cairo_new_path(cairo); /* the text leaves a current point: no line from it to the arc */
     cairo_arc(cairo, gx + glyph_size * 0.6, gy + glyph_size * 0.4, glyph_size * 0.35, 0, 2 * XD_PI);
     cairo_stroke(cairo);
     cairo_move_to(cairo, gx + glyph_size * 0.35, gy + glyph_size * 0.65);
@@ -2316,6 +2323,26 @@ static int xp_body_height(const xd_start7 *menu) {
     return XD_MAX(XD_MIN(XD_MAX(XD_MAX(right, left), XP_BODY_H), most), right);
 }
 
+static gboolean blink_caret(gpointer data) {
+    xd_start7 *menu = data;
+    menu->caret_hidden = !menu->caret_hidden;
+    menu->dirty = true;
+    return G_SOURCE_CONTINUE;
+}
+
+/* The caret shown and blinking afresh, as after each key in Windows; at
+ * Keyboard Properties' rate, steady at 0. */
+static void restart_caret(xd_start7 *menu) {
+    menu->caret_hidden = false;
+    menu->dirty = true;
+    if (menu->caret_timer != 0)
+        g_source_remove(menu->caret_timer);
+    menu->caret_timer = 0;
+    int blink_ms = menu->shell->settings.keyboard.cursor_blink_ms;
+    if (blink_ms > 0)
+        menu->caret_timer = g_timeout_add((guint)blink_ms, blink_caret, menu);
+}
+
 void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);
@@ -2342,6 +2369,8 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     if (xp)
         xd_start_menu_note_programs(shell); /* what's new since it last opened */
     rebuild(menu);
+    if (!xp)
+        restart_caret(menu);
     menu->body_h = xp ? xp_body_height(menu) : 0;
     menu->h = xp ? xp_head(menu) + menu->body_h + xp_foot(menu) : S7_H;
 
@@ -2380,6 +2409,8 @@ void xd_start7_close(xd_shell *shell) {
     if (menu == nullptr)
         return;
     close_sub(menu);
+    if (menu->caret_timer != 0)
+        g_source_remove(menu->caret_timer);
     shell->start7 = nullptr;
     shell->pending_start7 = false;
     xdg_popup_destroy(menu->popup);
@@ -2565,6 +2596,7 @@ static void ensure_visible(xd_start7 *menu, int index) {
 }
 
 static void search_changed(xd_start7 *menu) {
+    restart_caret(menu);
     bool has = xd_textedit_view(&menu->search).len > 0;
     menu->mode = has ? MODE_SEARCH : MODE_HOME;
     rebuild(menu);

@@ -291,7 +291,7 @@ void xd_luna_draw_tab_panel(const xd_theme *theme, cairo_t *cairo, xd_rect rect)
 void xd_luna_draw_groupbox_frame(const xd_theme *theme, cairo_t *cairo, xd_rect box);
 /* style_aero.c: Windows 7's controls, from aero_controls.h. */
 void xd_aero_draw_radio(const xd_theme *theme, cairo_t *cairo, xd_rect box, uint8_t state);
-xd_rect xd_aero_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool disabled);
+xd_rect xd_aero_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
 void xd_aero_draw_dropdown_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                                   uint8_t state);
 void xd_aero_draw_vscrollbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_rect thumb,

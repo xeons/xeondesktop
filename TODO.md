@@ -1165,7 +1165,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Applets: not done: Customize Regional Options' fields glibc can't express
       (list separator, two-digit years, long date...); limited users see
       administrator tasks in User Accounts; other GTK apps don't follow the
-      double-click time or caret blink.
+      double-click time or caret blink. libxdui's own text fields have a
+      steady caret; Windows 7's Start menu
+      search box blinks at the CursorBlinkMs rate.
 - [x] Power Options' Alarms and Power Meter tabs (the shell's alarms follow
       them); Accessibility's Sound tab (SoundSentry flashes), status icons
       in the tray, automatic reset after idle. Untested on a real laptop.

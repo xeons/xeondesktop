@@ -431,6 +431,10 @@ xd_field_colors xd_theme_field_colors(const xd_theme *theme);
 
 /* Sunken frame of a text field or list box. Returns the content rect. */
 xd_rect xd_theme_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool disabled);
+/* The same in a state: XD_STATE_HOT, _FOCUSED, _DISABLED. Only Aero's
+ * border shows hot and focused, as in Windows 7; XP's fields don't. */
+xd_rect xd_theme_draw_field_state(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                  uint8_t state);
 int xd_theme_dropdown_button_width(const xd_theme *theme);
 /* The arrow button of a combo box. state: XD_STATE_HOT, _PRESSED, _DISABLED. */
 void xd_theme_draw_dropdown_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,

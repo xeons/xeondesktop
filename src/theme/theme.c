@@ -629,13 +629,20 @@ xd_field_colors xd_theme_field_colors(const xd_theme *theme) {
 }
 
 xd_rect xd_theme_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool disabled) {
+    return xd_theme_draw_field_state(theme, cairo, rect,
+                                     disabled ? XD_STATE_DISABLED : XD_STATE_NORMAL);
+}
+
+xd_rect xd_theme_draw_field_state(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                  uint8_t state) {
+    bool disabled = state & XD_STATE_DISABLED;
     xd_rect inner;
     if (xd_pkgstyle_draw_field(theme, cairo, rect, disabled, &inner))
         return inner;
     int px = xd_tpx(theme, 1);
     xd_rgba fill = disabled ? xd_sys(theme, XD_COLOR_BUTTON_FACE) : xd_sys(theme, XD_COLOR_WINDOW);
     if (aero(theme))
-        return xd_aero_draw_field(theme, cairo, rect, disabled);
+        return xd_aero_draw_field(theme, cairo, rect, state);
     if (luna(theme)) {
         xd_rgba border, off;
         xd_luna_field_colors(theme, &border, &off);
