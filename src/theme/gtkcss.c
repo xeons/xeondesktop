@@ -324,13 +324,19 @@ static void classic(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) 
         "  min-width: 12px; min-height: 12px; margin: 2px; padding: 1px 1px;\n"
         "  background-color: %s; color: %s;\n  border-style: solid; border-width: 1px;\n"
         "  border-color: %s %s %s %s; box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n"
-        "combobox button.combo:checked arrow { border-color: %s; box-shadow: none; }\n",
+        "combobox button.combo:checked arrow { border-color: %s; box-shadow: none; }\n"
+        /* An editable combo's entry and button make one sunken field: no
+         * bevel where they meet (the sides themselves go in common rules). */
+        "combobox box.linked > entry.combo { box-shadow: inset 1px 1px %s, inset 0 -1px %s; }\n"
+        "combobox box.linked > button.combo, combobox box.linked > button.combo:hover,\n"
+        "combobox box.linked > button.combo:checked {\n"
+        "  box-shadow: inset 0 1px %s, inset -1px -1px %s;\n}\n",
         face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, sh.s, hi.s, hi.s, dk.s, hi.s,
         face, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, sh.s, hi.s, hi.s, sh.s, hi.s, sh.s,
         sh.s, hi.s, hi.s, sh.s, H(toolkit_colors->base), H(toolkit_colors->text), sh.s, hi.s, hi.s,
         sh.s, dk.s, li.s, H(toolkit_colors->base), sh.s, hi.s, hi.s, sh.s, dk.s, li.s,
         H(toolkit_colors->base), face, H(toolkit_colors->fg), li.s, dk.s, dk.s, li.s, hi.s, sh.s,
-        sh.s);
+        sh.s, dk.s, li.s, dk.s, li.s);
 }
 
 /* ---- Luna and Whistler (Windows XP) ----------------------------------------------- */
@@ -989,6 +995,11 @@ void xd_theme_gtk_css(const xd_theme *theme, xd_strbuf *out) {
     /* GTK marks the whole notebook as a .frame; Windows draws no outline
      * around the tab control, only the page and tabs themselves. */
     xd_strbuf_append(out, XD_STR("notebook, notebook.frame { border: none; box-shadow: none; }\n"));
+    /* An editable combo box (a server, an address) is one field in
+     * Windows, its arrow button inside the border; GTK draws the entry and
+     * the button each in a field's border, two boxes side by side. */
+    xd_strbuf_append(out, XD_STR("combobox box.linked > entry.combo { border-right-width: 0; }\n"
+                                 "combobox box.linked > button.combo { border-left-width: 0; }\n"));
     /* Disclosure triangles (expanders, "Details"). */
     xd_strbuf_append(out, XD_STR("expander > title > arrow {\n  min-width: 12px;\n"
                                  "  min-height: 12px;\n  margin-right: 4px;\n"
