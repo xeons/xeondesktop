@@ -1288,7 +1288,12 @@ against mocks or scratch directories; none yet against the real services.
 - [~] System Configuration Utility (`xd-msconfig`): autostart entries and
       user services. Untested against a real user manager.
 - [~] Dedicated graphics (switcheroo-control): "Run with dedicated graphics
-      card" and per-program defaults. Untested on a real hybrid laptop.
+      card" and per-program defaults. Tested on a hybrid laptop (Intel Iris
+      Xe and NVIDIA's own driver, 2026-10-24): Run with dedicated graphics
+      card starts a program on the NVIDIA card (glxinfo names it). A
+      program already running opens new windows in its own process
+      (Konsole), which keeps the card it started on. Untested: Always run
+      with..., PrefersNonDefaultGPU, Vulkan and Flatpak programs.
 - [~] Night light (compositor gamma ramp; GeoClue or typed location) and
       Color Management (`xd-color`, colord, vcgt calibration via lcms2).
       Untested: a real DRM gamma ramp (headless outputs have none), real
