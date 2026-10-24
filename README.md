@@ -280,9 +280,10 @@ tabs, and one for what only Linux has:
   Browse... for Windows `.theme` files (pointers need `win2xcur`).
 - Desktop: the wallpaper (from the usual folders or Browse...) and how
   it's placed. Five come with XeonDesktop (in `/usr/share/wallpapers/xeondesktop`):
-  Watercolor Blue, a large version of Watercolor's caption mosaic, and Rolling
-  Hills, Olive Meadow, Silver Mist and Energy for the XP colours. All are
-  painted by `tools/xd-wallpapers` from noise; none come from Windows.
+  Watercolor Blue for Watercolor, and Storm Hill, Olive Forest, Silver
+  Factory and Energy for the XP colours. Energy is painted from noise by
+  `tools/xd-wallpapers`; the others are AI-generated pictures made for the
+  project. None come from Windows.
 - Screen Saver: eight savers (3D Pipes and 3D Text among them), each with
   its Settings (saved to `[ScreenSaver.*]`), a live preview, Wait, Password protected,
   and when to turn the monitors off.

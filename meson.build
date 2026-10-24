@@ -1267,14 +1267,15 @@ executable('xd-theme-compare', 'tools/xd-theme-compare.c', dependencies: [theme_
 # Scales a PNG with every theme image filter, to compare them by eye.
 executable('xd-scale-demo', 'tools/xd-scale-demo.c', dependencies: [theme_dep])
 
-# The wallpapers, painted by tools/xd-wallpapers (run by hand; the pictures
-# are committed), where Display Properties' Background list finds them.
+# The wallpapers, where Display Properties' Background list finds them:
+# Energy painted by tools/xd-wallpapers (run by hand; the picture is
+# committed), the others pictures of the project's own.
 executable('xd-wallpapers', 'tools/xd-wallpapers.c', dependencies: [gdk_pixbuf_dep, m_dep])
 install_data(
   'data/wallpapers/Watercolor Blue.jpg',
-  'data/wallpapers/Rolling Hills.jpg',
-  'data/wallpapers/Olive Meadow.jpg',
-  'data/wallpapers/Silver Mist.jpg',
+  'data/wallpapers/Storm Hill.jpg',
+  'data/wallpapers/Olive Forest.jpg',
+  'data/wallpapers/Silver Factory.jpg',
   'data/wallpapers/Energy.jpg',
   install_dir: get_option('datadir') / 'wallpapers' / 'xeondesktop',
 )

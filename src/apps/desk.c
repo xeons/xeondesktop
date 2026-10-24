@@ -61,7 +61,7 @@ typedef enum chooser_kind {
 /* What an item of the Themes tab's list stands for. */
 typedef enum theme_kind {
     THEME_CURRENT, /* "My Current Theme", or the last one "(Modified)" */
-    THEME_XP,      /* Windows XP: Luna, Default (blue), Bliss (ours: Rolling Hills) */
+    THEME_XP,      /* Windows XP: Luna, Default (blue), Bliss (ours: Storm Hill) */
     THEME_CLASSIC, /* Windows Classic */
     THEME_PACKAGE,
     THEME_BROWSE,
@@ -1878,7 +1878,7 @@ static void on_style_browse([[maybe_unused]] xd_widget *widget, void *user) {
  * wallpaper, the sound scheme and the pointers together. Ours are the
  * theme packages that bring more than a style, and XP's two built in. */
 
-/* Windows XP's Bliss: ours is Rolling Hills, in the source tree's data/
+/* Windows XP's Bliss: ours is Storm Hill, in the source tree's data/
  * or installed beside the other wallpapers. "" if it isn't there. */
 static void xp_wallpaper(char *out, size_t cap) {
     out[0] = '\0';
@@ -1886,7 +1886,7 @@ static void xp_wallpaper(char *out, size_t cap) {
     if (xd_data_dir(&data)) {
         static const char *const places[] = {"wallpapers", "../wallpapers/xeondesktop"};
         for (size_t i = 0; i < XD_ARRAY_LEN(places) && out[0] == '\0'; i++) {
-            char *path = g_build_filename(xd_strbuf_cstr(&data), places[i], "Rolling Hills.jpg",
+            char *path = g_build_filename(xd_strbuf_cstr(&data), places[i], "Storm Hill.jpg",
                                           nullptr);
             char *canon = g_canonicalize_filename(path, nullptr);
             if (g_file_test(canon, G_FILE_TEST_IS_REGULAR) && strlen(canon) < cap)

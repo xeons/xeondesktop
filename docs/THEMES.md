@@ -199,7 +199,7 @@ variant) with `Style` its base, `[Desktop]` `Wallpaper` and
 `WallpaperMode`, `[Mouse]` `CursorTheme=xdtheme-NAME` and the sound scheme
 into `sounds.ini`. What a package doesn't bring is left as it is, as with
 XP's .theme files. The tab's built-in "Windows XP" (Luna, Default (blue),
-our Rolling Hills for Bliss, stretched, Windows' own pointers) and
+our Storm Hill for Bliss, stretched, Windows' own pointers) and
 "Windows Classic" (no wallpaper) set the sounds not at all, as XP's own
 .theme files didn't.
 
