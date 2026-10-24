@@ -742,7 +742,8 @@ def red_share(shot, rect):
 def aero_glass_caption_buttons(s):
     """On glass, a window's Close button is red from top to bottom (its
     measurements once came from wrongly un-premultiplied images, which
-    turned its light rows teal), and red when hot."""
+    turned its light rows teal), and red when hot; an inactive window's is
+    clear glass, as Windows 7's, until hot."""
     s.launch("xd-control")
     s.wait_window(title="Control Panel", state="activated")
     s.inject("key", "super+Right")  # the caption buttons at the screen's top right
@@ -756,6 +757,18 @@ def aero_glass_caption_buttons(s):
     hot = s.settle("close-hot")
     share = min(red_share(hot, rect) for rect in sides)
     s.check(share > 0.9, f"a hot Close is red ({share:.2f})")
+    s.inject("move", WIDTH // 4, HEIGHT // 2)
+    s.launch("xd-desk")
+    s.wait_window(title="Display Properties", state="activated")
+    s.wait(lambda: "activated" not in s.window(title="Control Panel")["states"],
+           "Control Panel to be inactive")  # fmt: skip
+    inactive = s.settle("inactive")
+    share = max(red_share(inactive, rect) for rect in sides)
+    s.check(share < 0.1, f"an inactive window's Close isn't red ({share:.2f})")
+    s.inject("move", WIDTH - 30, 10)
+    inactive_hot = s.settle("inactive-close-hot")
+    share = min(red_share(inactive_hot, rect) for rect in sides)
+    s.check(share > 0.9, f"an inactive window's hot Close is red ({share:.2f})")
 
 
 @scenario(AERO_INI)

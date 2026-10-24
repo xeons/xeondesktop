@@ -248,8 +248,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       XD_UI_RENDERER=gles2) the glass caption buttons came out wrong: their
       measurements were taken before xd-theme-import stopped
       un-premultiplying DWM's images (Close's light rows teal); remeasured,
-      with UI test aero_glass_caption_buttons. **Untested: how the blur
-      looks in a live session on a real GPU; NVIDIA's own driver.**
+      with UI test aero_glass_caption_buttons. The measured shapes
+      couldn't hold DWM's buttons (a split face, glows, doubled edge
+      pixels; worse at fractional scales), so they're drawn in code now,
+      their colours and alphas read off 7's images; an inactive window's
+      are clear glass. Their sizes are still Basic's (26, 27, 47): a
+      reduced screenshot of 7 shows wider ones, unconfirmed. **Untested:
+      how the blur looks in a live session on a real GPU; NVIDIA's own
+      driver.**
 - [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
       AnimateWindows, on by default): a bar in the active caption colour
       flies from the title bar to the taskbar button and back (the shell

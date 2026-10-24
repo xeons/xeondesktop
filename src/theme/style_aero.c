@@ -334,41 +334,190 @@ static int caption_glyph_index(xd_frame_part part, bool maximized) {
                                       : 1;
 }
 
-/* A shape at its natural size and the theme's scale, centred in r. */
-static xd_rect shape_centred(const xd_theme *theme, const xd_shape *shape, xd_rect rect) {
-    int width = xd_tpx(theme, shape->w), height = xd_tpx(theme, shape->h);
-    return (xd_rect){rect.x + (rect.w - width) / 2, rect.y + (rect.h - height) / 2, width, height};
+/* ---- glass caption buttons ---------------------------------------------------------- */
+
+/* Windows 7's glass caption buttons, drawn: a strip hanging from the top
+ * edge, outlined dark with its bottom outer corners rounded, a dark line
+ * between buttons with a light one either side of it. A face is split
+ * a little above its middle, light glass above and darker below, which
+ * lightens towards a light line at the bottom; hot and pressed faces are
+ * nearly opaque (blue, cyan-lit; Close's red, yellow-lit), a normal one
+ * translucent, and an inactive window's clear. Colours and alphas are
+ * read off Windows 7's images at their middle column (deduced, no
+ * pixels), down the face: upper top and bottom, lower top, two below it
+ * and the bottom line. */
+typedef struct glass_face {
+    uint32_t upper[2], lower[3], line;
+    double alpha, line_alpha;
+} glass_face;
+
+static const glass_face GLASS_NORMAL = {
+    {0xF4F4F4, 0xD3D3D3}, {0x000000, 0x21212B, 0x8F96AD}, 0xEAECF1, 0.50, 0.58};
+static const glass_face GLASS_HOT = {
+    {0xB7DBF2, 0x97C8E4}, {0x2881BB, 0x18AAC9, 0x2ED8E5}, 0x0AFEFB, 0.96, 1.0};
+static const glass_face GLASS_PRESSED = {
+    {0xA2BBCD, 0x5FAAB9}, {0x0D6F80, 0x099997, 0x16D6C5}, 0x0AFDFA, 1.0, 1.0};
+static const glass_face GLASS_CLOSE = {
+    {0xFCA898, 0xEB7561}, {0xD02102, 0xD02E0F, 0xDE704E}, 0xF2B29E, 0.80, 0.80};
+static const glass_face GLASS_CLOSE_HOT = {
+    {0xFB9D8B, 0xF1745E}, {0xD22202, 0xD63209, 0xE6942F}, 0xF5E477, 1.0, 1.0};
+static const glass_face GLASS_CLOSE_PRESSED = {
+    {0xD2AA93, 0xBE7F64}, {0x871700, 0x872A01, 0x8F6C20}, 0xEDC72C, 1.0, 1.0};
+
+static void add_stop(cairo_pattern_t *pattern, double at, uint32_t rgb, double alpha) {
+    cairo_pattern_add_color_stop_rgba(pattern, at, ((rgb >> 16) & 0xFF) / 255.0,
+                                      ((rgb >> 8) & 0xFF) / 255.0, (rgb & 0xFF) / 255.0, alpha);
 }
 
-/* Windows 7's caption buttons: on glass, DWM's translucent ones (a glow
- * around a hot one); in Basic, the Window class's. The glyph is white,
- * outlined. */
+/* The button's outline as a path: down its left side if it begins the
+ * strip, along the bottom, up its right side, corners rounded where it
+ * ends the strip. Inset half a line so strokes land on whole pixels. */
+static void glass_outline_path(cairo_t *cairo, xd_rect rect, double line, double radius,
+                               bool leftmost, bool rightmost) {
+    double half = line / 2;
+    double left = rect.x + half, right = rect.x + rect.w - half;
+    double top = rect.y, bottom = rect.y + rect.h - half;
+    double rl = leftmost ? radius : 0, rr = rightmost ? radius : 0;
+    cairo_new_path(cairo);
+    if (leftmost)
+        cairo_move_to(cairo, left, top);
+    else
+        cairo_move_to(cairo, rect.x, bottom);
+    if (leftmost) {
+        cairo_line_to(cairo, left, bottom - rl);
+        if (rl > 0)
+            cairo_arc_negative(cairo, left + rl, bottom - rl, rl, XD_PI, XD_PI / 2);
+    }
+    cairo_line_to(cairo, right - rr, bottom);
+    if (rr > 0)
+        cairo_arc_negative(cairo, right - rr, bottom - rr, rr, XD_PI / 2, 0);
+    cairo_line_to(cairo, right, top);
+}
+
+static void draw_glass_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                      bool close, int state_index, bool active, bool leftmost,
+                                      bool rightmost) {
+    double line = XD_MAX(xd_tpx(theme, 1), 1);
+    double radius = xd_tpx(theme, 3);
+    bool hot = state_index == 1, pressed = state_index == 2;
+    /* A hot button glows round its edge, behind the strip. */
+    if (hot) {
+        double spread = xd_tpx(theme, 9);
+        double cx = rect.x + rect.w / 2.0, cy = rect.y + rect.h * 0.6;
+        cairo_pattern_t *glow = cairo_pattern_create_radial(cx, cy, rect.h * 0.3, cx, cy,
+                                                            rect.w / 2.0 + spread);
+        uint32_t tint = close ? 0xF0602E : 0x4ADFF0;
+        add_stop(glow, 0, tint, 0.55);
+        add_stop(glow, 1, tint, 0);
+        cairo_save(cairo);
+        cairo_translate(cairo, cx, cy);
+        cairo_scale(cairo, 1, (rect.h / 2.0 + spread / 2) / (rect.w / 2.0 + spread));
+        cairo_translate(cairo, -cx, -cy);
+        cairo_set_source(cairo, glow);
+        cairo_arc(cairo, cx, cy, rect.w / 2.0 + spread, 0, 2 * XD_PI);
+        cairo_fill(cairo);
+        cairo_restore(cairo);
+        cairo_pattern_destroy(glow);
+    }
+
+    cairo_save(cairo);
+    xd_path_rounded(cairo, rect.x, rect.y, rect.w, rect.h, 0, 0, rightmost ? radius : 0,
+                    leftmost ? radius : 0);
+    cairo_clip(cairo);
+    /* The face: an inactive window's is clear unless hot or pressed. */
+    const glass_face *face = close ? (hot       ? &GLASS_CLOSE_HOT
+                                      : pressed ? &GLASS_CLOSE_PRESSED
+                                                : &GLASS_CLOSE)
+                             : hot     ? &GLASS_HOT
+                             : pressed ? &GLASS_PRESSED
+                                       : &GLASS_NORMAL;
+    bool clear = !active && !hot && !pressed;
+    double split = rect.y + round(rect.h * 0.45);
+    double bottom = rect.y + rect.h - line; /* the outline's row */
+    if (!clear) {
+        cairo_pattern_t *upper = cairo_pattern_create_linear(0, rect.y, 0, split);
+        add_stop(upper, 0, face->upper[0], face->alpha * (close ? 1 : 1.14));
+        add_stop(upper, 1, face->upper[1], face->alpha * (close ? 1 : 0.92));
+        cairo_set_source(cairo, upper);
+        cairo_rectangle(cairo, rect.x, rect.y, rect.w, split - rect.y);
+        cairo_fill(cairo);
+        cairo_pattern_destroy(upper);
+        cairo_pattern_t *lower = cairo_pattern_create_linear(0, split, 0, bottom - line);
+        /* A normal min/max face is barely tinted at the split, more so at
+         * the bottom (Windows 7's alphas: 46 to 78). */
+        bool tinted = face == &GLASS_NORMAL;
+        add_stop(lower, 0, face->lower[0], tinted ? 0.18 : face->alpha);
+        add_stop(lower, 0.4, face->lower[1], tinted ? 0.21 : face->alpha);
+        add_stop(lower, 1, face->lower[2], tinted ? 0.31 : face->alpha);
+        cairo_set_source(cairo, lower);
+        cairo_rectangle(cairo, rect.x, split, rect.w, bottom - split);
+        cairo_fill(cairo);
+        cairo_pattern_destroy(lower);
+        if (hot || pressed) {
+            /* Lit from the bottom middle: its sides darker. */
+            cairo_pattern_t *sides = cairo_pattern_create_linear(rect.x, 0, rect.x + rect.w, 0);
+            add_stop(sides, 0, 0x000000, 0.28);
+            add_stop(sides, 0.3, 0x000000, 0);
+            add_stop(sides, 0.7, 0x000000, 0);
+            add_stop(sides, 1, 0x000000, 0.28);
+            cairo_set_source(cairo, sides);
+            cairo_rectangle(cairo, rect.x, split, rect.w, bottom - split);
+            cairo_fill(cairo);
+            cairo_pattern_destroy(sides);
+        }
+    }
+    /* The light line along the bottom, and up either side inside the
+     * outline (fainter on an inactive window's clear glass). */
+    set_rgb(cairo, clear ? 0xFEFEFE : face->line, clear ? 0.23 : face->line_alpha);
+    cairo_rectangle(cairo, rect.x, bottom - line, rect.w, line);
+    cairo_fill(cairo);
+    double inner_alpha = clear ? 0.35 : 0.7;
+    cairo_pattern_t *inner = cairo_pattern_create_linear(0, rect.y, 0, bottom);
+    add_stop(inner, 0, 0xFCFCFC, inner_alpha);
+    add_stop(inner, 1, 0xDADADA, inner_alpha * 0.75);
+    cairo_set_source(cairo, inner);
+    cairo_rectangle(cairo, rect.x + (leftmost ? line : 0), rect.y, line, bottom - rect.y);
+    cairo_rectangle(cairo, rect.x + rect.w - 2 * line, rect.y, line, bottom - rect.y);
+    cairo_fill(cairo);
+    cairo_pattern_destroy(inner);
+    /* The top rim, light across the strip's top. */
+    set_rgb(cairo, 0xFCFCFC, active ? 0.85 : 0.6);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, line);
+    cairo_fill(cairo);
+    cairo_restore(cairo);
+
+    /* The outline: grey above, darker below, as Windows 7's. */
+    double outline_alpha = active ? 1.0 : 0.7;
+    cairo_pattern_t *outline = cairo_pattern_create_linear(0, rect.y, 0, rect.y + rect.h);
+    add_stop(outline, 0, 0x797979, 0.78 * outline_alpha);
+    add_stop(outline, 0.45, 0x545454, 0.70 * outline_alpha);
+    add_stop(outline, 0.5, 0x000000, 0.52 * outline_alpha);
+    add_stop(outline, 1, 0x1B1B1B, 0.69 * outline_alpha);
+    cairo_set_source(cairo, outline);
+    cairo_set_line_width(cairo, line);
+    glass_outline_path(cairo, rect, line, radius, leftmost, rightmost);
+    cairo_stroke(cairo);
+    cairo_pattern_destroy(outline);
+    /* A faint light edge just below the strip. */
+    set_rgb(cairo, 0xFEFEFE, active ? 0.45 : 0.3);
+    cairo_rectangle(cairo, rect.x + (leftmost ? radius : 0), rect.y + rect.h,
+                    rect.w - (leftmost ? radius : 0) - (rightmost ? radius : 0), line);
+    cairo_fill(cairo);
+}
+
+/* Windows 7's caption buttons: on glass, the strip drawn above; in Basic,
+ * the Window class's measured images. The glyph is white, outlined. */
 static void aero_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                                 xd_frame_part part, const xd_frame *frame, bool leftmost,
-                                bool alone) {
+                                bool rightmost) {
     bool pressed = frame->pressed == part && frame->hot == part;
     bool hot = frame->hot == part && !pressed;
     int state_index = pressed ? 2 : hot ? 1 : 0;
     int glyph_index = caption_glyph_index(part, frame->maximized);
     bool close = part == XD_PART_CLOSE;
     if (theme->glass) {
-        const xd_shape *bg =
-            close && alone ? (frame->active ? aero_dwm_close_alone : aero_dwm_close_alone_inactive)
-            : close        ? (frame->active ? aero_dwm_close : aero_dwm_close_inactive)
-            : leftmost     ? (frame->active ? aero_dwm_min : aero_dwm_min_inactive)
-                           : (frame->active ? aero_dwm_max : aero_dwm_max_inactive);
-        if (hot) {
-            /* The glow around a hot button, at its own size. */
-            const xd_shape *glow = close ? aero_dwm_close_glow : aero_dwm_glow;
-            xd_shape_draw(theme, cairo, glow, shape_centred(theme, glow, rect));
-        }
-        /* DWM's images reach 2 px past the button either side, its outline
-         * on the left and a soft edge on the right: drawn left to right,
-         * each button's outline covers its neighbour's edge, one dark line
-         * between them as on Windows 7. */
-        int overhang = xd_tpx(theme, 2);
-        xd_shape_draw(theme, cairo, &bg[state_index],
-                      (xd_rect){rect.x - overhang, rect.y, rect.w + 2 * overhang, rect.h});
+        draw_glass_caption_button(theme, cairo, rect, close, state_index, frame->active, leftmost,
+                                  rightmost);
         /* DWM's glyphs are outlined 2 px at the sides, but Maximize's
          * box 1 px, which leaves it hollow. */
         draw_aero_glyph(theme, cairo, rect, &caption_glyphs[glyph_index],
@@ -385,11 +534,11 @@ static void aero_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect r
 }
 
 static void caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_frame_part part,
-                           const xd_frame *frame, bool first, [[maybe_unused]] bool last) {
+                           const xd_frame *frame, bool first, bool last) {
     bool alone = part == XD_PART_CLOSE && (frame->buttons & ~XD_CAPBTN_CLOSE) == 0;
     if (xd_pkgstyle_dwm_button(theme, cairo, rect, part, frame, first, alone))
         return;
-    aero_caption_button(theme, cairo, rect, part, frame, first, alone);
+    aero_caption_button(theme, cairo, rect, part, frame, first, last);
 }
 
 static void aero_draw_frame(const xd_theme *theme, cairo_t *cairo, xd_rect outer,
