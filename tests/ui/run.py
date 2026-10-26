@@ -1824,6 +1824,32 @@ def files_undo_copy_merge(s):
 
 
 @scenario()
+def files_wheel_scrolls(s):
+    """The mouse wheel over the view scrolls a folder longer than the
+    window, and back."""
+    many = os.path.join(s.home, "Documents", "Many")
+    os.makedirs(many)
+    for i in range(300):
+        open(os.path.join(many, f"file {i:03}.txt"), "w").close()
+    empty = s.settle("desktop")
+    s.launch("xd-files", many)
+    s.wait_window(app_id=FILES, state="activated")
+    files_title(s, "Many", "Many to open")
+    s.inject("move", WIDTH - 24, HEIGHT - 80)
+    shown = s.settle("the folder")
+    x, y, _, _ = shown.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("move", x + 400, y + 250)
+    top = s.settle("the folder's top")
+    view = (x + 200, y + 120, 400, 250)
+    s.inject("wheel", 5)
+    down = s.settle("wheeled down")
+    s.check(down.differs(top, view) > 0.02, "the wheel scrolled the view down")
+    s.inject("wheel", -5)
+    up = s.settle("wheeled up")
+    s.check(up.differs(top, view) < 0.01, "and back up to the top")
+
+
+@scenario()
 def files_extract(s):
     """An archive's right-click menu: Extract Here puts what's in it beside
     it (Undo Extract sends that to the Recycle Bin), and Extract to

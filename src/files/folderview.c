@@ -3108,10 +3108,13 @@ static void xd_folder_view_init(XdFolderView *folder_view) {
     gtk_drag_dest_set(GTK_WIDGET(folder_view), (GtkDestDefaults)0, nullptr, 0,
                       (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
     gtk_drag_dest_add_uri_targets(GTK_WIDGET(folder_view));
+    /* The wheel's events start here and go up to the scrolled window, as
+     * GtkTreeView's do: without them they go to the toplevel instead. */
     gtk_widget_add_events(GTK_WIDGET(folder_view),
                           GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
                               GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK |
-                              GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
+                              GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK |
+                              GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
 }
 
 /* ---- public API ------------------------------------------------------------------ */
