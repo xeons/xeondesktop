@@ -463,11 +463,10 @@ static void on_add_command(GtkToggleButton *toggle, gpointer data) {
 
 static void on_add_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     add_dialog *add_window = data;
-    GtkWidget *fc = gtk_file_chooser_dialog_new(
-        "Browse", GTK_WINDOW(add_window->dialog), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
-    if (gtk_dialog_run(GTK_DIALOG(fc)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fc));
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Browse", GTK_WINDOW(add_window->dialog), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         if (path != nullptr) {
             char *quoted = g_shell_quote(path);
             /* Quoted only when it has to be. */
@@ -477,7 +476,7 @@ static void on_add_browse([[maybe_unused]] GtkButton *button, gpointer data) {
             g_free(path);
         }
     }
-    gtk_widget_destroy(fc);
+    g_object_unref(chooser);
 }
 
 /* Adds what was chosen; false keeps the dialog open. */

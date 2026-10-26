@@ -2303,13 +2303,13 @@ static void copy_to_folder(explorer *browser, gboolean move) {
     GList *files = xd_folder_view_get_selected_files(browser->cur->view);
     if (files == nullptr)
         return;
-    GtkWidget *dlg = gtk_file_chooser_dialog_new(
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
         move ? "Move Items" : "Copy Items", GTK_WINDOW(browser->window),
-        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel", GTK_RESPONSE_CANCEL,
-        move ? "_Move" : "_Copy", GTK_RESPONSE_ACCEPT, nullptr);
-    gtk_file_chooser_set_current_folder_file(GTK_FILE_CHOOSER(dlg), current_dir(browser), nullptr);
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-        GFile *dest = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, move ? "_Move" : "_Copy", "Cancel");
+    gtk_file_chooser_set_current_folder_file(GTK_FILE_CHOOSER(chooser), current_dir(browser),
+                                             nullptr);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        GFile *dest = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(chooser));
         if (dest != nullptr) {
             xd_fileop_start_undoable(GTK_WINDOW(browser->window),
                                      move ? XD_FILEOP_MOVE : XD_FILEOP_COPY, files, dest,
@@ -2317,7 +2317,7 @@ static void copy_to_folder(explorer *browser, gboolean move) {
             g_object_unref(dest);
         }
     }
-    gtk_widget_destroy(dlg);
+    g_object_unref(chooser);
     g_list_free_full(files, g_object_unref);
 }
 

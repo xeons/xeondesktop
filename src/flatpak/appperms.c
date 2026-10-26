@@ -580,11 +580,10 @@ static void set_filesystem(dialog *app_dialog, const char *fs, xd_fp_fs_mode mod
 
 static void on_browse(GtkButton *button, gpointer data) {
     GtkWidget *entry = data;
-    GtkWidget *chooser = gtk_file_chooser_dialog_new(
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
         "Browse for Folder", GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(button))),
-        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel", GTK_RESPONSE_CANCEL, "OK",
-        GTK_RESPONSE_ACCEPT, nullptr);
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "OK", "Cancel");
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
         char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         const char *home = g_get_home_dir();
         /* Inside the home folder: ~/path, which follows the user. */
@@ -596,7 +595,7 @@ static void on_browse(GtkButton *button, gpointer data) {
         g_free(text);
         g_free(path);
     }
-    gtk_widget_destroy(chooser);
+    g_object_unref(chooser);
 }
 
 /* Add (fs nullptr) or Edit. */

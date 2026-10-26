@@ -693,9 +693,9 @@ static void after_change(cm *color_manager) {
 }
 
 static char *choose_icc_file(cm *color_manager, const char *title) {
-    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
-        title, GTK_WINDOW(color_manager->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *file_chooser =
+        gtk_file_chooser_native_new(title, GTK_WINDOW(color_manager->window),
+                                    GTK_FILE_CHOOSER_ACTION_OPEN, "_Add", "_Cancel");
     GtkFileFilter *icc_filter = gtk_file_filter_new();
     gtk_file_filter_set_name(icc_filter, "ICC Profiles (*.icm, *.icc)");
     gtk_file_filter_add_pattern(icc_filter, "*.icc");
@@ -708,9 +708,9 @@ static char *choose_icc_file(cm *color_manager, const char *title) {
     gtk_file_filter_add_pattern(all, "*");
     gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), all);
     char *path = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT)
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT)
         path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser));
-    gtk_widget_destroy(file_chooser);
+    g_object_unref(file_chooser);
     return path;
 }
 

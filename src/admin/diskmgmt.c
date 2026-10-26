@@ -2355,21 +2355,20 @@ static char *startup_dir_problem(dm *disk_manager, const volume *volume_info, co
 
 static void on_browse_folder(GtkButton *button, gpointer entry) {
     GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(button));
-    GtkWidget *fc = gtk_file_chooser_dialog_new("Browse for Empty Folder", GTK_WINDOW(top),
-                                                GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel",
-                                                GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_ACCEPT,
-                                                nullptr);
+    GtkFileChooserNative *chooser =
+        gtk_file_chooser_native_new("Browse for Empty Folder", GTK_WINDOW(top),
+                                    GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "OK", "Cancel");
     char *current = xd_fstab_dir_clean(gtk_entry_get_text(GTK_ENTRY(entry)));
     char *parent = g_path_get_dirname(current);
-    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(fc),
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser),
                                         g_file_test(parent, G_FILE_TEST_IS_DIR) ? parent : "/");
-    if (gtk_dialog_run(GTK_DIALOG(fc)) == GTK_RESPONSE_ACCEPT) {
-        char *chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fc));
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         if (chosen != nullptr)
             gtk_entry_set_text(GTK_ENTRY(entry), chosen);
         g_free(chosen);
     }
-    gtk_widget_destroy(fc);
+    g_object_unref(chooser);
     g_free(parent);
     g_free(current);
 }

@@ -614,20 +614,20 @@ static void on_change_picture(ua *user_accounts) {
 }
 
 static void on_browse(ua *user_accounts) {
-    GtkWidget *widget = gtk_file_chooser_dialog_new(
-        "Open", GTK_WINDOW(user_accounts->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *chooser =
+        gtk_file_chooser_native_new("Open", GTK_WINDOW(user_accounts->window),
+                                    GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
     GtkFileFilter *pictures = gtk_file_filter_new();
     gtk_file_filter_set_name(pictures, "Pictures (*.bmp;*.jpg;*.png;*.webp)");
     gtk_file_filter_add_pixbuf_formats(pictures);
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(widget), pictures);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), pictures);
     const char *pics = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
     if (pics != nullptr)
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(widget), pics);
-    char *file = gtk_dialog_run(GTK_DIALOG(widget)) == GTK_RESPONSE_ACCEPT
-                     ? gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(widget))
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), pics);
+    char *file = gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT
+                     ? gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser))
                      : nullptr;
-    gtk_widget_destroy(widget);
+    g_object_unref(chooser);
     GDBusProxy *proxy = cur_account(user_accounts);
     if (file != nullptr && proxy != nullptr)
         set_picture(user_accounts, proxy, file);

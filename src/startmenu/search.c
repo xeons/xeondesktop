@@ -326,14 +326,13 @@ static void on_look_in_changed(GtkComboBox *box, gpointer data) {
     search *search_window = data;
     if (g_strcmp0(gtk_combo_box_get_active_id(box), "browse") != 0)
         return;
-    GtkWidget *widget =
-        gtk_file_chooser_dialog_new("Browse For Folder", GTK_WINDOW(search_window->window),
-                                    GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel",
-                                    GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *chooser =
+        gtk_file_chooser_native_new("Browse For Folder", GTK_WINDOW(search_window->window),
+                                    GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "OK", "Cancel");
     char *chosen = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(widget)) == GTK_RESPONSE_ACCEPT)
-        chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(widget));
-    gtk_widget_destroy(widget);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT)
+        chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+    g_object_unref(chooser);
     if (chosen != nullptr) {
         char *label = g_filename_display_name(chosen);
         add_place(search_window, chosen, label);

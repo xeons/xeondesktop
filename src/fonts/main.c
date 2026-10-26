@@ -231,31 +231,29 @@ static void install(fonts *font_folder, GSList *files) {
 
 static void cb_install([[maybe_unused]] GtkWidget *widget, gpointer data) {
     fonts *font_folder = data;
-    GtkWidget *dlg = gtk_file_chooser_dialog_new(
-        "Add Fonts", GTK_WINDOW(font_folder->window), GTK_FILE_CHOOSER_ACTION_OPEN, "Cancel",
-        GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_ACCEPT, nullptr);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 600, 420);
-    gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(dlg), TRUE);
-    gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(dlg), TRUE);
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Add Fonts", GTK_WINDOW(font_folder->window), GTK_FILE_CHOOSER_ACTION_OPEN, "OK", "Cancel");
+    gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER(chooser), TRUE);
+    gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(chooser), TRUE);
     GtkFileFilter *fonts_filter = gtk_file_filter_new();
     gtk_file_filter_set_name(fonts_filter, "Font files (*.ttf, *.otf, *.ttc)");
     static const char *const patterns[] = {"*.ttf", "*.TTF", "*.otf", "*.OTF", "*.ttc", "*.TTC",
                                            "*.otc", "*.OTC"};
     for (size_t i = 0; i < XD_ARRAY_LEN(patterns); i++)
         gtk_file_filter_add_pattern(fonts_filter, patterns[i]);
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), fonts_filter);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), fonts_filter);
     GtkFileFilter *all = gtk_file_filter_new();
     gtk_file_filter_set_name(all, "All files");
     gtk_file_filter_add_pattern(all, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), all);
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-        GSList *files = gtk_file_chooser_get_filenames(GTK_FILE_CHOOSER(dlg));
-        gtk_widget_destroy(dlg);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), all);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        GSList *files = gtk_file_chooser_get_filenames(GTK_FILE_CHOOSER(chooser));
+        g_object_unref(chooser);
         install(font_folder, files);
         g_slist_free_full(files, g_free);
         return;
     }
-    gtk_widget_destroy(dlg);
+    g_object_unref(chooser);
 }
 
 /* ---- deleting --------------------------------------------------------------------------- */

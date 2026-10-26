@@ -227,13 +227,13 @@ static void versions_on_copy([[maybe_unused]] GtkButton *button, gpointer data) 
     const xd_version *version = versions_get_selected(page);
     if (version == nullptr)
         return;
-    GtkWidget *chooser = gtk_file_chooser_dialog_new(
-        "Copy Items", GTK_WINDOW(page->dialog), GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel",
-        GTK_RESPONSE_CANCEL, "_Copy", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *chooser =
+        gtk_file_chooser_native_new("Copy Items", GTK_WINDOW(page->dialog),
+                                    GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "_Copy", "Cancel");
     char *folder = g_path_get_dirname(page->path);
     gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), folder);
     g_free(folder);
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
         GFile *destination = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(chooser));
         if (destination != nullptr) {
             GFile *copy = g_file_new_for_path(version->path);
@@ -245,7 +245,7 @@ static void versions_on_copy([[maybe_unused]] GtkButton *button, gpointer data) 
             g_object_unref(destination);
         }
     }
-    gtk_widget_destroy(chooser);
+    g_object_unref(chooser);
 }
 
 /* ---- Restore ---------------------------------------------------------------------- */

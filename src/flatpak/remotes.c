@@ -237,27 +237,26 @@ static void on_name_changed([[maybe_unused]] GtkEditable *editable, gpointer dat
 
 static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     add_dialog *add_remote = data;
-    GtkWidget *widget = gtk_file_chooser_dialog_new(
-        "Open", GTK_WINDOW(add_remote->window), GTK_FILE_CHOOSER_ACTION_OPEN, "Cancel",
-        GTK_RESPONSE_CANCEL, "Open", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Open", GTK_WINDOW(add_remote->window), GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
     GtkFileFilter *repo = gtk_file_filter_new();
     gtk_file_filter_set_name(repo, "Flatpak repository files (*.flatpakrepo)");
     gtk_file_filter_add_pattern(repo, "*.flatpakrepo");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(widget), repo);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), repo);
     GtkFileFilter *any = gtk_file_filter_new();
     gtk_file_filter_set_name(any, "All files");
     gtk_file_filter_add_pattern(any, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(widget), any);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), any);
     const char *downloads = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
     if (downloads != nullptr)
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(widget), downloads);
-    if (gtk_dialog_run(GTK_DIALOG(widget)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(widget));
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), downloads);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         if (path != nullptr)
             gtk_entry_set_text(GTK_ENTRY(add_remote->file), path);
         g_free(path);
     }
-    gtk_widget_destroy(widget);
+    g_object_unref(chooser);
 }
 
 /* The remote the dialog describes, or nullptr after saying why not. */

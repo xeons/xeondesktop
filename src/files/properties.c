@@ -1176,20 +1176,19 @@ static void on_icon_activated(GtkIconView *view, [[maybe_unused]] GtkTreePath *t
 
 static void on_icon_browse([[maybe_unused]] GtkButton *button, gpointer name_entry) {
     GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(name_entry));
-    GtkWidget *icon_chooser = gtk_file_chooser_dialog_new(
-        "Change Icon", GTK_WINDOW(top), GTK_FILE_CHOOSER_ACTION_OPEN, "Cancel", GTK_RESPONSE_CANCEL,
-        "_Open", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *icon_chooser = gtk_file_chooser_native_new(
+        "Change Icon", GTK_WINDOW(top), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "Cancel");
     GtkFileFilter *icon_filter = gtk_file_filter_new();
     gtk_file_filter_set_name(icon_filter, "Icon Files");
     gtk_file_filter_add_pixbuf_formats(icon_filter);
     gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(icon_chooser), icon_filter);
-    if (gtk_dialog_run(GTK_DIALOG(icon_chooser)) == GTK_RESPONSE_ACCEPT) {
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(icon_chooser)) == GTK_RESPONSE_ACCEPT) {
         char *file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(icon_chooser));
         if (file != nullptr)
             gtk_entry_set_text(GTK_ENTRY(name_entry), file);
         g_free(file);
     }
-    gtk_widget_destroy(icon_chooser);
+    g_object_unref(icon_chooser);
 }
 
 /* Windows' Change Icon box: where the icon comes from (here a theme

@@ -245,18 +245,17 @@ static GtkFileFilter *key_filter(void) {
 }
 
 static void on_import(gpg_page *page) {
-    GtkWidget *dlg = gtk_file_chooser_dialog_new(
-        "Import Keys", parent(page), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel", GTK_RESPONSE_CANCEL,
-        "_Open", GTK_RESPONSE_ACCEPT, nullptr);
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), key_filter());
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Import Keys", parent(page), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), key_filter());
     GtkFileFilter *all = gtk_file_filter_new();
     gtk_file_filter_set_name(all, "All files");
     gtk_file_filter_add_pattern(all, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), all);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), all);
     char *path = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT)
-        path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
-    gtk_widget_destroy(dlg);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT)
+        path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+    g_object_unref(chooser);
     if (path == nullptr)
         return;
     int imported = 0, unchanged = 0;
@@ -288,25 +287,25 @@ static void on_export(gpg_page *page) {
         failed(page, "The key could not be exported.", error);
         return;
     }
-    GtkWidget *dlg = gtk_file_chooser_dialog_new(
-        "Export Public Key", parent(page), GTK_FILE_CHOOSER_ACTION_SAVE, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_ACCEPT, nullptr);
-    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dlg), TRUE);
-    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), g_get_home_dir());
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Export Public Key", parent(page), GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", "_Cancel");
+    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), g_get_home_dir());
     char *base = g_strdup_printf("%s.asc", key->name[0] != '\0' ? key->name : key->key_id);
     g_strdelimit(base, "/", '_');
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dlg), base);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), base);
     g_free(base);
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dlg), key_filter());
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), key_filter());
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        /* The chooser has gone by now: the error goes over the page. */
         if (path != nullptr && !g_file_set_contents(path, armour, -1, &error)) {
-            keys_error(GTK_WINDOW(dlg), "The key could not be saved.", error);
+            keys_error(parent(page), "The key could not be saved.", error);
             g_clear_error(&error);
         }
         g_free(path);
     }
-    gtk_widget_destroy(dlg);
+    g_object_unref(chooser);
     g_free(armour);
 }
 

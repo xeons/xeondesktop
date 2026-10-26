@@ -15,12 +15,6 @@
 
 #include "gtkapp.h"
 
-static gboolean is_program(const GtkFileFilterInfo *info, [[maybe_unused]] gpointer data) {
-    return info->filename != nullptr &&
-           (g_file_test(info->filename, G_FILE_TEST_IS_DIR) ||
-            g_file_test(info->filename, G_FILE_TEST_IS_EXECUTABLE));
-}
-
 int main(int argc, char **argv) {
     const char *title = "Browse";
     const char *folder = nullptr;
@@ -51,10 +45,11 @@ int main(int argc, char **argv) {
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
 
-    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+    /* Native, so that under GTK_USE_PORTAL the session's portal (our own
+     * chooser) shows it. */
+    GtkFileChooserNative *dialog = gtk_file_chooser_native_new(
         title, nullptr, save != nullptr ? GTK_FILE_CHOOSER_ACTION_SAVE : GTK_FILE_CHOOSER_ACTION_OPEN,
-        "_Cancel", GTK_RESPONSE_CANCEL, save != nullptr ? "_Save" : "_Open", GTK_RESPONSE_ACCEPT,
-        nullptr);
+        save != nullptr ? "_Save" : "_Open", "_Cancel");
     GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
     if (save != nullptr)
         gtk_file_chooser_set_do_overwrite_confirmation(chooser, TRUE);
@@ -69,14 +64,21 @@ int main(int argc, char **argv) {
         gtk_file_chooser_add_filter(chooser, all);
     }
     if (programs) {
-        /* Run's Browse: programs (anything executable) first, as XP's
-         * "Programs" filter, then everything. */
-        GtkFileFilter *progs = gtk_file_filter_new();
-        gtk_file_filter_set_name(progs, "Programs");
-        gtk_file_filter_add_custom(progs, GTK_FILE_FILTER_FILENAME, is_program, nullptr,
-                                   nullptr);
-        gtk_file_filter_add_mime_type(progs, "application/x-desktop");
-        gtk_file_chooser_add_filter(chooser, progs);
+        /* Run's Browse: programs first, as XP's "Programs" filter, then
+         * everything. A portal can't run a custom rule (it would test for
+         * the executable bit), so programs are the MIME types they come as;
+         * folders stay listed so the user can browse into them. */
+        static const char *const program_types[] = {
+            "inode/directory",        "application/x-executable", "application/x-pie-executable",
+            "application/x-sharedlib", "application/x-shellscript", "application/x-desktop",
+            "application/x-perl",     "text/x-python",            "text/x-python3",
+            "application/x-ruby",     "application/vnd.appimage", "application/x-appimage",
+        };
+        GtkFileFilter *programs_filter = gtk_file_filter_new();
+        gtk_file_filter_set_name(programs_filter, "Programs");
+        for (size_t i = 0; i < G_N_ELEMENTS(program_types); i++)
+            gtk_file_filter_add_mime_type(programs_filter, program_types[i]);
+        gtk_file_chooser_add_filter(chooser, programs_filter);
         GtkFileFilter *all = gtk_file_filter_new();
         gtk_file_filter_set_name(all, "All Files");
         gtk_file_filter_add_pattern(all, "*");
@@ -117,7 +119,7 @@ int main(int argc, char **argv) {
         gtk_file_chooser_set_current_name(chooser, save);
 
     int status = 1;
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
         char *path = gtk_file_chooser_get_filename(chooser);
         if (path != nullptr) {
             printf("%s\n", path);
@@ -126,6 +128,6 @@ int main(int argc, char **argv) {
             status = 0;
         }
     }
-    gtk_widget_destroy(dialog);
+    g_object_unref(dialog);
     return status;
 }

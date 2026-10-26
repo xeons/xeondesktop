@@ -190,9 +190,9 @@ static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
         return;
     char *title = g_strdup_printf("Browse for %s sound",
                                   xd_sound_event_get((xd_sound_event)ev)->label);
-    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
-        title, GTK_WINDOW(properties->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *file_chooser =
+        gtk_file_chooser_native_new(title, GTK_WINDOW(properties->window),
+                                    GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
     g_free(title);
     GtkFileFilter *sounds = gtk_file_filter_new();
     gtk_file_filter_set_name(sounds, "Sounds");
@@ -205,7 +205,7 @@ static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     const char *current = properties->sounds.sounds[ev];
     if (xd_sound_kind_of(current) == XD_SOUND_FILE)
         gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(file_chooser), current);
-    if (gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT) {
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT) {
         char *file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser));
         if (file != nullptr) {
             set_sound(properties, ev, file);
@@ -213,7 +213,7 @@ static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
         }
         g_free(file);
     }
-    gtk_widget_destroy(file_chooser);
+    g_object_unref(file_chooser);
 }
 
 bool sounds_apply(props *properties) {

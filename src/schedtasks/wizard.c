@@ -137,12 +137,12 @@ static void on_app_selected([[maybe_unused]] GtkTreeSelection *tree_selection, g
 
 static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     wizard *task_wizard = data;
-    GtkWidget *dlg = gtk_file_chooser_dialog_new(
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
         "Select Program to Schedule", GTK_WINDOW(task_wizard->dialog), GTK_FILE_CHOOSER_ACTION_OPEN,
-        "Cancel", GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
-    gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(dlg), TRUE);
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
+        "_Open", "Cancel");
+    gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(chooser), TRUE);
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         if (path != nullptr) {
             const char *argv[] = {path, nullptr};
             char *command = xd_task_command_line(argv);
@@ -163,7 +163,7 @@ static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
             g_free(path);
         }
     }
-    gtk_widget_destroy(dlg);
+    g_object_unref(chooser);
 }
 
 static GtkWidget *program_page(wizard *task_wizard) {

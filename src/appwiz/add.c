@@ -426,9 +426,9 @@ static void after_file(appwiz *state, bool ok, [[maybe_unused]] gpointer data) {
 
 static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     appwiz *state = data;
-    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
-        "Install a Program", GTK_WINDOW(state->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileChooserNative *file_chooser =
+        gtk_file_chooser_native_new("Install a Program", GTK_WINDOW(state->window),
+                                    GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
     GtkFileFilter *programs = gtk_file_filter_new();
     gtk_file_filter_set_name(programs, "Programs (packages and Flatpaks)");
     static const char *const patterns[] = {"*.pkg.tar.zst", "*.pkg.tar.xz", "*.deb", "*.rpm",
@@ -449,10 +449,10 @@ static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
     const char *downloads = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
     if (downloads != nullptr)
         gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(file_chooser), downloads);
-    char *file = gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT
+    char *file = gtk_native_dialog_run(GTK_NATIVE_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT
                      ? gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser))
                      : nullptr;
-    gtk_widget_destroy(file_chooser);
+    g_object_unref(file_chooser);
     if (file != nullptr)
         xd_appwiz_install_file(state, file, after_file, nullptr);
     g_free(file);

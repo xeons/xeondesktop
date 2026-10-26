@@ -361,17 +361,17 @@ static void on_configure_toggled([[maybe_unused]] GtkToggleButton *button, gpoin
 }
 
 static void on_browse([[maybe_unused]] GtkButton *button, gpointer entry) {
-    GtkWidget *chooser = gtk_file_chooser_dialog_new(
-        "Browse", GTK_WINDOW(gtk_widget_get_toplevel(entry)), GTK_FILE_CHOOSER_ACTION_OPEN,
-        "Cancel", GTK_RESPONSE_CANCEL, "Open", GTK_RESPONSE_ACCEPT, nullptr);
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+    GtkFileChooserNative *chooser =
+        gtk_file_chooser_native_new("Browse", GTK_WINDOW(gtk_widget_get_toplevel(entry)),
+                                    GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
         char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         char *quoted = g_shell_quote(path);
         gtk_entry_set_text(GTK_ENTRY(entry), quoted);
         g_free(quoted);
         g_free(path);
     }
-    gtk_widget_destroy(chooser);
+    g_object_unref(chooser);
 }
 
 /* The program's Configure...: Windows opened a scheduled task's
