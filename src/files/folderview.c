@@ -106,8 +106,12 @@ struct _XdFolderView {
     gboolean reload_again; /* the folder changed while it was loading */
     GPtrArray *all;   /* item*, owned */
     /* Items being listed (owned), which replace `all` once they're all
-     * in: a refresh keeps showing the old ones until then. */
+     * in: a refresh keeps showing the old ones until then. A new folder
+     * (`listing_fresh`) shows them as they come instead, a few times a
+     * second (`publish_source`), as Windows fills a big folder in. */
     GPtrArray *loading;
+    gboolean listing_fresh;
+    guint publish_source;
     GPtrArray *shown; /* item*, borrowed: filtered and sorted */
 
     XdViewMode mode;
@@ -1704,8 +1708,59 @@ static void shares_changed(gpointer data) {
     gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
+/* A new folder's items listed so far join those shown. Indices into
+ * `shown` change with the sort, so the focus and anchor follow their
+ * items. */
+static void publish_loaded(XdFolderView *folder_view) {
+    if (folder_view->loading->len == 0)
+        return;
+    item *focused = item_at(folder_view, folder_view->focus);
+    item *anchored = item_at(folder_view, folder_view->anchor);
+    g_ptr_array_extend_and_steal(folder_view->all, folder_view->loading);
+    folder_view->loading = g_ptr_array_new_with_free_func(item_free);
+    set_hover(folder_view, -1);
+    refilter(folder_view);
+    folder_view->focus = -1;
+    folder_view->anchor = -1;
+    for (guint i = 0; i < folder_view->shown->len; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, i);
+        if (it == focused)
+            folder_view->focus = (int)i;
+        if (it == anchored)
+            folder_view->anchor = (int)i;
+    }
+    g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
+}
+
+static gboolean publish_timeout(gpointer data) {
+    XdFolderView *folder_view = data;
+    /* Not under a click, a drag or a rubber band: their indices would
+     * move. Next time. */
+    if (folder_view->pressed >= 0 || folder_view->drag_pending || folder_view->banding)
+        return G_SOURCE_CONTINUE;
+    folder_view->publish_source = 0;
+    publish_loaded(folder_view);
+    return G_SOURCE_REMOVE;
+}
+
+static void stop_publishing(XdFolderView *folder_view) {
+    if (folder_view->publish_source != 0) {
+        g_source_remove(folder_view->publish_source);
+        folder_view->publish_source = 0;
+    }
+    folder_view->listing_fresh = FALSE;
+}
+
 static void loading_done(XdFolderView *folder_view) {
     g_clear_object(&folder_view->cancel);
+    /* A new folder already shows what came so far: the rest joins it,
+     * and they all replace `all` below. */
+    if (folder_view->listing_fresh) {
+        stop_publishing(folder_view);
+        g_ptr_array_extend_and_steal(folder_view->all, folder_view->loading);
+        folder_view->loading = folder_view->all;
+        folder_view->all = g_ptr_array_new_with_free_func(item_free);
+    }
     /* The selection survives a refresh, as it is now (unless files are
      * already waiting to be selected). */
     if (folder_view->keep == nullptr && folder_view->shown->len > 0) {
@@ -1896,6 +1951,12 @@ static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data) {
                                                   ? trash_item(dir, list->data)
                                                   : item_new(dir, list->data));
     g_list_free_full(infos, g_object_unref);
+    /* The first batch shows at once, the rest every quarter second. */
+    if (folder_view->listing_fresh && folder_view->publish_source == 0) {
+        if (folder_view->all->len == 0)
+            publish_loaded(folder_view);
+        folder_view->publish_source = g_timeout_add(250, publish_timeout, folder_view);
+    }
     request_more(file_enumerator, folder_view);
 }
 
@@ -1929,6 +1990,7 @@ static void start_loading(XdFolderView *folder_view, gboolean fresh) {
         g_cancellable_cancel(folder_view->cancel);
     g_clear_object(&folder_view->cancel);
     g_ptr_array_set_size(folder_view->loading, 0);
+    stop_publishing(folder_view);
     folder_view->reload_again = FALSE;
     if (fresh) {
         g_ptr_array_set_size(folder_view->shown, 0);
@@ -1957,6 +2019,7 @@ static void start_loading(XdFolderView *folder_view, gboolean fresh) {
         folder_view->more_listed = xd_trash_dirs();
         g_ptr_array_remove_index(folder_view->more_listed, 0); /* the home one is `listed` */
     }
+    folder_view->listing_fresh = fresh;
     g_file_enumerate_children_async(folder_view->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
                                     G_PRIORITY_DEFAULT, folder_view->cancel, enumerate_ready,
                                     folder_view);
@@ -2979,6 +3042,7 @@ static void folder_view_dispose(GObject *obj) {
         g_cancellable_cancel(folder_view->cancel);
     g_clear_object(&folder_view->cancel);
     g_clear_pointer(&folder_view->thumbs, xd_thumb_queue_free);
+    stop_publishing(folder_view);
     if (folder_view->reload_source != 0) {
         g_source_remove(folder_view->reload_source);
         folder_view->reload_source = 0;

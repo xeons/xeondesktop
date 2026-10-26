@@ -1850,6 +1850,29 @@ def files_wheel_scrolls(s):
 
 
 @scenario()
+def files_big_folder_fills_in(s):
+    """A folder of 40,000 files shows its first ones while the rest are
+    still being listed, as Windows fills a big folder in: the status
+    bar's count goes on growing after the first items show."""
+    big = os.path.join(s.home, "Documents", "Big")
+    os.makedirs(big)
+    for i in range(40000):
+        open(os.path.join(big, f"file {i:05}.txt"), "w").close()
+    x, y, _ = open_documents(s)
+    view = (x + 240, y + 130, 560, 420)
+    status = (x + 4, y + 566, 200, 16)
+    blank = s.shot("blank")
+    s.inject("key", "ctrl+l", "type", big, "key", "Return")
+    # A blank page has one colour; items have icons and names.
+    first = s.wait(lambda: (lambda shot: shot if shot.differs(blank, view) > 0.02 else None)(
+        s.shot("filling")), "the first items to show", timeout=60)
+    files_title(s, "Big", "Big to open")
+    done = s.settle("all listed", timeout=60)
+    s.check(done.differs(first, status) > 0.02,
+            "the count grew after the first items showed")  # fmt: skip
+
+
+@scenario()
 def files_extract(s):
     """An archive's right-click menu: Extract Here puts what's in it beside
     it (Undo Extract sends that to the Recycle Bin), and Extract to
