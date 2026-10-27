@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Screen savers after the ones Windows 2000 shipped, drawn with cairo:
  * 3D Flower Box, 3D Maze, 3D Pipes and 3D Text (flower.c, maze.c, pipes.c, text3d.c),
- * Beziers, Blank Screen, Flying
+ * Beziers, Blank Screen, Digital Rain (rain.c, a Linux addition), Flying
  * Penguins (Flying Windows with our Tux logo), Marquee Display, Mystify
  * Your Mind and Starfield Simulation, each with the options of its
  * Settings dialog ([ScreenSaver.*]).
@@ -28,6 +28,7 @@ static const xd_saver_info savers[] = {
     {"text3d", "3D Text"},
     {"beziers", "Beziers"},
     {"blank", "Blank Screen"},
+    {"rain", "Digital Rain"},
     {"flying", "Flying Penguins"},
     {"marquee", "Marquee Display"},
     {"mystify", "Mystify Your Mind"},
@@ -85,6 +86,7 @@ typedef enum kind : uint8_t {
     K_TEXT3D,
     K_MAZE,
     K_FLOWER,
+    K_RAIN,
 } kind;
 
 struct xd_saver {
@@ -117,6 +119,7 @@ struct xd_saver {
     saver_text3d *text3d;
     saver_maze *maze;
     saver_flower *flower;
+    saver_rain *rain;
 };
 
 static double rnd(xd_saver *saver) { return xd_saver_rand(&saver->rng); }
@@ -436,6 +439,10 @@ static void saver_init(xd_saver *saver) {
     case K_FLOWER:
         saver->flower = saver_flower_create(saver_settings, saver->w, saver->h, &saver->rng);
         break;
+    case K_RAIN:
+        saver->rain =
+            saver_rain_create(saver_settings, saver->w, saver->h, saver->scale, &saver->rng);
+        break;
     case K_BLANK:
     case K_MARQUEE:
         break;
@@ -450,7 +457,8 @@ xd_saver *xd_saver_create_seeded(const char *id, const xd_saver_settings *saver_
                                       [K_MYSTIFY] = "mystify", [K_BEZIERS] = "beziers",
                                       [K_MARQUEE] = "marquee", [K_FLYING] = "flying",
                                       [K_PIPES] = "pipes",     [K_TEXT3D] = "text3d",
-                                      [K_MAZE] = "maze",       [K_FLOWER] = "flowerbox"};
+                                      [K_MAZE] = "maze",       [K_FLOWER] = "flowerbox",
+                                      [K_RAIN] = "rain"};
     int k = -1;
     for (size_t i = 0; i < XD_ARRAY_LEN(ids); i++) {
         if (id != nullptr && strcmp(ids[i], id) == 0)
@@ -514,6 +522,9 @@ void xd_saver_frame(xd_saver *saver, cairo_t *cairo, double dt) {
     case K_FLOWER:
         saver_flower_frame(saver->flower, cairo, dt);
         break;
+    case K_RAIN:
+        saver_rain_frame(saver->rain, cairo, dt);
+        break;
     }
 }
 
@@ -530,5 +541,7 @@ void xd_saver_destroy(xd_saver *saver) {
         saver_maze_destroy(saver->maze);
     if (saver->flower != nullptr)
         saver_flower_destroy(saver->flower);
+    if (saver->rain != nullptr)
+        saver_rain_destroy(saver->rain);
     xd_free(saver);
 }

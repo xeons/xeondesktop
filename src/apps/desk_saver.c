@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * The screen savers' Settings dialogs, laid out after Windows 2000's
- * (Marquee Setup, Starfield Simulation Setup, Mystify Setup, ...). They
+ * (Marquee Setup, Starfield Simulation Setup, Mystify Setup, ...), and
+ * Digital Rain Setup, a Linux addition, in the same manner. They
  * edit a copy of the settings; OK hands it back to Display Properties,
  * which saves it at once, as Windows' savers wrote their own registry
  * keys on OK whether or not Display Properties was then applied.
@@ -18,6 +19,7 @@
 
 #include "../core/alloc.h"
 #include "../theme/draw.h"
+#include "desk_color.h"
 #include "desk_saver.h"
 
 /* The colours Windows' Marquee and Font dialogs listed by name. */
@@ -91,6 +93,10 @@ struct saver_setup {
 
     /* 3D Flower Box: size, and */
     xd_widget *flower_shape, *spin, *bloom, *cycle;
+
+    /* Digital Rain: speed, and */
+    xd_widget *density, *glyph_size, *characters, *rain_color, *glow;
+    color_button *custom_color;
 };
 
 /* ---- shared pieces ------------------------------------------------------------ */
@@ -150,6 +156,7 @@ static xd_widget *slider_group(xd_window *win, xd_rect rect, const char *title, 
 }
 
 static void finish(saver_setup *setup, bool ok) {
+    color_button_free(setup->custom_color);
     if (setup->anim != nullptr)
         xd_ui_remove_source(setup->anim);
     if (setup->fmt != nullptr)
@@ -557,6 +564,63 @@ static void build_flower(saver_setup *setup) {
     xd_window_set_focus(win, setup->flower_shape);
 }
 
+/* ---- Digital Rain ---------------------------------------------------------------- */
+
+/* The custom colour's button only counts with Custom chosen. */
+static void rain_enable(saver_setup *setup) {
+    color_button_set_enabled(setup->custom_color,
+                             xd_widget_selected(setup->rain_color) == XD_RAIN_CUSTOM);
+}
+
+static void on_rain_color([[maybe_unused]] xd_widget *widget, void *user) { rain_enable(user); }
+
+static void on_custom_color([[maybe_unused]] color_button *button, [[maybe_unused]] xd_rgb rgb,
+                            [[maybe_unused]] void *user) {}
+
+/* A Linux addition with no Windows original: laid out as the other
+ * savers' Setup dialogs. */
+static void build_rain(saver_setup *setup) {
+    xd_window *win = make_window(setup, "Digital Rain Setup", 320, 392);
+    setup->speed = slider_group(win, (xd_rect){12, 8, 296, 72}, "Speed", "Slow", "Fast",
+                                setup->edit.rain.speed);
+    setup->density = slider_group(win, (xd_rect){12, 88, 296, 72}, "Density", "Few", "Many",
+                                  setup->edit.rain.density);
+
+    xd_groupbox(win, (xd_rect){12, 168, 296, 82}, "Glyphs");
+    xd_label(win, (xd_rect){24, 191, 70, 16}, "Size:", 0);
+    setup->glyph_size = xd_combo(win, (xd_rect){98, 188, 120, 21}, false, nullptr, nullptr);
+    static const char *const sizes[XD_RAIN_SIZE_COUNT] = {
+        [XD_RAIN_SMALL] = "Small", [XD_RAIN_MEDIUM] = "Medium", [XD_RAIN_LARGE] = "Large"};
+    for (int i = 0; i < XD_RAIN_SIZE_COUNT; i++)
+        xd_widget_add_item(setup->glyph_size, sizes[i]);
+    xd_widget_select(setup->glyph_size, setup->edit.rain.size);
+    xd_label(win, (xd_rect){24, 221, 70, 16}, "Characters:", 0);
+    setup->characters = xd_combo(win, (xd_rect){98, 218, 198, 21}, false, nullptr, nullptr);
+    static const char *const characters[XD_RAIN_CHARACTERS_COUNT] = {
+        [XD_RAIN_KATAKANA] = "Katakana and digits", [XD_RAIN_DIGITS] = "Digits only",
+        [XD_RAIN_BINARY] = "Binary (0 and 1)", [XD_RAIN_LETTERS] = "Letters and digits"};
+    for (int i = 0; i < XD_RAIN_CHARACTERS_COUNT; i++)
+        xd_widget_add_item(setup->characters, characters[i]);
+    xd_widget_select(setup->characters, setup->edit.rain.characters);
+
+    xd_groupbox(win, (xd_rect){12, 258, 296, 56}, "Color");
+    setup->rain_color = xd_combo(win, (xd_rect){24, 280, 120, 21}, false, on_rain_color, setup);
+    static const char *const colors[XD_RAIN_COLOR_COUNT] = {
+        [XD_RAIN_GREEN] = "Green", [XD_RAIN_AMBER] = "Amber",     [XD_RAIN_BLUE] = "Blue",
+        [XD_RAIN_WHITE] = "White", [XD_RAIN_RAINBOW] = "Rainbow", [XD_RAIN_CUSTOM] = "Custom"};
+    for (int i = 0; i < XD_RAIN_COLOR_COUNT; i++)
+        xd_widget_add_item(setup->rain_color, colors[i]);
+    xd_widget_select(setup->rain_color, setup->edit.rain.color);
+    setup->custom_color =
+        color_button_create(win, (xd_rect){152, 279, 56, 23}, on_custom_color, setup);
+    color_button_set(setup->custom_color, setup->edit.rain.custom_color);
+
+    setup->glow = xd_checkbox(win, (xd_rect){12, 324, 296, 18}, "Glow on the leading glyph",
+                              setup->edit.rain.glow, nullptr, nullptr);
+    rain_enable(setup);
+    xd_window_set_focus(win, setup->speed);
+}
+
 /* ---- 3D Text ------------------------------------------------------------------- */
 
 static void text3d_enable(saver_setup *setup) {
@@ -649,6 +713,20 @@ static void read_back(saver_setup *setup) {
         saver_settings->flower.spin = xd_slider_value(setup->spin);
         saver_settings->flower.bloom = xd_slider_value(setup->bloom);
         saver_settings->flower.cycle = xd_checkbox_checked(setup->cycle);
+    } else if (strcmp(setup->id, "rain") == 0) {
+        saver_settings->rain.speed = xd_slider_value(setup->speed);
+        saver_settings->rain.density = xd_slider_value(setup->density);
+        int size = xd_widget_selected(setup->glyph_size);
+        if (size >= 0 && size < XD_RAIN_SIZE_COUNT)
+            saver_settings->rain.size = (xd_rain_glyph_size)size;
+        int characters = xd_widget_selected(setup->characters);
+        if (characters >= 0 && characters < XD_RAIN_CHARACTERS_COUNT)
+            saver_settings->rain.characters = (xd_rain_characters)characters;
+        int color = xd_widget_selected(setup->rain_color);
+        if (color >= 0 && color < XD_RAIN_COLOR_COUNT)
+            saver_settings->rain.color = (xd_rain_color)color;
+        saver_settings->rain.custom_color = color_button_value(setup->custom_color);
+        saver_settings->rain.glow = xd_checkbox_checked(setup->glow);
     } else if (strcmp(setup->id, "text3d") == 0) {
         xd_text3d_settings *text3d_settings = &saver_settings->text3d;
         text3d_settings->show_time = xd_checkbox_checked(setup->show_time);
@@ -674,6 +752,7 @@ saver_setup *saver_setup_open(xd_ui *ui, const char *id, const xd_saver_settings
         {"marquee", build_marquee}, {"starfield", build_starfield}, {"flying", build_flying},
         {"beziers", build_beziers}, {"mystify", build_mystify},     {"pipes", build_pipes},
         {"text3d", build_text3d},   {"maze", build_maze},       {"flowerbox", build_flower},
+        {"rain", build_rain},
     };
     for (size_t i = 0; id != nullptr && i < XD_ARRAY_LEN(dialogs); i++) {
         if (strcmp(dialogs[i].id, id) != 0)

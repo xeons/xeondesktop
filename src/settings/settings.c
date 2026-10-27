@@ -846,6 +846,14 @@ static const char *const text3d_rotation_names[XD_TEXT3D_ROTATION_COUNT] = {
     [XD_TEXT3D_WOBBLE] = "wobble", [XD_TEXT3D_RANDOM] = "random"};
 static const char *const text3d_surface_names[XD_TEXT3D_SURFACE_COUNT] = {
     [XD_TEXT3D_SOLID] = "solid", [XD_TEXT3D_REFLECTION] = "reflection"};
+static const char *const rain_size_names[XD_RAIN_SIZE_COUNT] = {
+    [XD_RAIN_SMALL] = "small", [XD_RAIN_MEDIUM] = "medium", [XD_RAIN_LARGE] = "large"};
+static const char *const rain_characters_names[XD_RAIN_CHARACTERS_COUNT] = {
+    [XD_RAIN_KATAKANA] = "katakana", [XD_RAIN_DIGITS] = "digits", [XD_RAIN_BINARY] = "binary",
+    [XD_RAIN_LETTERS] = "letters"};
+static const char *const rain_color_names[XD_RAIN_COLOR_COUNT] = {
+    [XD_RAIN_GREEN] = "green",     [XD_RAIN_AMBER] = "amber",   [XD_RAIN_BLUE] = "blue",
+    [XD_RAIN_WHITE] = "white",     [XD_RAIN_RAINBOW] = "rainbow", [XD_RAIN_CUSTOM] = "custom"};
 
 void xd_saver_settings_defaults(xd_saver_settings *saver_settings) {
     *saver_settings = (xd_saver_settings){
@@ -870,6 +878,13 @@ void xd_saver_settings_defaults(xd_saver_settings *saver_settings) {
                    .color = {255, 0, 0}},
         .maze = {.speed = 5, .size = 4, .pixelated = true},
         .flower = {.shape = XD_FLOWER_CUBE, .size = 5, .spin = 5, .bloom = 5, .cycle = true},
+        .rain = {.speed = 5,
+                 .density = 5,
+                 .size = XD_RAIN_MEDIUM,
+                 .characters = XD_RAIN_KATAKANA,
+                 .color = XD_RAIN_GREEN,
+                 .custom_color = {0, 255, 70},
+                 .glow = true},
     };
 }
 
@@ -1013,6 +1028,27 @@ static void parse_saver_entry(xd_saver_settings *sv, xd_str section, xd_str key,
             parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->flower.bloom);
         else if (KEY("CycleColors"))
             parse_bool(value, &sv->flower.cycle);
+    } else if (SEC("Rain")) {
+        if (KEY("Speed"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->rain.speed);
+        else if (KEY("Density"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->rain.density);
+        else if (KEY("Size")) {
+            int i = index_of(rain_size_names, XD_ARRAY_LEN(rain_size_names), value);
+            if (i >= 0)
+                sv->rain.size = (xd_rain_glyph_size)i;
+        } else if (KEY("Characters")) {
+            int i = index_of(rain_characters_names, XD_ARRAY_LEN(rain_characters_names), value);
+            if (i >= 0)
+                sv->rain.characters = (xd_rain_characters)i;
+        } else if (KEY("Color")) {
+            int i = index_of(rain_color_names, XD_ARRAY_LEN(rain_color_names), value);
+            if (i >= 0)
+                sv->rain.color = (xd_rain_color)i;
+        } else if (KEY("CustomColor"))
+            parse_rgb_value(value, &sv->rain.custom_color);
+        else if (KEY("Glow"))
+            parse_bool(value, &sv->rain.glow);
     } else if (SEC("Text3D")) {
         xd_text3d_settings *text3d_settings = &sv->text3d;
         if (KEY("Display")) {
@@ -1092,6 +1128,14 @@ static void saver_settings_to_keyfile(GKeyFile *kf, const xd_saver_settings *sv)
     g_key_file_set_integer(kf, group_name, "Spin", sv->flower.spin);
     g_key_file_set_integer(kf, group_name, "Bloom", sv->flower.bloom);
     g_key_file_set_boolean(kf, group_name, "CycleColors", sv->flower.cycle);
+    group_name = "ScreenSaver.Rain";
+    g_key_file_set_integer(kf, group_name, "Speed", sv->rain.speed);
+    g_key_file_set_integer(kf, group_name, "Density", sv->rain.density);
+    g_key_file_set_string(kf, group_name, "Size", rain_size_names[sv->rain.size]);
+    g_key_file_set_string(kf, group_name, "Characters", rain_characters_names[sv->rain.characters]);
+    g_key_file_set_string(kf, group_name, "Color", rain_color_names[sv->rain.color]);
+    set_rgb(kf, group_name, "CustomColor", sv->rain.custom_color);
+    g_key_file_set_boolean(kf, group_name, "Glow", sv->rain.glow);
     group_name = "ScreenSaver.Text3D";
     g_key_file_set_string(kf, group_name, "Display", sv->text3d.show_time ? "time" : "text");
     g_key_file_set_string(kf, group_name, "Text", sv->text3d.text);

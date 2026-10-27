@@ -572,6 +572,7 @@ saver_lib = static_library(
   'src/saver/flower.c',
   'src/saver/maze.c',
   'src/saver/pipes.c',
+  'src/saver/rain.c',
   'src/saver/raster3d.c',
   'src/saver/text3d.c',
   dependencies: [theme_dep, settings_dep, m_dep],

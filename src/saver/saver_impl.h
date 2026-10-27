@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * What the screen savers share inside libxdsaver: the random numbers and
- * the "3D" savers, each in a file of its own.
+ * the "3D" savers and Digital Rain, each in a file of its own.
  */
 #ifndef XD_SAVER_SAVER_IMPL_H
 #define XD_SAVER_SAVER_IMPL_H
@@ -50,5 +50,13 @@ saver_text3d *saver_text3d_create(const xd_saver_settings *saver_settings, int w
                                   uint64_t *rng);
 void saver_text3d_frame(saver_text3d *text3d, cairo_t *cairo, double dt);
 void saver_text3d_destroy(saver_text3d *text3d);
+
+/* Digital Rain (rain.c; its column model is in rain.h). Its glyphs are
+ * sized by `scale`, as text is. */
+typedef struct saver_rain saver_rain;
+saver_rain *saver_rain_create(const xd_saver_settings *saver_settings, int width, int height,
+                              double scale, uint64_t *rng);
+void saver_rain_frame(saver_rain *rain, cairo_t *cairo, double dt);
+void saver_rain_destroy(saver_rain *rain);
 
 #endif

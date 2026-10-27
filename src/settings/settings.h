@@ -385,6 +385,29 @@ typedef enum xd_text3d_surface : uint8_t {
     XD_TEXT3D_REFLECTION, /* Reflection: chrome, reflecting a sky and the ground */
     XD_TEXT3D_SURFACE_COUNT,
 } xd_text3d_surface;
+/* Digital Rain (a Linux addition, no Windows original). */
+typedef enum xd_rain_glyph_size : uint8_t {
+    XD_RAIN_SMALL,
+    XD_RAIN_MEDIUM,
+    XD_RAIN_LARGE,
+    XD_RAIN_SIZE_COUNT,
+} xd_rain_glyph_size;
+typedef enum xd_rain_characters : uint8_t {
+    XD_RAIN_KATAKANA, /* half-width katakana, mirrored, and digits */
+    XD_RAIN_DIGITS,
+    XD_RAIN_BINARY,  /* 0 and 1 */
+    XD_RAIN_LETTERS, /* letters and digits */
+    XD_RAIN_CHARACTERS_COUNT,
+} xd_rain_characters;
+typedef enum xd_rain_color : uint8_t {
+    XD_RAIN_GREEN,
+    XD_RAIN_AMBER,
+    XD_RAIN_BLUE,
+    XD_RAIN_WHITE,
+    XD_RAIN_RAINBOW, /* each column its own hue */
+    XD_RAIN_CUSTOM,  /* custom_color */
+    XD_RAIN_COLOR_COUNT,
+} xd_rain_color;
 typedef struct xd_marquee_settings {
     char text[256];
     xd_font_spec font;
@@ -443,6 +466,15 @@ typedef struct xd_saver_settings {
         int bloom;  /* the petals' */
         bool cycle; /* the colours move round the colour wheel */
     } flower;
+    struct {
+        int speed;
+        int density; /* how many columns fall at once */
+        xd_rain_glyph_size size;
+        xd_rain_characters characters;
+        xd_rain_color color;
+        xd_rgb custom_color;
+        bool glow; /* a glow round each column's leading glyph */
+    } rain;
 } xd_saver_settings;
 
 /* Limits of the [ScreenSaver.*] counts, for the Settings dialogs. */
