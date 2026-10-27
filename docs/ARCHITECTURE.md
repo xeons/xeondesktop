@@ -317,16 +317,25 @@ output's frame, Compiz's preparePaint), `input` and `animates` (below).
 The plain `xd-compositor` compiles none of the OpenGL ones and reports
 them unavailable.
 
-**Input.** `input.c` offers the effects that are on an `xd_effect_input`
-(`xd_effects_input()`) before its own bindings and the programs see it:
-key presses and releases and buttons while no window is being moved or
-sized, steps of the vertical wheel, and every pointer move and modifier
-change. An effect returns true to use it up: keys, buttons and wheel steps
-then go no further, while moves and modifier changes reach every effect (a
-used-up move doesn't reach the windows). Options of the KEY and BUTTON
-types are read once with `xd_effects_get_binding()` and matched with
-`xd_effects_binding_matches()`: exactly the modifiers held, and Button4
-and Button5 as the wheel's steps up and down, as in Compiz. `animates`
+**Input.** Effects have one way in, the `input` hook: `input.c` offers
+the effects that are on an `xd_effect_input` (`xd_effects_input()`, one
+call per kind of event) before its own bindings and the programs see it.
+Keys (presses and releases), buttons (presses and releases) and steps of
+the vertical wheel come while no window is being moved or sized, never
+while the screen is locked, and keys not while a program takes the
+shortcuts; every pointer move and modifier change comes always, with the
+event's time. The effects are asked in `impl_list.h`'s order. An effect
+returns true to use it up: keys, buttons and wheel steps then go no
+further (a used-up press's release goes nowhere else either, and a
+Windows+click opens no Start menu), while moves and modifier changes
+reach every effect (a used-up move doesn't reach the windows: the pointer
+stays with an effect holding it). Options of the KEY and BUTTON types are
+read once with `xd_effects_get_binding()` and matched with
+`xd_effects_binding_matches()`: exactly the modifiers held (as
+`xd_binding_modifier` bits), keys in lower case and Shift+Tab as Tab, and
+Button4 and Button5 as the wheel's steps up and down, as in Compiz.
+`xd_effects_is_binding_held()` says whether a binding's modifiers are
+all still held, for switchers that end when they're let go. `animates`
 says an effect animates a window's minimize or unminimize itself, so
 `view.c` skips XP's bar animation (`animate.c`) for it.
 
@@ -529,14 +538,6 @@ before. `update(filter, seconds)` runs once a frame and says whether it
 changes the picture: an idle filter costs nothing (no pass, no frames)
 till `xd_glfx_wake_output_filter()`, and going idle has the scene graph
 repaint the whole output. Outputs rotated or flipped aren't filtered.
-
-**Bindings.** An implementation's `key(server, state, modifiers, keysym)`
-and `button(server, state, modifiers, button)` hooks see a key or a mouse
-button pressed before our shortcuts and the programs do (not on the lock
-screen, nor while a program inhibits shortcuts), and return true to take
-it (a button's release then goes nowhere either). `xd_effects_is_key()`
-and `xd_effects_is_button()` compare one with a KEY or BUTTON option's
-value. The TITLE window event says a window's title changed.
 
 **Wobbly Windows** (`wobbly.c`, the model in `wobbly_model.c`, unit-tested)
 is Compiz's wobbly plugin: a 4 x 4 grid of masses joined by springs, the

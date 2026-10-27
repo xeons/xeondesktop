@@ -85,16 +85,11 @@ typedef struct xd_effect_impl {
     /* It draws minimizing and restoring itself: XP's animation (a bar
      * flying to the taskbar button) is left out while it's on. */
     bool animates_minimize;
-    /* A key or a mouse button pressed, before our own shortcuts and the
-     * programs see it: true when the effect took it (a button's release
-     * then goes nowhere either). `modifiers` are xd_binding_modifier
-     * bits; xd_effects_is_key and xd_effects_is_button compare them with
-     * an option's binding. */
-    bool (*key)(xd_server *server, void *state, uint32_t modifiers, xkb_keysym_t keysym);
-    bool (*button)(xd_server *server, void *state, uint32_t modifiers, uint32_t button);
-    /* Input (xd_effect_input): true if the effect used it up. Keys,
-     * buttons and wheel steps go no further once one has; every effect
-     * sees each move and modifier change. */
+    /* Input (xd_effect_input), the effects' only way in: true if the
+     * effect used it up. Keys, buttons and wheel steps go no further once
+     * one has (a button's release then goes nowhere else either, whoever
+     * claims it); every effect sees each move and modifier change. Keys
+     * and buttons never come while the screen is locked. */
     bool (*input)(xd_server *server, void *state, const xd_effect_input *input);
     /* Whether it animates this window event itself, so XP's animation
      * (animate.c) doesn't: MINIMIZE and UNMINIMIZE. */
@@ -120,17 +115,6 @@ void xd_effects_output_frame_done(xd_output *output);
 bool xd_effects_is_running(const xd_server *server, const char *id);
 /* view.c: whether an effect on draws minimizing and restoring. */
 bool xd_effects_animates_minimize(const xd_server *server);
-/* input.c: a key or a button pressed; true if an effect took it.
- * `modifiers` are the keyboard's (WLR_MODIFIER_*). */
-bool xd_effects_key(xd_server *server, uint32_t modifiers, xkb_keysym_t keysym);
-bool xd_effects_button(xd_server *server, uint32_t modifiers, uint32_t button);
-/* WLR_MODIFIER_* as xd_binding_modifier bits. */
-uint32_t xd_effects_get_binding_modifiers(uint32_t modifiers);
-/* Whether a KEY option's value ("<Shift>F9") or a BUTTON option's
- * ("<Super><Shift>Button1": Button1 left, 2 middle, 3 right) is this key
- * or button with exactly these modifiers. */
-bool xd_effects_is_key(const char *binding, uint32_t modifiers, xkb_keysym_t keysym);
-bool xd_effects_is_button(const char *binding, uint32_t modifiers, uint32_t button);
 /* output.c: whether an effect draws the output's frames itself (every
  * frame is drawn then), and the frame's state, as
  * wlr_scene_output_build_state makes it. */

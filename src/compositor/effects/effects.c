@@ -53,6 +53,10 @@ struct xd_effects {
     struct wl_event_source *watch;
     xd_effects_support support;
     char display[64]; /* the support file's, once published */
+    /* Buttons whose press an effect used up: their releases are used up
+     * too, whichever effect hears them. */
+    uint32_t held_buttons[8];
+    size_t held_count;
 };
 
 static double effects_get_now(void) {
@@ -247,45 +251,6 @@ bool xd_effects_animates_minimize(const xd_server *server) {
     return false;
 }
 
-uint32_t xd_effects_get_binding_modifiers(uint32_t modifiers) {
-    uint32_t bits = 0;
-    if (modifiers & WLR_MODIFIER_SHIFT)
-        bits |= XD_BINDING_SHIFT;
-    if (modifiers & WLR_MODIFIER_CTRL)
-        bits |= XD_BINDING_CONTROL;
-    if (modifiers & WLR_MODIFIER_ALT)
-        bits |= XD_BINDING_ALT;
-    if (modifiers & WLR_MODIFIER_LOGO)
-        bits |= XD_BINDING_SUPER;
-    return bits;
-}
-
-bool xd_effects_key(xd_server *server, uint32_t modifiers, xkb_keysym_t keysym) {
-    xd_effects *effects = server->effects;
-    if (effects == nullptr)
-        return false;
-    uint32_t bits = xd_effects_get_binding_modifiers(modifiers);
-    for (size_t i = 0; i < effects_count_impls(); i++) {
-        if (effects->running[i].on && impls[i]->key != nullptr &&
-            impls[i]->key(server, effects->running[i].state, bits, keysym))
-            return true;
-    }
-    return false;
-}
-
-bool xd_effects_button(xd_server *server, uint32_t modifiers, uint32_t button) {
-    xd_effects *effects = server->effects;
-    if (effects == nullptr)
-        return false;
-    uint32_t bits = xd_effects_get_binding_modifiers(modifiers);
-    for (size_t i = 0; i < effects_count_impls(); i++) {
-        if (effects->running[i].on && impls[i]->button != nullptr &&
-            impls[i]->button(server, effects->running[i].state, bits, button))
-            return true;
-    }
-    return false;
-}
-
 /* ---- input ---------------------------------------------------------------------- */
 
 static uint32_t effects_get_modifiers(xd_server *server) {
@@ -303,6 +268,27 @@ static uint32_t effects_get_modifiers(xd_server *server) {
     if (held & WLR_MODIFIER_LOGO)
         modifiers |= XD_BINDING_SUPER;
     return modifiers;
+}
+
+/* A press used up keeps its release from the programs too (they never
+ * had the press), even if no effect claims it: whether the button's
+ * release is used up. */
+static bool effects_track_button(xd_effects *effects, const xd_effect_input *input, bool used) {
+    bool held = false;
+    for (size_t i = 0; i < effects->held_count; i++) {
+        if (effects->held_buttons[i] == input->button) {
+            /* Pressed again: its release went elsewhere (the screen
+             * locked meanwhile), so this press starts afresh. */
+            effects->held_buttons[i] = effects->held_buttons[--effects->held_count];
+            held = true;
+            break;
+        }
+    }
+    if (!input->pressed)
+        return used || held;
+    if (used && effects->held_count < XD_ARRAY_LEN(effects->held_buttons))
+        effects->held_buttons[effects->held_count++] = input->button;
+    return used;
 }
 
 bool xd_effects_input(xd_server *server, xd_effect_input *input) {
@@ -328,6 +314,8 @@ bool xd_effects_input(xd_server *server, xd_effect_input *input) {
                 break;
         }
     }
+    if (input->kind == XD_EFFECT_INPUT_BUTTON)
+        used = effects_track_button(effects, input, used);
     return used;
 }
 
@@ -340,40 +328,6 @@ bool xd_effects_animates_window(xd_view *view, xd_window_event_kind kind) {
         if (effects->running[i].on && impls[i]->animates != nullptr &&
             impls[i]->animates(server, effects->running[i].state, view, kind))
             return true;
-    }
-    return false;
-}
-
-bool xd_effects_is_key(const char *binding, uint32_t modifiers, xkb_keysym_t keysym) {
-    uint32_t wanted = 0;
-    char key[64];
-    if (!xd_effects_parse_binding(binding, &wanted, key, sizeof(key)) || wanted != modifiers)
-        return false;
-    /* Shift makes some keys' symbols other ones ("a" is "A"): compared
-     * without case, as GTK's accelerators are. */
-    char name[64];
-    return xkb_keysym_get_name(keysym, name, sizeof(name)) > 0 && strcasecmp(name, key) == 0;
-}
-
-bool xd_effects_is_button(const char *binding, uint32_t modifiers, uint32_t button) {
-    /* X's numbers: 1 to 3 left, middle and right, 8 and 9 back and
-     * forward (4 to 7 are the wheel's). */
-    static const struct {
-        long number;
-        uint32_t button;
-    } buttons[] = {{1, BTN_LEFT}, {2, BTN_MIDDLE}, {3, BTN_RIGHT}, {8, BTN_SIDE}, {9, BTN_EXTRA}};
-    uint32_t wanted = 0;
-    char key[64];
-    if (!xd_effects_parse_binding(binding, &wanted, key, sizeof(key)) || wanted != modifiers ||
-        strncasecmp(key, "Button", 6) != 0)
-        return false;
-    char *end = nullptr;
-    long number = strtol(key + 6, &end, 10);
-    if (end == key + 6 || *end != '\0')
-        return false;
-    for (size_t i = 0; i < XD_ARRAY_LEN(buttons); i++) {
-        if (buttons[i].number == number)
-            return buttons[i].button == button;
     }
     return false;
 }

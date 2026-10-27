@@ -77,7 +77,7 @@ typedef struct water_options {
     double offset_scale;
     int rain_delay_ms;
     bool title_wave, pointer_wake;
-    char ripple[64], toggle_rain[64];
+    xd_effect_binding ripple, toggle_rain;
 } water_options;
 
 typedef struct water_state {
@@ -326,10 +326,8 @@ static void water_configure([[maybe_unused]] xd_server *server, void *data,
     options->rain_delay_ms = xd_effects_get_int(settings, effect, "RainDelay");
     options->title_wave = xd_effects_get_bool(settings, effect, "TitleWave");
     options->pointer_wake = xd_effects_get_bool(settings, effect, "PointerWake");
-    snprintf(options->ripple, sizeof(options->ripple), "%s",
-             xd_effects_get_text(settings, effect, "Ripple"));
-    snprintf(options->toggle_rain, sizeof(options->toggle_rain), "%s",
-             xd_effects_get_text(settings, effect, "ToggleRain"));
+    xd_effects_get_binding(settings, effect, "Ripple", &options->ripple);
+    xd_effects_get_binding(settings, effect, "ToggleRain", &options->toggle_rain);
 }
 
 static void water_handle_window_event([[maybe_unused]] xd_server *server, void *data,
@@ -348,10 +346,8 @@ static void water_handle_window_event([[maybe_unused]] xd_server *server, void *
     water_wake(state);
 }
 
-static bool water_handle_key([[maybe_unused]] xd_server *server, void *data, uint32_t modifiers,
-                             xkb_keysym_t keysym) {
-    water_state *state = data;
-    if (xd_effects_is_key(state->options.toggle_rain, modifiers, keysym)) {
+static bool water_handle_key(water_state *state, const xd_effect_input *input) {
+    if (xd_effects_binding_matches(&state->options.toggle_rain, input)) {
         state->raining = !state->raining;
         state->rain_waited = 0;
         water_wake(state);
@@ -359,9 +355,10 @@ static bool water_handle_key([[maybe_unused]] xd_server *server, void *data, uin
     }
     /* Ctrl or the Windows key going down may start a wake: the filter
      * looks while they're held. */
+    uint32_t keysym = input->keysym;
     bool modifier = keysym == XKB_KEY_Control_L || keysym == XKB_KEY_Control_R ||
                     keysym == XKB_KEY_Super_L || keysym == XKB_KEY_Super_R;
-    if (modifier && state->options.pointer_wake) {
+    if (input->pressed && modifier && state->options.pointer_wake) {
         state->wake_x = state->server->cursor->x;
         state->wake_y = state->server->cursor->y;
         water_wake(state);
@@ -369,13 +366,25 @@ static bool water_handle_key([[maybe_unused]] xd_server *server, void *data, uin
     return false;
 }
 
-static bool water_handle_button(xd_server *server, void *data, uint32_t modifiers,
-                                uint32_t button) {
+static bool water_handle_input(xd_server *server, void *data, const xd_effect_input *input) {
     water_state *state = data;
-    if (!xd_effects_is_button(state->options.ripple, modifiers, button))
+    switch (input->kind) {
+    case XD_EFFECT_INPUT_KEY:
+        return water_handle_key(state, input);
+    case XD_EFFECT_INPUT_BUTTON:
+        /* A shortcut: a program taking them (a virtual machine) has the
+         * click. */
+        if (xd_shortcuts_inhibited(server) ||
+            !xd_effects_binding_matches(&state->options.ripple, input))
+            return false;
+        water_drop(state, input->x, input->y, RIPPLE_RADIUS, RIPPLE_DEPTH);
+        return true;
+    case XD_EFFECT_INPUT_AXIS:
+    case XD_EFFECT_INPUT_MOTION:
+    case XD_EFFECT_INPUT_MODIFIERS:
         return false;
-    water_drop(state, server->cursor->x, server->cursor->y, RIPPLE_RADIUS, RIPPLE_DEPTH);
-    return true;
+    }
+    return false;
 }
 
 const xd_effect_impl xd_effect_impl_water = {
@@ -384,6 +393,5 @@ const xd_effect_impl xd_effect_impl_water = {
     .disable = water_disable,
     .configure = water_configure,
     .window_event = water_handle_window_event,
-    .key = water_handle_key,
-    .button = water_handle_button,
+    .input = water_handle_input,
 };
