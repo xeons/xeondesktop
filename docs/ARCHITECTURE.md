@@ -398,6 +398,11 @@ from them with the stroke being drawn (its outline, then its line), so a
 stroke's outline never covers its own line. While a stroke is drawn it
 has the pointer; the windows keep the keyboard throughout.
 
+**Show Mouse** (`showmouse.c`) is Compiz's showmouse simplified: in
+place of particles thrown from turning emitters, the emitters alone, a
+ring of glowing dots turning round the pointer, a small cairo picture
+drawn again each frame while it shows.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

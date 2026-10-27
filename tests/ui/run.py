@@ -1453,6 +1453,30 @@ def annotate_stroke(s):
     s.check(cleared.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.01, "Windows+Alt+K clears it")
 
 
+@scenario(setup=effects_setup("[ShowMouse]\nEnabled=true\n"))
+def show_mouse_ring(s):
+    """Show Mouse: Windows+K switches on a turning ring of glowing dots
+    round the pointer, which follows it; Windows+K again switches it off."""
+    x, y = 500, 350
+    s.inject("move", x, y)
+    before = s.shot("before")
+    s.inject("key", "super+k", "sleep", 300)
+    ring = s.shot("ring")
+    around = (x - 60, y - 60, 120, 120)
+    share = ring.differs(before, around, step=2)
+    s.check(share > 0.1, f"pixels round the pointer change ({share:.2f})")
+    s.check(ring.differs(before, (0, 0, x - 80, HEIGHT - 40)) == 0, "and nowhere else")
+    time.sleep(0.3)
+    turned = s.shot("turned")
+    s.check(turned.differs(ring, around, step=2) > 0.02, "the ring turns")
+    s.inject("move", 200, 200, "sleep", 300)
+    moved = s.shot("moved")
+    s.check(moved.differs(before, (140, 140, 120, 120), step=2) > 0.1, "it follows the pointer")
+    s.inject("key", "super+k")
+    off = s.settle("off")
+    s.check(off.differs(before, (0, 0, WIDTH, HEIGHT - 40)) < 0.01, "Windows+K again hides it")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
