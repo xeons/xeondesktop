@@ -965,10 +965,11 @@ def desktop_effects_panel(s):
             "a filter finding nothing leaves no effect shown")
     s.inject("key", "ctrl+a", "type", "wobbly", "sleep", 300)
     found = s.settle("filtered")
-    # (Compared with nothing found, not the whole grid: other effects
-    # share its row.)
-    s.check(found.differs(nothing, (240, 88, 260, 38), step=2) > 0.05,
-            "one finding Wobbly Windows shows it again")
+    # Its category's first row, and nothing below it: the other effects
+    # are filtered out.
+    s.check(found.differs(nothing, (300, 80, 400, 60), step=2) > 0.05 and
+            found.differs(nothing, (240, 140, 560, 300), step=2) < 0.01,
+            "one finding Wobbly Windows shows it alone")
     s.inject("key", "Return")
     s.settle("page")
     s.inject("key", "space")
