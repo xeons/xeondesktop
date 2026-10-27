@@ -1289,6 +1289,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 Applets for what Linux users set, beyond Windows'. All tested headless
 against mocks or scratch directories; none yet against the real services.
 
+- [~] Desktop Effects (`xd-effects`): Compiz Fusion's effects, all off by
+      default, configured from a CCSM-style panel built from one effect
+      table (`effects.ini`, applied live). An OpenGL path in
+      xd-compositor-fx draws effected windows as meshes; the plain build
+      greys those effects out. Done: Wobbly Windows (tested headless on
+      llvmpipe, about 4.5 ms a frame; untested on a real GPU). Being
+      built: Scale, Animations, Opacity, Ring Switcher, Enhanced Zoom,
+      Annotate, Show Mouse; Magic Lamp, Burn, Explode, Water; virtual
+      desktops with Desktop Wall, Cube, Rotate Cube, Expo, Shift Switcher.
+      CI likely skips the OpenGL scenarios (no /dev/udmabuf).
+
 - [~] Input methods: the compositor relays text-input-v3 to
       input-method-v2 (Fcitx 5 or IBus, started from Keyboard Properties'
       Text Services); tested with a stand-in IME and GTK3. Untested with a
