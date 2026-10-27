@@ -70,6 +70,7 @@ static bool animation_get_event(xd_window_event_kind kind, animation_event *even
     case XD_WINDOW_EVENT_DESTROY:
     case XD_WINDOW_EVENT_FOCUS:
     case XD_WINDOW_EVENT_MAXIMIZE:
+    case XD_WINDOW_EVENT_TITLE:
         return false;
     }
     return false;
