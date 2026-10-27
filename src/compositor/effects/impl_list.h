@@ -16,4 +16,5 @@ XD_EFFECT_IMPL(desktop_wall)
 XD_EFFECT_IMPL(desktop_cube)
 XD_EFFECT_IMPL(rotate_cube)
 XD_EFFECT_IMPL(expo)
+XD_EFFECT_IMPL(shift_switcher)
 #endif

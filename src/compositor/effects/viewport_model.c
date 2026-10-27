@@ -231,9 +231,9 @@ int xd_expo_find_desktop(const xd_expo_layout *layout, double x, double y, doubl
 
 /* Cover: the side windows turned this far, at these fractions of the
  * width from the centre and back. */
-static constexpr double COVER_TURN = 0.9;
-static constexpr double COVER_FIRST = 0.32;
-static constexpr double COVER_NEXT = 0.09;
+static constexpr double COVER_TURN = 0.8;
+static constexpr double COVER_FIRST = 0.45;
+static constexpr double COVER_NEXT = 0.1;
 static constexpr double COVER_DEPTH = 0.3;
 /* Flip: each window behind the one before by this much of the width,
  * all turned alike. */

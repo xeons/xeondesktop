@@ -381,6 +381,14 @@ desktop (switched to at once, with the highest animator priority so
 nothing else animates it), a press on a window and a drag carries it (a
 capture of its own, following the pointer) to another desktop.
 
+**Shift Switcher** (`shift.c`, Window Management): Compiz's shift, Cover
+mode by default (Flip too). Its key (Win+Shift+Tab; Compiz's Win+Tab is
+Ring Switcher's) shows this desktop's windows, most recently used first,
+each a scene capture of its own drawn in perspective with a reflection
+(`xd_shift_get_slot()`), over the dimmed desktop; the key again or the
+arrows step, letting go of the binding's modifiers (`modifiers` hook),
+Enter or a click activates the one in front, Escape changes nothing.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

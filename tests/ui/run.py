@@ -1213,6 +1213,30 @@ def expo_wall(s):
     s.wait_window(title="Control Panel", gone=True)
 
 
+@scenario(setup=effects_setup("[ShiftSwitcher]\nEnabled=true\n"), fx=True)
+def shift_switcher_cover(s):
+    """Shift Switcher (xd-compositor-fx): with two windows open, Win+Shift+Tab
+    held shows them as pictures in a cover flow over the dimmed desktop;
+    let go, the one before (Control Panel) is activated, as Alt+Tab
+    would."""
+    require_opengl_effects(s)
+    empty, box = open_control_panel(s)
+    s.launch("xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    both = s.settle("both")
+    held = s.launch(s.tool("xd-inject"), "hold", "super", "hold", "shift", "key", "Tab", "sleep",
+                    "2500", "release", "shift", "release", "super")
+    time.sleep(1.2)
+    cover = s.shot("cover")
+    corner = cover.pixel(WIDTH - 20, HEIGHT // 2)
+    desktop = empty.pixel(WIDTH - 20, HEIGHT // 2)
+    s.check(sum(corner) < sum(desktop) * 0.7, f"the desktop is dimmed ({corner} < {desktop})")
+    s.check(cover.differs(both, (0, 0, WIDTH, HEIGHT), step=8) > 0.3,
+            "the windows show as pictures, not as they were")
+    held.wait(timeout=30)
+    s.wait_window(title="Control Panel", state="activated")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
