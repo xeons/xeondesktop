@@ -11,3 +11,4 @@
 XD_EFFECT_IMPL(wobbly_windows)
 #endif
 XD_EFFECT_IMPL(general_options)
+XD_EFFECT_IMPL(desktop_wall)

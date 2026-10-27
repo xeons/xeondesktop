@@ -68,6 +68,7 @@
 #include "../src/compositor/vcgt.h"
 #include "../src/compositor/effects/wobbly_model.h"
 #include "../src/compositor/desktops_grid.h"
+#include "../src/compositor/effects/viewport_model.h"
 #include "../src/settings/effects.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"

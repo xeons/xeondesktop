@@ -1086,6 +1086,51 @@ def virtual_desktops_window_menu(s):
     s.wait_window(title="Control Panel")
 
 
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopWall]\nEnabled=true\nSlideDuration=3\n"))
+def desktop_wall_slide(s):
+    """Desktop Wall: mid-slide to the second desktop the window opened on
+    the first has gone part way out to the left, the desktop showing where
+    its right side was, and the map of the desktops shows in the middle;
+    when the slide is over the window is gone."""
+    empty, box = open_control_panel(s)
+    x, y, w, h = box
+    s.inject("key", "ctrl+alt+Right")
+    time.sleep(1.4)
+    mid = s.shot("mid-slide")
+    s.check(mid.differs(empty, (x + 10, y + 60, 120, 200), step=4) > 0.3,
+            "mid-slide the window still shows at the left")
+    s.check(mid.differs(empty, (x + w - 230, y + 60, 200, 200), step=4) < 0.05,
+            "its right side has slid away")
+    s.check(mid.differs(empty, (WIDTH // 2 - 30, HEIGHT // 2 - 15, 60, 30), step=2) > 0.2,
+            "the map of the desktops shows in the middle")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(3)
+    done = s.settle("slid")
+    s.check(done.differs(empty, box, step=4) < 0.02, "the slide over, the second desktop shows")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopWall]\nEnabled=true\nEdgeFlipMove=true\n"
+                              "EdgeFlipDelay=300\n"))
+def desktop_wall_edge_flip(s):
+    """Desktop Wall's edge flip move: a window dragged by its title bar
+    against the right edge of the screen and held there goes to the second
+    desktop with the view, coming in from the left; going back to the
+    first leaves it behind."""
+    empty, box = open_control_panel(s)
+    x, y, w, h = box
+    steps = ["move", x + 100, y + 10, "down", "sleep", 100]
+    for i in range(1, 11):
+        steps += ["move", x + 100 + (WIDTH - x - 100) * i // 10, y + 10]
+    steps += ["move", WIDTH - 1, y + 10, "sleep", 1500, "up"]
+    s.inject(*steps)
+    flipped = s.settle("flipped")
+    s.check(flipped.differs(empty, (0, y + 60, 60, 100), step=4) > 0.3,
+            "the window came in at the left of the second desktop")
+    s.check(s.window(title="Control Panel") is not None, "it's on the desktop showing")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

@@ -339,6 +339,15 @@ Move to Another Workspace and Always on Visible Workspace). Effects
 animate a switch through `xd_desktops_add_animator()`: the desktop is
 current already, and the effect shows the move from the old one.
 
+**Desktop Wall** (`wall.c`, both builds; its maths, with the other
+desktop effects', in `viewport_model.c`, unit-tested) is Compiz's wall
+plugin: a switch moves the scene nodes of the old and new desktops'
+windows by the layout's size, eased, for the slide (the windows stay
+where they are), with a map of the grid drawn with cairo in `layer_drag`.
+Edge flip move (off by default): a window dragged against the layout's
+edge for the delay is carried to the desktop that way, the pointer
+warped to come in from the other side.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

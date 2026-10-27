@@ -149,6 +149,7 @@ settings_lib = static_library(
   'src/settings/effects.c',
   'src/settings/effects/wobbly_windows.c',
   'src/settings/effects/general_options.c',
+  'src/settings/effects/desktop_wall.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -414,6 +415,8 @@ compositor_src += files('src/compositor/gamma.c', 'src/compositor/vcgt.c')
 # builds; the OpenGL effects (one file each) in xd-compositor-fx alone.
 compositor_src += files('src/compositor/effects/effects.c')
 compositor_src += files('src/compositor/effects/general.c')
+compositor_src += files('src/compositor/effects/viewport_model.c')
+compositor_src += files('src/compositor/effects/wall.c')
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
   'src/compositor/effects/wobbly.c',
@@ -1475,6 +1478,7 @@ test_exe = executable(
   'src/compositor/vcgt.c',
   'src/compositor/effects/wobbly_model.c',
   'src/compositor/desktops_grid.c',
+  'src/compositor/effects/viewport_model.c',
   'src/color/colorlib.c',
   'src/keys/keyslib.c',
   'src/keys/sshkeys.c',

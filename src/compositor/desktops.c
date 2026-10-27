@@ -126,6 +126,21 @@ static void desktops_refocus(xd_server *server, xd_view *before) {
     xd_view_focus_next(server);
 }
 
+/* The window and its dialogs (an owner's owner's too) onto `desktop`. */
+static void desktops_set_view_desktop(xd_view *view, int desktop) {
+    view->desktop = desktop;
+    view->sticky = false;
+    for (int depth = 0; depth < 4; depth++) {
+        XD_LIST_FOR_EACH(other, &view->server->views, xd_view, link) {
+            const xd_view *owner = xd_view_get_owner(other);
+            if (owner != nullptr && (owner->desktop != other->desktop || other->sticky)) {
+                other->desktop = owner->desktop;
+                other->sticky = owner->sticky;
+            }
+        }
+    }
+}
+
 static void desktops_animate(xd_desktops *desktops, int from, int to, xd_view *carried) {
     for (size_t i = 0; i < desktops->animator_count; i++) {
         const desktops_animator *animator = &desktops->animators[i];
@@ -141,13 +156,16 @@ void xd_desktops_switch_to(xd_server *server, int desktop, xd_view *carried) {
         return;
     xd_view *before = xd_view_focused(server);
     int from = desktops->current;
+    /* Carried along: it never leaves the screen, nor its taskbar button. */
     if (carried != nullptr && !carried->sticky)
-        xd_desktops_move_view(carried, desktop);
+        desktops_set_view_desktop(carried, desktop);
     desktops->current = desktop;
     wlr_log(WLR_DEBUG, "desktops: %d -> %d", from, desktop);
     xd_desktops_apply(server);
     desktops_refocus(server, carried != nullptr ? carried : before);
     xd_arrange_desktops_changed(server);
+    if (carried != nullptr)
+        xd_arrange_view_desktop(carried);
     desktops_animate(desktops, from, desktop, carried);
 }
 
@@ -168,18 +186,7 @@ void xd_desktops_move_view(xd_view *view, int desktop) {
     if (desktop < 0 || desktop >= xd_desktops_get_count(server))
         return;
     bool was_focused = xd_view_focused(server) == view;
-    view->desktop = desktop;
-    view->sticky = false;
-    /* Its dialogs come along (an owner's owner's too). */
-    for (int depth = 0; depth < 4; depth++) {
-        XD_LIST_FOR_EACH(other, &server->views, xd_view, link) {
-            const xd_view *owner = xd_view_get_owner(other);
-            if (owner != nullptr && (owner->desktop != other->desktop || other->sticky)) {
-                other->desktop = owner->desktop;
-                other->sticky = owner->sticky;
-            }
-        }
-    }
+    desktops_set_view_desktop(view, desktop);
     xd_desktops_apply(server);
     xd_arrange_view_desktop(view);
     if (was_focused && !xd_desktops_is_view_shown(view)) {
