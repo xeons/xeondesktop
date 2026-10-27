@@ -8508,10 +8508,13 @@ static gint compare_strings(gconstpointer left, gconstpointer right) {
 
 /* Runs `text` (7's box) over `root`; the relative paths found, sorted and
  * joined by spaces. */
+static bool walk_archives; /* Include compressed files */
+
 static char *walk_tree(const char *root, const char *text, bool hidden, bool subfolders) {
     xd_search_criteria criteria;
     xd_search_criteria_init(&criteria);
     criteria.query = g_strdup(text);
+    criteria.archives = walk_archives;
     criteria.hidden = hidden;
     criteria.subfolders = subfolders;
     criteria.look_in = g_new0(char *, 2);
@@ -8583,6 +8586,24 @@ static void test_search_walk(void) {
     CHECK(walk_finds(root, "loop", false, true, "sub/loop"));
     CHECK(walk_finds(root, "nothing-is-called-this", false, true, ""));
     CHECK(walk_finds(root, "/^notes\\./", false, true, "sub/deeper/notes.txt"));
+#if XD_HAVE_LIBARCHIVE
+    /* Include compressed files: the names inside archives, shown as if
+     * the archive were a folder. */
+    static const tar_item bundle[] = {
+        {"docs/", AE_IFDIR, 0755, nullptr},
+        {"docs/report inside.txt", AE_IFREG, 0644, "x"},
+        {"other.txt", AE_IFREG, 0644, "y"},
+    };
+    path = g_build_filename(root, "bundle.tar.gz", nullptr);
+    write_tar(path, bundle, G_N_ELEMENTS(bundle));
+    g_free(path);
+    CHECK(walk_finds(root, "report", false, true, "report.txt sub/report 2.txt"));
+    walk_archives = true;
+    CHECK(walk_finds(root, "report", false, true,
+                     "bundle.tar.gz/docs/report inside.txt report.txt sub/report 2.txt"));
+    CHECK(walk_finds(root, "kind:folder", false, true, "bundle.tar.gz/docs sub sub/deeper"));
+    walk_archives = false;
+#endif
     /* Cancelled at once: no callbacks afterwards, nothing leaks. */
     xd_search_criteria criteria;
     xd_search_criteria_init(&criteria);

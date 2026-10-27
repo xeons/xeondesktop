@@ -1279,6 +1279,22 @@ static void activate_item(tab *folder_tab, GFile *file, gboolean is_dir) {
     }
     if (!is_dir && is_saved_search(file) && open_saved_search(folder_tab, file))
         return;
+    /* A result inside an archive ("photos.zip/2026/beach.jpg"): the
+     * archive opens, there being no file of its own to open. */
+    if (folder_tab->searching && g_file_is_native(file) &&
+        !g_file_query_exists(file, nullptr)) {
+        GFile *outer = g_file_get_parent(file);
+        while (outer != nullptr && !g_file_query_exists(outer, nullptr)) {
+            GFile *up = g_file_get_parent(outer);
+            g_object_unref(outer);
+            outer = up;
+        }
+        if (outer != nullptr) {
+            activate_item(folder_tab, outer, FALSE);
+            g_object_unref(outer);
+            return;
+        }
+    }
     if (is_dir) {
         navigate(folder_tab, file, TRUE);
         return;
