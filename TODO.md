@@ -547,7 +547,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
       Programs, Recent Documents and Control Panel submenus, Log Off and
-      Turn Off Computer, Search (xd-search), Help and Support (xd-help),
+      Turn Off Computer, Search (xd-files' Search), Help and Support (xd-help),
       Set Program Access and Defaults (xd-defaults), Printers and Faxes,
       the user's full name in the header, keyboard navigation of every
       column and the footer. Pinning from All Programs, letter
@@ -574,8 +574,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Menus: one highlight at a time when moving quickly (the item whose
       submenu waits to close no longer stays lit). The Windows 2000 banner
       picks no item, as in Windows.
-- [x] Greyed-out items: Search (xd-search: name, wildcards, text inside
-      files, where to look; no date/type/size options), Help (xd-help),
+- [x] Greyed-out items: Search (xd-files --search), Help (xd-help),
       Devices and Printers, Default Programs (xd-defaults, GIO defaults
       for six kinds), Switch User (the display manager's SwitchToGreeter or
       GDM's CreateTransientDisplay; greyed without one). Windows 7 search
@@ -774,8 +773,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Folder Options' "Show common tasks in folders" / "Use Windows classic
       folders" ([Folders] CommonTasks): the task pane by default as in XP,
       View > Explorer Bar > Folders, the tree for xd-files with no folder
-      or --explore (XP's Windows Explorer and Explore). Not done: XP's
-      other Explorer bars (Search, Favorites, Media, History).
+      or --explore (XP's Windows Explorer and Explore). The Search
+      bar is the built-in Search. Not done: XP's other Explorer bars
+      (Favorites, Media, History).
 - [x] Proper names for the undocumented shell classes' parts, deduced
       from their images and use, marked as deduced in uxtheme.ini:
       AddressBand, AltTab, BreadcrumbBar, CommandModule, DragDrop,
@@ -922,9 +922,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Undo Extract. Entries outside the folder, device files and
       set-user-ID bits are left out. Not done: password-protected
       archives (they fail with libarchive's message).
-- [x] Favorites menu (GTK bookmarks, shared with file choosers), the Search
-      button and F3 (xd-search in the current folder), "My Network Places"
-      and GIO's names as titles.
+- [x] Favorites menu (GTK bookmarks, shared with file choosers, and saved
+      searches in ~/Searches), "My Network Places" and GIO's names as
+      titles.
+- [x] Search built in (search.c, searchpane.c, searchwalk.c): 2000's
+      Search pane, XP's Search Companion and 7's search box with Advanced
+      Query Syntax, all of their criteria, regular expressions (GRegex:
+      "Use regular expressions", `/pattern/`, `content:/pattern/`),
+      streamed results, matches highlighted in names (Folder Options'
+      Search tab sets the colour), saved searches (.xdsearch), and
+      Folder Options' Search tab. The Start menus' Search opens it;
+      xd-search is gone. Not done: an index (Tracker/LocalSearch could
+      be one), natural language search, contents inside archives (names
+      only), Computers or people. Unsure: XP's exact Companion wording,
+      7's "earlier this week/month/year" ranges, whether `size:5MB` means
+      exactly that.
 - [~] Properties dialog. Tested: General for a file, Permissions (ticking
       Group Write and Apply changed 644 to 664), Details, and the size and
       contents count for a folder plus a file (matches find/du exactly).

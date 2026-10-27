@@ -172,7 +172,7 @@ off, and full-screen windows scanned out directly.
 The Windows 2000 Start menu is built from installed `.desktop` files, filed
 into Programs folders (Accessories, Games, Graphics, Internet, ...) by their
 categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`;
-Search opens `xd-search` (find files by name, wildcard or text inside them),
+Search opens the file manager's Search (`xd-files --search`),
 Help opens `xd-help`, and Settings holds Control Panel, Network Connections,
 Printers and Taskbar & Start Menu. The menus work from the keyboard: arrows
 within and across columns, Tab, Enter and Esc, and typing a letter picks
@@ -442,8 +442,7 @@ an archive's menu has Extract Here and Extract to "name" (any format
 libarchive reads: zip, 7z, rar, tar and its compressions, iso, cpio, deb,
 rpm, and single gzip/bzip2/xz/zstd files); Edit > Undo reverses the last
 renames, copies, moves, extractions and deletions.
-Favorites are GTK bookmarks, shared with file choosers; Search (and F3)
-opens Search for Files or Folders in the current folder. Properties has a
+Favorites are GTK bookmarks, shared with file choosers. Properties has a
 Shortcut tab for launchers, picture dimensions, and XP's pie chart for
 drives.
 
@@ -461,6 +460,21 @@ common tasks in folders", the default); the Folders button or View >
 Explorer Bar > Folders shows the tree instead, and "Use Windows classic
 folders" drops the pane. `xd-files` with no folder, or `--explore`, opens
 with the Folders tree, as XP's Windows Explorer and Explore do.
+
+Search is built in, in the form of the display style. In Windows 2000 and
+XP, the Search button, F3, Ctrl+F or Ctrl+E open the Search pane (2000's
+Search pane, or XP's Search Companion): name, wildcards, a word or phrase in
+the file, where to look, dates, size, type, hidden and system folders,
+subfolders and case. In Windows 7, the "Search <folder>" box filters as you
+type, with Advanced Query Syntax (`name:`, `kind:`, `ext:`, `size:`,
+`datemodified:`, `content:`, AND/OR/NOT, quotes, ranges, `last week`,
+`huge`), date and size filters, recent searches and "Search again in:".
+Regular expressions (GRegex) work in both: "Use regular expressions" in the
+pane, or `/pattern/`, `/pattern/i` and `content:/pattern/` in the box.
+Results stream in as they're found, with the matched part of each name
+highlighted in the theme's selection colours or a colour set on Folder
+Options' Search tab. Save Search writes an `.xdsearch` file (in ~/Searches
+from the box) that runs the search again when opened.
 
 Tabs, as Windows 11's Explorer has them: Ctrl+T opens one (My Computer),
 a middle click or "Open in new tab" opens a folder in one, Ctrl+W closes
