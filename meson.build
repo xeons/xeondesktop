@@ -1304,6 +1304,7 @@ executable(
   'src/shell/session.c',
   'src/shell/primary.c',
   'src/shell/langbar.c',
+  'src/shell/pager.c',
   'src/shell/sys_updates.c',
   'src/wuaucpl/state.c',
   'src/shell/housekeeping.c',

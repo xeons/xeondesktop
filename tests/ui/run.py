@@ -1000,6 +1000,92 @@ def desktop_effects_unavailable(s):
             "Wobbly Windows stays off")
 
 
+# ---- virtual desktops and their effects (General Options, Desktop Wall, Desktop Cube,
+# Rotate Cube, Expo, Shift Switcher) ----------------------------------------------------
+
+TWO_DESKTOPS = "[GeneralOptions]\nHorizontalSize=2\n"
+
+
+def open_control_panel(s):
+    """Opens Control Panel and returns its box on the screen (x, y, w, h)."""
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    return empty, s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS))
+def virtual_desktops(s):
+    """Two desktops side by side (General Options): Ctrl+Alt+Right shows
+    the second, without the window opened on the first or its taskbar
+    button; Ctrl+Alt+Left brings both back. Ctrl+Alt+Shift+Right carries
+    the window along to the second desktop, so going back to the first
+    leaves it behind. The taskbar's pager switches too."""
+    empty, box = open_control_panel(s)
+    s.log(f"window at {box}")
+    shown = s.settle("shown")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    second = s.settle("second-desktop")
+    s.check(second.differs(empty, box, step=4) < 0.02,
+            "on the second desktop the window isn't shown")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", state="activated")
+    back = s.settle("first-desktop")
+    s.check(back.differs(shown, box, step=4) < 0.02, "back on the first, the window shows again")
+
+    s.inject("key", "ctrl+alt+shift+Right")
+    s.wait(lambda: s.window(title="Control Panel") is not None, "the carried window")
+    carried = s.settle("carried")
+    s.check(carried.differs(shown, box, step=4) < 0.02, "the carried window still shows")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+    left = s.settle("left-behind")
+    s.check(left.differs(empty, box, step=4) < 0.02, "it stayed on the second desktop")
+
+    # The pager: buttons 1 and 2 left of the notification area (in the
+    # Classic style, its clock "12:00 PM"); the second shows the window
+    # again.
+    s.inject("move", WIDTH - 100, HEIGHT - 13, "click", "left")
+    s.wait_window(title="Control Panel", state="activated")
+    paged = s.settle("paged")
+    s.check(paged.differs(carried, box, step=4) < 0.02, "the pager's 2 shows it again")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS))
+def virtual_desktops_window_menu(s):
+    """With two desktops the window menu (Alt+Space) has Always on Visible
+    Workspace, which keeps the window on every desktop, and Move to
+    Another Workspace, whose Workspace 2 sends it to the second desktop."""
+    empty, box = open_control_panel(s)
+    shown = s.settle("shown")
+    s.inject("key", "alt+space")
+    menu = s.settle("window-menu")
+    s.check(menu.differs(shown, (box[0], box[1] + 20, 260, 260), step=2) > 0.05,
+            "the window menu opened")
+    s.inject("key", "v")
+    s.settle("sticky")
+    s.inject("key", "ctrl+alt+Right")
+    time.sleep(0.5)
+    s.check(s.window(title="Control Panel") is not None,
+            "a window on every desktop keeps its taskbar button on the second")
+    second = s.settle("second-desktop")
+    s.check(second.differs(shown, box, step=4) < 0.02, "and shows there")
+    s.inject("key", "ctrl+alt+Left")
+    s.settle("first-again")
+    # Not sticky any more, then to Workspace 2 (the submenu's second item).
+    s.inject("key", "alt+space", "sleep", 300, "key", "v")
+    s.settle("not-sticky")
+    s.inject("key", "alt+space", "sleep", 300, "key", "a", "sleep", 300)
+    s.settle("submenu")
+    s.inject("key", "Down", "key", "Return")
+    s.wait_window(title="Control Panel", gone=True)
+    moved = s.settle("moved")
+    s.check(moved.differs(empty, box, step=4) < 0.02, "Workspace 2 took it off this desktop")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

@@ -69,6 +69,10 @@ typedef struct xd_toplevel {
      * surface-local), for the minimize animation. */
     struct wl_surface *button_surface;
     int button_x, button_y, button_w, button_h;
+    /* The virtual desktop it's on, and whether it's on every one, as the
+     * compositor said (xd-window-arranger-v1's window_desktop). */
+    uint32_t desktop;
+    bool sticky;
 } xd_toplevel;
 
 /* Quick Launch shortcuts. */
@@ -112,6 +116,7 @@ enum {
     XD_HIT_TRAY_CHEVRON = -7, /* shows or folds inactive notification icons */
     XD_HIT_PEEK = -8,         /* Aero: Show desktop, at the far end (hover peeks) */
     XD_HIT_LANG = -9,         /* the language indicator (langbar.c) */
+    XD_HIT_PAGER = -10,       /* the virtual desktops' pager (pager.c) */
     XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
     XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
@@ -152,6 +157,7 @@ typedef struct xd_taskbar {
     bool peeking;
     xd_rect tray_rect;
     xd_rect lang_rect; /* the language indicator; empty when not shown */
+    xd_rect pager_rect; /* the virtual desktops' pager; empty when not shown */
     size_t quick_count;
     xd_rect quick_band; /* the whole Quick Launch toolbar, grips included */
     size_t quick_cap;
@@ -222,6 +228,9 @@ struct xd_shell {
     bool on_battery; /* UPower's: the timers are the "Running on batteries" ones */
     xd_sleep *sleep; /* logind (sleep.c), or nullptr */
     bool session_locked; /* the compositor says every screen shows the lock */
+    /* Virtual desktops (Desktop Effects' General Options), as the
+     * compositor said: 1 x 1 is none to speak of. */
+    uint32_t desktop_columns, desktop_rows, desktop_current;
     xd_buttons *buttons; /* the lid and power buttons (buttons.c), or nullptr */
     xd_account *account; /* full name, Switch User (account.c) */
     struct zwlr_output_power_manager_v1 *power_manager;
@@ -599,6 +608,15 @@ void xd_langbar_click(xd_taskbar *bar, uint32_t button, uint32_t serial);
 /* Its tooltip: the active layout's name, or nullptr. */
 const char *xd_langbar_tooltip(xd_shell *shell);
 void xd_langbar_finish(xd_shell *shell);
+/* pager.c: a button per virtual desktop, left of the notification area
+ * (and the language indicator), the current one pushed in, as XP
+ * PowerToys' Virtual Desktop Manager; only with more than one desktop.
+ * Laid out as xd_langbar_layout; a click switches to that desktop. */
+xd_rect xd_pager_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, xd_rect room,
+                        bool side, int row_h);
+void xd_pager_click(xd_taskbar *bar, uint32_t button, double x, double y);
+/* Its tooltip over (x, y), device px: "Workspace 2" (xd_free it). */
+char *xd_pager_get_tooltip(xd_taskbar *bar, double x, double y);
 /* sleep.c: standby and hibernate through logind, and locking the screen
  * before sleeping ([Power] PasswordOnResume). */
 void xd_sleep_init(xd_shell *shell);
