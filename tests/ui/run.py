@@ -3193,6 +3193,27 @@ def files_search_highlight(s):
             "the theme's colours gave way to the chosen one")
 
 
+@scenario(desktop_ini=AERO_INI)
+def folder_options_search(s):
+    """Folder Options' Search tab (7's): Find partial matches off and a
+    colour of one's own for highlighting, saved in [Folders]."""
+    empty = s.settle("desktop")
+    s.launch("xd-folders")
+    s.wait_window(title="Folder Options", state="activated")
+    x, y, w, h = s.settle("folder options").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("key", "ctrl+Tab", "sleep", 200, "key", "ctrl+Tab", "sleep", 300)
+    s.settle("search tab")
+    s.inject("key", "alt+p", "sleep", 200, "key", "alt+e", "sleep", 300)
+    s.settle("changed")
+    s.inject("move", x + w - 208, y + h - 21, "click")
+    s.wait(lambda: s.ini().has_section("Folders")
+           and s.ini()["Folders"].get("SearchPartial") == "false"
+           and s.ini()["Folders"].get("SearchHighlight") == "#ff8c00",
+           "SearchPartial=false and SearchHighlight saved")  # fmt: skip
+    s.check(s.ini()["Folders"].get("SearchRegex") == "true",
+            "Allow regular expressions stays on, its default")
+
+
 @scenario()
 def folder_options_tabs(s):
     """Folder Options' "Open folders in new tabs instead of new windows":

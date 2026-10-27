@@ -1008,6 +1008,7 @@ executable(
   'xd-folders',
   'src/folders/main.c',
   'src/folders/filetypes.c',
+  c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')],
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep],
   install: true,

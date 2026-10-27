@@ -8,6 +8,9 @@
  *               xd-files' own); single- or double-click to open
  *   View        Apply to All Folders / Reset All Folders, and the
  *               advanced settings tree
+ *   Search      Windows 7's Search tab, for xd-files' search box (in the
+ *               2000 and XP styles only its Linux additions: /pattern/
+ *               and the colour matches are highlighted in)
  *   File Types  shared-mime-info's types by extension, and the program
  *               each opens with (Change... sets the default); New and
  *               Delete change the user's MIME database (filetypes.h)
@@ -62,6 +65,9 @@ typedef struct props {
     GtkListStore *types;
     GtkWidget *types_view, *details_frame, *opens_icon, *opens_name, *change, *details, *delete;
     bool types_loaded;
+    /* Search (7's options nullptr in the other styles) */
+    GtkWidget *search_subfolders, *search_partial, *search_system, *search_archives,
+        *search_contents, *search_regex, *highlight_color, *highlight_theme;
 } props;
 
 static void changed(props *folder_options) {
@@ -974,6 +980,145 @@ static GtkWidget *types_page(props *folder_options) {
     return page;
 }
 
+/* ---- Search ---------------------------------------------------------------------------- */
+
+static void show_search(props *folder_options, const xd_folder_settings *folder_settings) {
+    folder_options->updating = true;
+    if (folder_options->search_subfolders != nullptr) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_subfolders),
+                                     folder_settings->search_subfolders);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_partial),
+                                     folder_settings->search_partial);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_system),
+                                     folder_settings->search_system);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_archives),
+                                     folder_settings->search_archives && XD_HAVE_LIBARCHIVE);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_contents),
+                                     folder_settings->search_contents);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->search_regex),
+                                     folder_settings->search_regex);
+    }
+    bool themed = folder_settings->search_highlight[0] == '\0';
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(folder_options->highlight_theme), themed);
+    GdkRGBA color;
+    if (themed || !gdk_rgba_parse(&color, folder_settings->search_highlight))
+        gdk_rgba_parse(&color, "#ff8c00");
+    gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(folder_options->highlight_color), &color);
+    gtk_widget_set_sensitive(folder_options->highlight_color, !themed);
+    folder_options->updating = false;
+}
+
+static void read_search(props *folder_options, xd_folder_settings *folder_settings) {
+    if (folder_options->search_subfolders != nullptr) {
+        folder_settings->search_subfolders =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_subfolders));
+        folder_settings->search_partial =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_partial));
+        folder_settings->search_system =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_system));
+        folder_settings->search_archives =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_archives));
+        folder_settings->search_contents =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_contents));
+        folder_settings->search_regex =
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->search_regex));
+    }
+    folder_settings->search_highlight[0] = '\0';
+    if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(folder_options->highlight_theme))) {
+        GdkRGBA color;
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(folder_options->highlight_color), &color);
+        g_snprintf(folder_settings->search_highlight, sizeof(folder_settings->search_highlight),
+                   "#%02x%02x%02x", (unsigned)(color.red * 255.0 + 0.5),
+                   (unsigned)(color.green * 255.0 + 0.5), (unsigned)(color.blue * 255.0 + 0.5));
+    }
+}
+
+static void search_defaults([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *folder_options = data;
+    xd_settings defaults;
+    xd_settings_defaults(&defaults);
+    show_search(folder_options, &defaults.folders);
+    changed(folder_options);
+}
+
+static void on_highlight_theme(GtkToggleButton *toggle, gpointer data) {
+    props *folder_options = data;
+    gtk_widget_set_sensitive(folder_options->highlight_color,
+                             !gtk_toggle_button_get_active(toggle));
+    changed(folder_options);
+}
+
+static void on_highlight_color([[maybe_unused]] GtkColorButton *button, gpointer data) {
+    changed(data);
+}
+
+static GtkWidget *search_check(props *folder_options, GtkWidget *box, const char *label) {
+    GtkWidget *button = gtk_check_button_new_with_mnemonic(label);
+    g_signal_connect(button, "toggled", G_CALLBACK(on_toggle_changed), folder_options);
+    gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
+    return button;
+}
+
+/* Windows 7's Search tab, for xd-files' search box; there's no index, so
+ * its index options are left out, and natural language search isn't
+ * done (greyed). The regular expressions and the highlight colour are
+ * Linux additions, and the only part shown in the 2000 and XP styles,
+ * whose Folder Options had no Search tab. */
+static GtkWidget *search_page(props *folder_options, bool seven) {
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+    if (seven) {
+        GtkWidget *how = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        folder_options->search_subfolders = search_check(
+            folder_options, how, "Include _subfolders in search results when searching in file "
+                                 "folders");
+        folder_options->search_partial = search_check(folder_options, how, "Find _partial matches");
+        GtkWidget *natural = search_check(folder_options, how, "Use _natural language search");
+        gtk_widget_set_sensitive(natural, FALSE);
+        gtk_box_pack_start(GTK_BOX(page), frame("How to search", how), FALSE, FALSE, 0);
+
+        GtkWidget *outside = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+        folder_options->search_system =
+            search_check(folder_options, outside, "Include s_ystem directories");
+        folder_options->search_archives =
+            search_check(folder_options, outside, "Include _compressed files (ZIP, CAB...)");
+        gtk_widget_set_sensitive(folder_options->search_archives, XD_HAVE_LIBARCHIVE);
+        folder_options->search_contents = search_check(
+            folder_options, outside, "Al_ways search file names and contents (this might take "
+                                     "several minutes)");
+        gtk_box_pack_start(GTK_BOX(page),
+                           frame("When searching non-indexed locations", outside), FALSE, FALSE,
+                           0);
+    }
+    GtkWidget *linux_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    if (seven) {
+        folder_options->search_regex = search_check(
+            folder_options, linux_box, "Allow _regular expressions (/pattern/)");
+        gtk_widget_set_tooltip_text(folder_options->search_regex,
+                                    "In the search box, /pattern/ (or /pattern/i, ignoring case) "
+                                    "matches names, and content:/pattern/ what's in the files.");
+    }
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Highlight matches in:");
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    folder_options->highlight_color = gtk_color_button_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), folder_options->highlight_color);
+    g_signal_connect(folder_options->highlight_color, "color-set", G_CALLBACK(on_highlight_color),
+                     folder_options);
+    gtk_box_pack_start(GTK_BOX(row), folder_options->highlight_color, FALSE, FALSE, 0);
+    folder_options->highlight_theme = gtk_check_button_new_with_mnemonic("Use th_eme colour");
+    g_signal_connect(folder_options->highlight_theme, "toggled", G_CALLBACK(on_highlight_theme),
+                     folder_options);
+    gtk_box_pack_start(GTK_BOX(row), folder_options->highlight_theme, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(linux_box), row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Search results", linux_box), FALSE, FALSE, 0);
+
+    GtkWidget *defaults;
+    gtk_box_pack_end(GTK_BOX(page), restore_defaults_row(&defaults), FALSE, FALSE, 0);
+    g_signal_connect(defaults, "clicked", G_CALLBACK(search_defaults), folder_options);
+    return page;
+}
+
 /* ---- applying ---------------------------------------------------------------------------- */
 
 static void show_settings(props *folder_options) {
@@ -983,6 +1128,7 @@ static void show_settings(props *folder_options) {
     folder_options->updating = true;
     show_advanced(folder_options, &settings.folders);
     folder_options->updating = false;
+    show_search(folder_options, &settings.folders);
 }
 
 /* Saves over the file as it is now: other applets and xd-files' Show
@@ -1003,6 +1149,7 @@ static bool apply(props *folder_options) {
         folder_settings->show_hidden = folder_settings->hide_extensions =
             folder_settings->remember_views = false;
     read_advanced(folder_options, folder_settings);
+    read_search(folder_options, folder_settings);
     if (!xd_settings_save(&settings)) {
         xd_message_box(GTK_WINDOW(folder_options->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The folder options could not be saved.");
@@ -1062,6 +1209,11 @@ int main(int argc, char **argv) {
                              gtk_label_new_with_mnemonic("_General"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), view_page(&folder_options),
                              gtk_label_new_with_mnemonic("_View"));
+    xd_settings style_settings;
+    xd_settings_load(&style_settings);
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs),
+                             search_page(&folder_options, style_settings.style == XD_STYLE_AERO),
+                             gtk_label_new_with_mnemonic("_Search"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), types_page(&folder_options),
                              gtk_label_new_with_mnemonic("File _Types"));
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(folder_options.window))),
