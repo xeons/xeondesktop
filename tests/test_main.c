@@ -64,6 +64,7 @@
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
+#include "../src/saver/rain.h"
 #include "../src/saver/savers.h"
 #include "../src/color/colorlib.h"
 #include "../src/compositor/vcgt.h"
@@ -3096,6 +3097,9 @@ static void test_saver_settings(void) {
     CHECK(sv->starfield.density == 200 && sv->mystify.clear_screen && sv->beziers.curves == 1);
     CHECK(!sv->pipes.multiple && sv->pipes.joints == XD_PIPES_MIXED);
     CHECK(sv->text3d.surface == XD_TEXT3D_REFLECTION && sv->text3d.rotation == XD_TEXT3D_SPIN);
+    CHECK(sv->rain.speed == 5 && sv->rain.density == 5 && sv->rain.size == XD_RAIN_MEDIUM &&
+          sv->rain.characters == XD_RAIN_KATAKANA && sv->rain.color == XD_RAIN_GREEN &&
+          sv->rain.glow);
 
     xd_settings_parse(XD_STR("[ScreenSaver.Marquee]\nText=Gone fishing\nFont=DejaVu Serif\n"
                              "FontSize=36\nBold=true\nTextColor=255 255 0\n"
@@ -3107,7 +3111,10 @@ static void test_saver_settings(void) {
                              "[ScreenSaver.Flying]\nWarpSpeed=2\nDensity=120\n"
                              "[ScreenSaver.Pipes]\nPipes=multiple\nJoints=cycle\n"
                              "[screensaver.text3d]\nDisplay=time\nText=Hi\nRotation=wobble\n"
-                             "Speed=3\nSize=9\nSurface=solid\nColor=0 128 128\n"),
+                             "Speed=3\nSize=9\nSurface=solid\nColor=0 128 128\n"
+                             "[ScreenSaver.Rain]\nSpeed=9\nDensity=2\nSize=large\n"
+                             "Characters=binary\nColor=custom\nCustomColor=255 0 128\n"
+                             "Glow=false\n"),
                       &original);
     CHECK(strcmp(sv->marquee.text, "Gone fishing") == 0 &&
           strcmp(sv->marquee.font.family, "DejaVu Serif") == 0);
@@ -3126,6 +3133,9 @@ static void test_saver_settings(void) {
     CHECK(sv->text3d.rotation == XD_TEXT3D_WOBBLE && sv->text3d.speed == 3 &&
           sv->text3d.size == 9 && sv->text3d.surface == XD_TEXT3D_SOLID &&
           sv->text3d.color.g == 128);
+    CHECK(sv->rain.speed == 9 && sv->rain.density == 2 && sv->rain.size == XD_RAIN_LARGE &&
+          sv->rain.characters == XD_RAIN_BINARY && sv->rain.color == XD_RAIN_CUSTOM &&
+          sv->rain.custom_color.r == 255 && sv->rain.custom_color.b == 128 && !sv->rain.glow);
 
     /* Serialize -> parse round trip. */
     xd_strbuf text = {0};
@@ -3145,7 +3155,9 @@ static void test_saver_settings(void) {
                              "[ScreenSaver.Pipes]\nJoints=bogus\nPipes=many\n"
                              "[ScreenSaver.Text3D]\nRotation=tumble\nSize=-1\n"
                              "[ScreenSaver.Maze]\nSpeed=11\nPixelated=sometimes\n"
-                             "[ScreenSaver.FlowerBox]\nShape=sphere\nBloom=-2\n"),
+                             "[ScreenSaver.FlowerBox]\nShape=sphere\nBloom=-2\n"
+                             "[ScreenSaver.Rain]\nSpeed=11\nDensity=-1\nSize=huge\n"
+                             "Characters=runes\nColor=purple\nCustomColor=1 2 300\nGlow=bright\n"),
                       &original);
     xd_saver_settings def;
     xd_saver_settings_defaults(&def);
@@ -3176,9 +3188,12 @@ static bool same_pixels(cairo_surface_t *left, cairo_surface_t *right) {
 static void test_savers(void) {
     const xd_saver_info *list = nullptr;
     size_t count = xd_savers(&list);
-    CHECK(count == 10 && strcmp(list[0].name, "3D Flower Box") == 0 &&
+    CHECK(count == 11 && strcmp(list[0].name, "3D Flower Box") == 0 &&
           strcmp(list[1].id, "maze") == 0 && strcmp(list[3].id, "text3d") == 0);
     CHECK(xd_saver_find("pipes") != nullptr && xd_saver_find("nope") == nullptr);
+    /* Digital Rain sorts by its name, between Blank Screen and Flying Penguins. */
+    CHECK(strcmp(list[5].id, "blank") == 0 && strcmp(list[6].name, "Digital Rain") == 0 &&
+          strcmp(list[7].id, "flying") == 0 && xd_saver_has_settings("rain"));
     CHECK(!xd_saver_animated("blank") && !xd_saver_has_settings("blank"));
     CHECK(xd_saver_has_settings("marquee") && xd_saver_create("nope", nullptr, 10, 10, 1) == nullptr);
 
@@ -3204,8 +3219,8 @@ static void test_savers(void) {
         cairo_surface_destroy(later);
     }
     /* Where the random numbers show, another seed is another picture. */
-    static const char *const random_ones[] = {"pipes",     "maze",   "flowerbox", "beziers",
-                                              "mystify",   "starfield", "flying"};
+    static const char *const random_ones[] = {"pipes",     "maze",      "flowerbox", "beziers",
+                                              "mystify",   "starfield", "flying",    "rain"};
     for (size_t i = 0; i < XD_ARRAY_LEN(random_ones); i++) {
         cairo_surface_t *first = saver_frames(random_ones[i], &st.savers, 7, 20, 1.0 / 30);
         cairo_surface_t *second = saver_frames(random_ones[i], &st.savers, 8, 20, 1.0 / 30);
@@ -3254,6 +3269,86 @@ static void test_savers(void) {
         saver_settings.flower.shape = (xd_flower_shape)shape;
         saver_settings.flower.cycle = shape % 2 == 0;
         cairo_surface_destroy(saver_frames("flowerbox", &saver_settings, 4, 60, 0.1));
+    }
+}
+
+/* Digital Rain's columns, its choice of characters, and every option drawing. */
+static void test_rain(void) {
+    saver_rain_pace pace = saver_rain_get_pace(40, 5, 5);
+    CHECK(pace.rows == 40 && pace.speed > 5 && pace.density > 0.5 && pace.density < 0.7);
+    saver_rain_pace slow = saver_rain_get_pace(40, 0, 0);
+    saver_rain_pace fast = saver_rain_get_pace(40, XD_SAVER_SLIDER_MAX, XD_SAVER_SLIDER_MAX);
+    CHECK(slow.speed < pace.speed && pace.speed < fast.speed);
+    CHECK(slow.density < pace.density && pace.density < fast.density && fast.density < 1);
+
+    /* The same seed, the same columns; each falls, leaves, waits and comes back. */
+    uint64_t rng = 99;
+    uint64_t again = 99;
+    saver_rain_column columns[64];
+    saver_rain_column copies[64];
+    int falling = 0;
+    for (int i = 0; i < 64; i++) {
+        saver_rain_column_init(&columns[i], &pace, &rng);
+        saver_rain_column_init(&copies[i], &pace, &again);
+        falling += columns[i].wait <= 0;
+        CHECK(columns[i].trail >= 3 && columns[i].trail <= 40 && columns[i].speed > 0);
+    }
+    CHECK(memcmp(columns, copies, sizeof(columns)) == 0);
+    CHECK(falling > 16 && falling < 60); /* some falling from the start, not all */
+    saver_rain_column *column = &columns[0];
+    for (int i = 0; i < 64 && column->wait > 0; i++)
+        column = &columns[i];
+    CHECK(column->wait <= 0);
+    bool waited = false;
+    bool came_back = false;
+    for (int step = 0; step < 4000 && !came_back; step++) {
+        saver_rain_column_advance(column, &pace, 0.05, &rng);
+        if (column->wait > 0) {
+            waited = true;
+            CHECK(saver_rain_column_get_brightness(column, 0) == 0);
+        } else if (waited) {
+            came_back = column->head < 0.5;
+        }
+    }
+    CHECK(waited && came_back);
+    /* The trail fades from the head up; nothing below the head. */
+    saver_rain_column fixed = {.head = 20.5, .speed = 10, .trail = 10, .wait = 0};
+    double near = saver_rain_column_get_brightness(&fixed, 19);
+    double far = saver_rain_column_get_brightness(&fixed, 12);
+    CHECK(saver_rain_column_get_brightness(&fixed, 20) == 1.0);
+    CHECK(near > far && far > 0 && saver_rain_column_get_brightness(&fixed, 10) == 0);
+    CHECK(saver_rain_column_get_brightness(&fixed, 21) == 0);
+
+    /* Without katakana: letters and digits, not boxes. */
+    CHECK(saver_rain_pick_characters(XD_RAIN_KATAKANA, false) == XD_RAIN_LETTERS);
+    CHECK(saver_rain_pick_characters(XD_RAIN_KATAKANA, true) == XD_RAIN_KATAKANA);
+    CHECK(saver_rain_pick_characters(XD_RAIN_BINARY, false) == XD_RAIN_BINARY);
+    g_setenv("XD_RAIN_NO_KATAKANA", "1", TRUE);
+    CHECK(!saver_rain_has_katakana());
+    xd_settings st;
+    xd_settings_defaults(&st);
+    cairo_surface_t *fallback = saver_frames("rain", &st.savers, 5, 20, 1.0 / 30);
+    g_unsetenv("XD_RAIN_NO_KATAKANA");
+    cairo_surface_t *katakana = saver_frames("rain", &st.savers, 5, 20, 1.0 / 30);
+    /* (Another picture, where a katakana font is installed.) */
+    CHECK(!saver_rain_has_katakana() || !same_pixels(fallback, katakana));
+    cairo_surface_destroy(fallback);
+    cairo_surface_destroy(katakana);
+
+    /* Every size, set of characters and colour draws, glowing or not. */
+    xd_saver_settings saver_settings = st.savers;
+    for (int i = 0; i < XD_RAIN_COLOR_COUNT; i++) {
+        saver_settings.rain.color = (xd_rain_color)i;
+        saver_settings.rain.size = (xd_rain_glyph_size)(i % XD_RAIN_SIZE_COUNT);
+        saver_settings.rain.characters = (xd_rain_characters)(i % XD_RAIN_CHARACTERS_COUNT);
+        saver_settings.rain.glow = i % 2 == 0;
+        saver_settings.rain.speed = i * 2;
+        saver_settings.rain.density = XD_SAVER_SLIDER_MAX - i * 2;
+        cairo_surface_t *first = saver_frames("rain", &saver_settings, 6, 30, 0.1);
+        cairo_surface_t *second = saver_frames("rain", &saver_settings, 6, 30, 0.1);
+        CHECK(same_pixels(first, second));
+        cairo_surface_destroy(first);
+        cairo_surface_destroy(second);
     }
 }
 
@@ -12111,6 +12206,7 @@ int main(void) {
     test_glass_color();
     test_saver_settings();
     test_savers();
+    test_rain();
     test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();

@@ -6565,8 +6565,8 @@ def screen_saver_settings(s):
     s.check(dialog is not None, f"Display Properties is up at {dialog}")
     # Focus starts on the tabs; the saver list is next. (None) is chosen.
     s.inject("key", "Tab", "sleep", 200)
-    savers = ["3D Flower Box", "3D Maze", "3D Pipes", "3D Text", "Beziers", "Blank Screen", "Flying Penguins",
-              "Marquee Display", "Mystify Your Mind", "Starfield Simulation"]
+    savers = ["3D Flower Box", "3D Maze", "3D Pipes", "3D Text", "Beziers", "Blank Screen", "Digital Rain",
+              "Flying Penguins", "Marquee Display", "Mystify Your Mind", "Starfield Simulation"]
     for name in savers:
         label = name.replace(" ", "-").lower()
         s.inject("key", "Down", "sleep", 600)
@@ -6632,6 +6632,59 @@ def screen_saver_settings(s):
     s.wait(lambda: s.ini().get("ScreenSaver.FlowerBox", "Shape", fallback="") == "tetrahedron",
            "desktop.ini to have the tetrahedron")
     s.log("ok: 3D Flower Box Setup saved the shape")
+
+
+def rain_shares(shot):
+    """The shares of sampled pixels that are black, and that are green
+    (green well above red and blue)."""
+    total = black = green = 0
+    for y in range(0, HEIGHT, 4):
+        for x in range(0, WIDTH, 4):
+            r, g, b = shot.pixel(x, y)
+            total += 1
+            black += max(r, g, b) < 24
+            green += g > 60 and g > r + 30 and g > b + 20
+    return black / total, green / total
+
+
+@scenario()
+def digital_rain(s):
+    """Digital Rain full screen (xd-lock --saver rain --no-lock): mostly
+    black, green glyphs falling, a different picture a moment later, gone
+    when the mouse moves. Its Setup dialog, from Display Properties, saves
+    a faster speed to desktop.ini on OK."""
+    desk = s.settle("desktop")
+    s.launch("xd-lock", "--saver", "rain", "--no-lock")
+    s.wait(lambda: rain_shares(s.shot("saver"))[0] > 0.5, "the saver over the desktop")
+    time.sleep(1.0)
+    first = s.shot("rain")
+    black, green = rain_shares(first)
+    s.check(black > 0.6 and green > 0.01, f"mostly black ({black:.2f}), green glyphs ({green:.3f})")
+    time.sleep(0.5)
+    later = s.shot("rain-later")
+    s.check(later.differs(first, (0, 0, WIDTH, HEIGHT), step=2) > 0.005, "the rain moves on")
+    s.inject("move", 100, 100, "move", 400, 400)
+    s.wait(lambda: s.shot("back").differs(desk, (0, 0, WIDTH, HEIGHT - 30)) < 0.02,
+           "the desktop back after the mouse moved")  # fmt: skip
+    s.log("ok: moving the mouse ended the saver")
+
+    # Display Properties: (None), then Digital Rain seven down; Settings...
+    # is the next control, and Right on the Speed slider makes it faster.
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    s.settle("screen-saver-tab")
+    s.inject("key", "Tab", "sleep", 200)
+    for _ in range(7):
+        s.inject("key", "Down", "sleep", 150)
+    s.inject("sleep", 300, "key", "Tab", "sleep", 200, "key", "space")
+    s.wait_window(title="Digital Rain Setup", state="activated")
+    s.settle("rain-setup")
+    s.inject("key", "Right", "sleep", 100, "key", "Right", "sleep", 100, "key", "Right",
+             "sleep", 200, "key", "Return")
+    s.wait_window(title="Digital Rain Setup", gone=True)
+    s.wait(lambda: s.ini().get("ScreenSaver.Rain", "Speed", fallback="") == "8",
+           "desktop.ini to have Digital Rain's speed")
+    s.log("ok: Digital Rain Setup saved its speed")
 
 
 # ---- several monitors -------------------------------------------------------------
