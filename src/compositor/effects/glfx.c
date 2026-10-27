@@ -1,0 +1,835 @@
+/* SPDX-License-Identifier: MIT
+ * The OpenGL effect path (glfx.h): windows captured into textures and
+ * drawn by effects into buffers the scene graph shows in their place.
+ */
+#include "glfx.h"
+
+#include <drm_fourcc.h>
+#include <math.h>
+#include <stdlib.h>
+#include <wlr/render/drm_syncobj.h>
+#include <wlr/render/pass.h>
+#include <wlr/render/swapchain.h>
+#include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+#include <wlr/util/log.h>
+
+#include "../../core/alloc.h"
+
+/* Device px: no texture or buffer of ours is bigger (GLES2 guarantees far
+ * less, but every renderer SceneFX runs on has this). */
+static constexpr int MAX_PX = 8192;
+/* Buffers are a whole number of these px across and down, the part used
+ * drawn from the top left: llvmpipe, drawing into or reading a buffer from
+ * wlroots' udmabuf allocator (no padding), runs past the end of one that
+ * isn't, and crashes. The target grows in bigger steps, so a wobbling
+ * window's changing bounds don't mean a new buffer each frame. */
+static constexpr int CAPTURE_STEP = 64;
+static constexpr int TARGET_STEP = 256;
+/* Frames of two outputs closer than this are one frame for the effects. */
+static constexpr double SAME_FRAME_SECONDS = 0.002;
+/* XD_EFFECTS_TIMING: frame times logged over this long. */
+static constexpr double TIMING_SECONDS = 2.0;
+
+typedef struct xd_glfx {
+    xd_server *server;
+    struct wl_list windows; /* xd_window_effect.link */
+    xd_glfx_shader shader_2d, shader_external;
+    bool shaders_tried;
+    double last_frame;
+    /* XD_EFFECTS_TIMING */
+    bool timing;
+    double timing_start, last_done, frame_start;
+    double draw_total, interval_total, interval_max, frame_total;
+    int frames;
+} xd_glfx;
+
+/* Rounded down or up to whole units, clamped to what our buffers hold. */
+static int floor_units(double value) {
+    double floored = floor(value);
+    return floored < -MAX_PX ? -MAX_PX : floored > MAX_PX ? MAX_PX : (int)floored;
+}
+
+static int ceil_units(double value) {
+    double ceiled = ceil(value);
+    return ceiled < -MAX_PX ? -MAX_PX : ceiled > MAX_PX ? MAX_PX : (int)ceiled;
+}
+
+static double now_seconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+}
+
+/* ---- shaders -------------------------------------------------------------------- */
+
+static const char default_vertex[] = "uniform mat4 projection;\n"
+                                     "uniform vec2 texcoord_scale;\n"
+                                     "attribute vec2 position;\n"
+                                     "attribute vec2 texcoord;\n"
+                                     "varying vec2 v_texcoord;\n"
+                                     "void main() {\n"
+                                     "    gl_Position = projection * vec4(position, 0.0, 1.0);\n"
+                                     "    v_texcoord = texcoord * texcoord_scale;\n"
+                                     "}\n";
+
+/* Textures are premultiplied: fading scales every channel. */
+static const char default_fragment[] = "precision mediump float;\n"
+                                       "uniform XD_SAMPLER texture0;\n"
+                                       "uniform float alpha;\n"
+                                       "varying vec2 v_texcoord;\n"
+                                       "void main() {\n"
+                                       "    gl_FragColor = texture2D(texture0, v_texcoord) * alpha;\n"
+                                       "}\n";
+
+static GLuint compile_stage(GLenum stage, const char *prelude, const char *source) {
+    GLuint shader = glCreateShader(stage);
+    const char *parts[2] = {prelude, source};
+    glShaderSource(shader, 2, parts, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        char log[1024] = "";
+        glGetShaderInfoLog(shader, (GLsizei)sizeof(log), nullptr, log);
+        wlr_log(WLR_ERROR, "effects: cannot compile a %s shader: %s",
+                stage == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+bool xd_glfx_init_shader(xd_glfx_shader *shader, const char *vertex, const char *fragment,
+                         GLenum target) {
+    *shader = (xd_glfx_shader){0};
+    const char *prelude = target == GL_TEXTURE_EXTERNAL_OES
+                              ? "#extension GL_OES_EGL_image_external : require\n"
+                                "#define XD_SAMPLER samplerExternalOES\n"
+                              : "#define XD_SAMPLER sampler2D\n";
+    GLuint vertex_shader = compile_stage(GL_VERTEX_SHADER, "", vertex);
+    GLuint fragment_shader = compile_stage(GL_FRAGMENT_SHADER, prelude, fragment);
+    if (vertex_shader == 0 || fragment_shader == 0) {
+        glDeleteShader(vertex_shader);
+        glDeleteShader(fragment_shader);
+        return false;
+    }
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+    glDetachShader(program, vertex_shader);
+    glDetachShader(program, fragment_shader);
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+    GLint ok = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        char log[1024] = "";
+        glGetProgramInfoLog(program, (GLsizei)sizeof(log), nullptr, log);
+        wlr_log(WLR_ERROR, "effects: cannot link a shader: %s", log);
+        glDeleteProgram(program);
+        return false;
+    }
+    shader->program = program;
+    shader->position = glGetAttribLocation(program, "position");
+    shader->texcoord = glGetAttribLocation(program, "texcoord");
+    shader->projection = glGetUniformLocation(program, "projection");
+    shader->texcoord_scale = glGetUniformLocation(program, "texcoord_scale");
+    shader->texture = glGetUniformLocation(program, "texture0");
+    shader->alpha = glGetUniformLocation(program, "alpha");
+    return true;
+}
+
+void xd_glfx_destroy_shader(xd_glfx_shader *shader) {
+    if (shader->program != 0)
+        glDeleteProgram(shader->program);
+    *shader = (xd_glfx_shader){0};
+}
+
+/* ---- meshes --------------------------------------------------------------------- */
+
+bool xd_glfx_init_mesh(xd_glfx_mesh *mesh, int columns, int rows) {
+    *mesh = (xd_glfx_mesh){0};
+    size_t vertices = 0, cells = 0, indices = 0;
+    if (columns < 1 || rows < 1 ||
+        ckd_mul(&vertices, (size_t)columns + 1, (size_t)rows + 1) || vertices > UINT16_MAX ||
+        ckd_mul(&cells, (size_t)columns, (size_t)rows) || ckd_mul(&indices, cells, 6))
+        return false;
+    mesh->columns = columns;
+    mesh->rows = rows;
+    mesh->vertex_count = vertices;
+    mesh->index_count = indices;
+    mesh->positions = XD_NEW_ARRAY(float, vertices * 2);
+    mesh->texcoords = XD_NEW_ARRAY(float, vertices * 2);
+    mesh->indices = XD_NEW_ARRAY(uint16_t, indices);
+    for (int row = 0; row <= rows; row++) {
+        for (int column = 0; column <= columns; column++) {
+            size_t vertex = xd_glfx_get_mesh_vertex(mesh, column, row);
+            mesh->texcoords[vertex * 2] = (float)column / (float)columns;
+            mesh->texcoords[vertex * 2 + 1] = (float)row / (float)rows;
+        }
+    }
+    size_t next = 0;
+    for (int row = 0; row < rows; row++) {
+        for (int column = 0; column < columns; column++) {
+            uint16_t top_left = (uint16_t)xd_glfx_get_mesh_vertex(mesh, column, row);
+            uint16_t top_right = (uint16_t)xd_glfx_get_mesh_vertex(mesh, column + 1, row);
+            uint16_t bottom_left = (uint16_t)xd_glfx_get_mesh_vertex(mesh, column, row + 1);
+            uint16_t bottom_right = (uint16_t)xd_glfx_get_mesh_vertex(mesh, column + 1, row + 1);
+            const uint16_t cell[6] = {top_left,  top_right,    bottom_left,
+                                      top_right, bottom_right, bottom_left};
+            memcpy(&mesh->indices[next], cell, sizeof(cell));
+            next += 6;
+        }
+    }
+    return true;
+}
+
+void xd_glfx_free_mesh(xd_glfx_mesh *mesh) {
+    xd_free(mesh->positions);
+    xd_free(mesh->texcoords);
+    xd_free(mesh->indices);
+    *mesh = (xd_glfx_mesh){0};
+}
+
+void xd_glfx_set_mesh_rect(xd_glfx_mesh *mesh, struct wlr_fbox box) {
+    for (size_t vertex = 0; vertex < mesh->vertex_count; vertex++) {
+        double u = (double)mesh->texcoords[vertex * 2];
+        double v = (double)mesh->texcoords[vertex * 2 + 1];
+        mesh->positions[vertex * 2] = (float)(box.x + box.width * u);
+        mesh->positions[vertex * 2 + 1] = (float)(box.y + box.height * v);
+    }
+}
+
+struct wlr_fbox xd_glfx_get_mesh_bounds(const xd_glfx_mesh *mesh) {
+    if (mesh->vertex_count == 0)
+        return (struct wlr_fbox){0};
+    double min_x = HUGE_VAL, min_y = HUGE_VAL, max_x = -HUGE_VAL, max_y = -HUGE_VAL;
+    for (size_t vertex = 0; vertex < mesh->vertex_count; vertex++) {
+        double x = (double)mesh->positions[vertex * 2];
+        double y = (double)mesh->positions[vertex * 2 + 1];
+        min_x = XD_MIN(min_x, x);
+        min_y = XD_MIN(min_y, y);
+        max_x = XD_MAX(max_x, x);
+        max_y = XD_MAX(max_y, y);
+    }
+    return (struct wlr_fbox){min_x, min_y, max_x - min_x, max_y - min_y};
+}
+
+/* ---- matrices ------------------------------------------------------------------- */
+
+void xd_glfx_set_ortho(float out[16], struct wlr_box box) {
+    /* The buffer's first row is its top (as wlroots draws buffers), and a
+     * framebuffer's first row is GL's y = -1: so top maps to -1. */
+    float width = (float)XD_MAX(box.width, 1), height = (float)XD_MAX(box.height, 1);
+    const float ortho[16] = {
+        2.0f / width, 0, 0, 0,
+        0, 2.0f / height, 0, 0,
+        0, 0, 1, 0,
+        -1.0f - 2.0f * (float)box.x / width, -1.0f - 2.0f * (float)box.y / height, 0, 1,
+    };
+    memcpy(out, ortho, sizeof(ortho));
+}
+
+void xd_glfx_multiply(float out[16], const float left[16], const float right[16]) {
+    float product[16];
+    for (int column = 0; column < 4; column++) {
+        for (int row = 0; row < 4; row++) {
+            float sum = 0;
+            for (int k = 0; k < 4; k++)
+                sum += left[k * 4 + row] * right[column * 4 + k];
+            product[column * 4 + row] = sum;
+        }
+    }
+    memcpy(out, product, sizeof(product));
+}
+
+/* ---- drawing -------------------------------------------------------------------- */
+
+/* The built-in shader for the target, compiled the first time (a pass
+ * is running: the context is current). */
+static const xd_glfx_shader *default_shader(xd_glfx *glfx, GLenum target) {
+    if (!glfx->shaders_tried) {
+        glfx->shaders_tried = true;
+        if (!xd_glfx_init_shader(&glfx->shader_2d, default_vertex, default_fragment,
+                                 GL_TEXTURE_2D))
+            wlr_log(WLR_ERROR, "effects: no shader for textures");
+        /* Not every driver has external textures; none is needed then. */
+        if (!xd_glfx_init_shader(&glfx->shader_external, default_vertex, default_fragment,
+                                 GL_TEXTURE_EXTERNAL_OES))
+            wlr_log(WLR_INFO, "effects: no shader for external textures");
+    }
+    const xd_glfx_shader *shader =
+        target == GL_TEXTURE_EXTERNAL_OES ? &glfx->shader_external : &glfx->shader_2d;
+    return shader->program != 0 ? shader : nullptr;
+}
+
+void xd_glfx_draw_mesh_with(const xd_glfx_draw *draw, const xd_glfx_mesh *mesh,
+                            const xd_glfx_texture *texture, const xd_glfx_shader *shader,
+                            float alpha) {
+    if (shader == nullptr || shader->program == 0 || mesh->index_count == 0)
+        return;
+    glUseProgram(shader->program);
+    if (shader->projection >= 0)
+        glUniformMatrix4fv(shader->projection, 1, GL_FALSE, draw->projection);
+    if (shader->alpha >= 0)
+        glUniform1f(shader->alpha, alpha);
+    if (shader->texcoord_scale >= 0)
+        glUniform2f(shader->texcoord_scale, texture->u_scale, texture->v_scale);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(texture->target, texture->id);
+    glTexParameteri(texture->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(texture->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(texture->target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(texture->target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (shader->texture >= 0)
+        glUniform1i(shader->texture, 0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    if (shader->position >= 0) {
+        glEnableVertexAttribArray((GLuint)shader->position);
+        glVertexAttribPointer((GLuint)shader->position, 2, GL_FLOAT, GL_FALSE, 0,
+                              mesh->positions);
+    }
+    if (shader->texcoord >= 0) {
+        glEnableVertexAttribArray((GLuint)shader->texcoord);
+        glVertexAttribPointer((GLuint)shader->texcoord, 2, GL_FLOAT, GL_FALSE, 0,
+                              mesh->texcoords);
+    }
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glDrawElements(GL_TRIANGLES, (GLsizei)mesh->index_count, GL_UNSIGNED_SHORT, mesh->indices);
+    if (shader->position >= 0)
+        glDisableVertexAttribArray((GLuint)shader->position);
+    if (shader->texcoord >= 0)
+        glDisableVertexAttribArray((GLuint)shader->texcoord);
+    glBindTexture(texture->target, 0);
+    glUseProgram(0);
+}
+
+void xd_glfx_draw_mesh(const xd_glfx_draw *draw, const xd_glfx_mesh *mesh,
+                       const xd_glfx_texture *texture, float alpha) {
+    xd_glfx_draw_mesh_with(draw, mesh, texture, default_shader(draw->glfx, texture->target),
+                           alpha);
+}
+
+/* ---- buffers -------------------------------------------------------------------- */
+
+/* Our buffers are drawn into and sampled, never scanned out: ARGB in
+ * whatever layout the allocator picks for it (an implicit modifier), as
+ * capture.c's. */
+static struct wlr_swapchain *create_chain(xd_server *server, int width, int height) {
+    uint64_t modifiers[] = {DRM_FORMAT_MOD_INVALID};
+    struct wlr_drm_format format = {
+        .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = modifiers};
+    return wlr_swapchain_create(server->allocator, width, height, &format);
+}
+
+/* A swapchain of buffers at least width x height, whole steps across and
+ * down, made anew when it's too small or far too big. */
+static bool ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width, int height,
+                         int step) {
+    struct wlr_swapchain *current = *chain;
+    if (current != nullptr) {
+        if (current->width >= width && current->height >= height &&
+            current->width <= 2 * width + step && current->height <= 2 * height + step)
+            return true;
+        wlr_swapchain_destroy(current);
+        *chain = nullptr;
+    }
+    width = XD_MIN((width + step - 1) / step * step, MAX_PX);
+    height = XD_MIN((height + step - 1) / step * step, MAX_PX);
+    *chain = create_chain(server, width, height);
+    if (*chain == nullptr)
+        wlr_log(WLR_ERROR, "effects: cannot allocate a %dx%d buffer", width, height);
+    return *chain != nullptr;
+}
+
+/* ---- capturing a window ------------------------------------------------------------ */
+
+typedef struct capture_entry {
+    struct wlr_scene_buffer *buffer;
+    /* Its pixels: the scene graph lets go of a buffer that isn't a
+     * surface's once it has made a texture of it, so the frame's are the
+     * ones frame.c keeps for us. */
+    struct wlr_buffer *pixels;
+    int x, y; /* layout */
+} capture_entry;
+
+typedef struct capture_list {
+    struct wlr_scene_buffer *skip; /* the effect's own node */
+    xd_view *view;
+    capture_entry *entries;
+    size_t count, capacity;
+} capture_list;
+
+static void collect_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+    capture_list *list = data;
+    struct wlr_buffer *pixels =
+        buffer == list->view->frame ? list->view->kept_frame : buffer->buffer;
+    if (buffer == list->skip || pixels == nullptr)
+        return;
+    if (list->count == list->capacity) {
+        size_t capacity = XD_MAX(list->capacity * 2, (size_t)8);
+        capture_entry *grown = XD_NEW_ARRAY(capture_entry, capacity);
+        if (list->count > 0)
+            memcpy(grown, list->entries, list->count * sizeof(*grown));
+        xd_free(list->entries);
+        list->entries = grown;
+        list->capacity = capacity;
+    }
+    list->entries[list->count++] = (capture_entry){buffer, pixels, sx, sy};
+}
+
+/* A scene buffer's size in layout units, as the scene graph draws it. */
+static void buffer_size(const capture_entry *entry, int *width, int *height) {
+    const struct wlr_scene_buffer *buffer = entry->buffer;
+    *width = buffer->dst_width > 0 ? buffer->dst_width : entry->pixels->width;
+    *height = buffer->dst_height > 0 ? buffer->dst_height : entry->pixels->height;
+    if (buffer->dst_width <= 0 && (buffer->transform & WL_OUTPUT_TRANSFORM_90)) {
+        int swap = *width;
+        *width = *height;
+        *height = swap;
+    }
+}
+
+/* The texture for a buffer that isn't a surface's (our frame): kept while
+ * the frame doesn't change. */
+static struct wlr_texture *frame_texture(xd_window_effect *effect, struct wlr_buffer *buffer) {
+    if (effect->frame_buffer == buffer && effect->frame_texture != nullptr)
+        return effect->frame_texture;
+    if (effect->frame_texture != nullptr)
+        wlr_texture_destroy(effect->frame_texture);
+    if (effect->frame_buffer != nullptr)
+        wlr_buffer_unlock(effect->frame_buffer);
+    /* Locked, so its address can't come back as another buffer's. */
+    effect->frame_buffer = wlr_buffer_lock(buffer);
+    effect->frame_texture = wlr_texture_from_buffer(effect->view->server->renderer, buffer);
+    return effect->frame_texture;
+}
+
+enum { SYNCED_MAX = 16 };
+
+/* Draws the window's buffers (frame, surfaces, subsurfaces, popups) into
+ * effect->texture. */
+static bool capture_window(xd_window_effect *effect) {
+    xd_view *view = effect->view;
+    xd_server *server = view->server;
+    capture_list list = {.skip = effect->node, .view = view};
+    wlr_scene_node_for_each_buffer(&view->tree->node, collect_buffer, &list);
+    if (list.count == 0) {
+        xd_free(list.entries);
+        return false;
+    }
+    int left = INT32_MAX, top = INT32_MAX, right = INT32_MIN, bottom = INT32_MIN;
+    for (size_t i = 0; i < list.count; i++) {
+        int width = 0, height = 0;
+        buffer_size(&list.entries[i], &width, &height);
+        left = XD_MIN(left, list.entries[i].x);
+        top = XD_MIN(top, list.entries[i].y);
+        right = XD_MAX(right, list.entries[i].x + width);
+        bottom = XD_MAX(bottom, list.entries[i].y + height);
+    }
+    double scale = xd_view_scale(view);
+    int width_px = XD_CLAMP(ceil_units((right - left) * scale), 1, MAX_PX);
+    int height_px = XD_CLAMP(ceil_units((bottom - top) * scale), 1, MAX_PX);
+    if (!ensure_chain(server, &effect->capture_chain, width_px, height_px, CAPTURE_STEP)) {
+        xd_free(list.entries);
+        return false;
+    }
+    struct wlr_buffer *target = wlr_swapchain_acquire(effect->capture_chain);
+    if (target == nullptr) {
+        xd_free(list.entries);
+        return false;
+    }
+    /* With explicit sync, the pass signals a point of capture.c's
+     * timeline once done, which releases the programs' buffers it read. */
+    struct wlr_buffer_pass_options options = {0};
+    if (server->syncobj != nullptr && server->capture_timeline == nullptr)
+        server->capture_timeline =
+            wlr_drm_syncobj_timeline_create(wlr_renderer_get_drm_fd(server->renderer));
+    if (server->capture_timeline != nullptr) {
+        options.signal_timeline = server->capture_timeline;
+        options.signal_point = ++server->capture_point;
+    }
+    struct wlr_render_pass *pass =
+        wlr_renderer_begin_buffer_pass(server->renderer, target, &options);
+    if (pass == nullptr) {
+        wlr_buffer_unlock(target);
+        xd_free(list.entries);
+        return false;
+    }
+    wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+                                       .box = {0, 0, target->width, target->height},
+                                       .color = {0, 0, 0, 0},
+                                       .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+                                   });
+    struct wlr_linux_drm_syncobj_surface_v1_state *synced[SYNCED_MAX];
+    size_t synced_count = 0;
+    for (size_t i = 0; i < list.count; i++) {
+        struct wlr_scene_buffer *buffer = list.entries[i].buffer;
+        struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
+        struct wlr_texture *texture = nullptr;
+        struct wlr_linux_drm_syncobj_surface_v1_state *sync = nullptr;
+        if (scene_surface != nullptr) {
+            texture = wlr_surface_get_texture(scene_surface->surface);
+            /* The program's GPU may still be drawing it: wait for it, as
+             * the scene graph does. */
+            sync = wlr_linux_drm_syncobj_v1_get_surface_state(scene_surface->surface);
+            if (sync != nullptr && synced_count == SYNCED_MAX)
+                continue;
+            if (sync != nullptr)
+                synced[synced_count++] = sync;
+        } else {
+            texture = frame_texture(effect, list.entries[i].pixels);
+        }
+        if (texture == nullptr)
+            continue;
+        int width = 0, height = 0;
+        buffer_size(&list.entries[i], &width, &height);
+        int x = list.entries[i].x - left, y = list.entries[i].y - top;
+        struct wlr_box box = {
+            .x = (int)(x * scale),
+            .y = (int)(y * scale),
+            .width = (int)((x + width) * scale) - (int)(x * scale),
+            .height = (int)((y + height) * scale) - (int)(y * scale),
+        };
+        if (box.width <= 0 || box.height <= 0)
+            continue;
+        /* Never the buffer's opacity: we keep the window's at 0. */
+        wlr_render_pass_add_texture(
+            pass, &(struct wlr_render_texture_options){
+                      .texture = texture,
+                      .src_box = buffer->src_box,
+                      .dst_box = box,
+                      .transform = buffer->transform,
+                      .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+                      .wait_timeline = sync != nullptr ? sync->acquire_timeline : nullptr,
+                      .wait_point = sync != nullptr ? sync->acquire_point : 0,
+                  });
+    }
+    xd_free(list.entries);
+    bool ok = wlr_render_pass_submit(pass);
+    for (size_t i = 0; ok && options.signal_timeline != nullptr && i < synced_count; i++)
+        wlr_linux_drm_syncobj_v1_state_add_release_point(synced[i], options.signal_timeline,
+                                                         options.signal_point, server->loop);
+    struct wlr_texture *texture = ok ? wlr_texture_from_buffer(server->renderer, target) : nullptr;
+    if (texture == nullptr) {
+        wlr_buffer_unlock(target);
+        return false;
+    }
+    struct fx_texture_attribs attribs = {0};
+    fx_texture_get_attribs(texture, &attribs);
+    effect->capture_texture = texture;
+    effect->capture_buffer = target; /* locked till the effect has drawn it */
+    effect->texture = (xd_glfx_texture){
+        .id = attribs.tex,
+        .target = attribs.target,
+        .width = width_px,
+        .height = height_px,
+        .u_scale = (float)width_px / (float)target->width,
+        .v_scale = (float)height_px / (float)target->height,
+        .box = {left, top, right - left, bottom - top},
+    };
+    return true;
+}
+
+static void release_capture(xd_window_effect *effect) {
+    if (effect->capture_texture != nullptr)
+        wlr_texture_destroy(effect->capture_texture);
+    if (effect->capture_buffer != nullptr)
+        wlr_buffer_unlock(effect->capture_buffer);
+    effect->capture_texture = nullptr;
+    effect->capture_buffer = nullptr;
+    effect->texture.id = 0;
+}
+
+/* ---- hiding the window itself ------------------------------------------------------ */
+
+typedef struct opacity_change {
+    struct wlr_scene_buffer *skip;
+    float opacity;
+} opacity_change;
+
+static void set_opacity(struct wlr_scene_buffer *buffer, [[maybe_unused]] int sx,
+                        [[maybe_unused]] int sy, void *data) {
+    const opacity_change *change = data;
+    if (buffer != change->skip)
+        wlr_scene_buffer_set_opacity(buffer, change->opacity);
+}
+
+/* Each frame: subsurfaces and popups that appeared since are hidden too. */
+static void hide_window(xd_window_effect *effect) {
+    xd_view *view = effect->view;
+    opacity_change change = {effect->node, 0.0f};
+    wlr_scene_node_for_each_buffer(&view->tree->node, set_opacity, &change);
+    if (view->blur != nullptr)
+        wlr_scene_node_set_enabled(&view->blur->node, false);
+    if (view->shadow != nullptr)
+        wlr_scene_node_set_enabled(&view->shadow->node, false);
+}
+
+static void show_window(xd_window_effect *effect) {
+    xd_view *view = effect->view;
+    opacity_change change = {effect->node, 1.0f};
+    wlr_scene_node_for_each_buffer(&view->tree->node, set_opacity, &change);
+    /* Its glass and shadow, as frame.c has them. */
+    xd_frame_render(view, true);
+}
+
+/* ---- window effects ------------------------------------------------------------- */
+
+static bool never_accepts_input([[maybe_unused]] struct wlr_scene_buffer *buffer,
+                                [[maybe_unused]] double *sx, [[maybe_unused]] double *sy) {
+    return false;
+}
+
+static void schedule_frames(xd_server *server) {
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (out->wlr_output->enabled)
+            wlr_output_schedule_frame(out->wlr_output);
+    }
+}
+
+xd_window_effect *xd_glfx_find_window(xd_view *view, const xd_window_effect_impl *impl) {
+    xd_glfx *glfx = view->server->glfx;
+    if (glfx == nullptr)
+        return nullptr;
+    xd_window_effect *effect;
+    wl_list_for_each(effect, &glfx->windows, link) {
+        if (effect->view == view && (impl == nullptr || effect->impl == impl))
+            return effect;
+    }
+    return nullptr;
+}
+
+xd_window_effect *xd_glfx_begin_window(xd_view *view, const xd_window_effect_impl *impl,
+                                       void *data) {
+    xd_glfx *glfx = view->server->glfx;
+    if (glfx == nullptr || !view->mapped)
+        return nullptr;
+    xd_window_effect *other = xd_glfx_find_window(view, nullptr);
+    if (other != nullptr)
+        xd_glfx_end_window(other);
+    xd_window_effect *effect = XD_NEW(xd_window_effect);
+    effect->impl = impl;
+    effect->view = view;
+    effect->data = data;
+    xd_frame_keep_pixels(view, true);
+    /* Empty until its first frame: the window shows as itself till then. */
+    effect->node = wlr_scene_buffer_create(view->tree, nullptr);
+    effect->node->point_accepts_input = never_accepts_input;
+    wl_list_insert(&glfx->windows, &effect->link);
+    schedule_frames(view->server);
+    return effect;
+}
+
+void xd_glfx_end_window(xd_window_effect *effect) {
+    wl_list_remove(&effect->link);
+    if (effect->impl->done != nullptr)
+        effect->impl->done(effect);
+    struct wlr_scene_buffer *node = effect->node;
+    effect->node = nullptr;
+    wlr_scene_node_destroy(&node->node);
+    if (effect->view->mapped)
+        show_window(effect);
+    release_capture(effect);
+    if (effect->frame_texture != nullptr)
+        wlr_texture_destroy(effect->frame_texture);
+    if (effect->frame_buffer != nullptr)
+        wlr_buffer_unlock(effect->frame_buffer);
+    xd_frame_keep_pixels(effect->view, false);
+    wlr_swapchain_destroy(effect->capture_chain);
+    wlr_swapchain_destroy(effect->target_chain);
+    xd_free(effect);
+}
+
+bool xd_glfx_has_window_effects(const xd_server *server) {
+    return server->glfx != nullptr && !wl_list_empty(&server->glfx->windows);
+}
+
+void xd_glfx_forget_view(xd_view *view) {
+    xd_window_effect *effect = nullptr;
+    while ((effect = xd_glfx_find_window(view, nullptr)) != nullptr)
+        xd_glfx_end_window(effect);
+}
+
+/* One frame of one effect (it may end). */
+static void draw_window_effect(xd_glfx *glfx, xd_window_effect *effect, double now) {
+    xd_server *server = glfx->server;
+    xd_view *view = effect->view;
+    if (!view->mapped || !capture_window(effect)) {
+        xd_glfx_end_window(effect);
+        return;
+    }
+    double seconds = 0;
+    if (!effect->begun) {
+        effect->begun = true;
+        if (effect->impl->begin != nullptr)
+            effect->impl->begin(effect);
+    } else {
+        seconds = XD_MAX(now - effect->last_time, 0.0);
+    }
+    effect->last_time = now;
+    if (!effect->impl->update(effect, seconds)) {
+        xd_glfx_end_window(effect);
+        return;
+    }
+    struct wlr_fbox fbounds = effect->impl->get_bounds(effect);
+    double scale = xd_view_scale(view);
+    struct wlr_box bounds = {
+        .x = floor_units(fbounds.x),
+        .y = floor_units(fbounds.y),
+    };
+    bounds.width = XD_MAX(ceil_units(fbounds.x + fbounds.width) - bounds.x, 1);
+    bounds.height = XD_MAX(ceil_units(fbounds.y + fbounds.height) - bounds.y, 1);
+    int width_px = XD_CLAMP(ceil_units(bounds.width * scale), 1, MAX_PX);
+    int height_px = XD_CLAMP(ceil_units(bounds.height * scale), 1, MAX_PX);
+    if (!ensure_chain(server, &effect->target_chain, width_px, height_px, TARGET_STEP)) {
+        xd_glfx_end_window(effect);
+        return;
+    }
+    struct wlr_buffer *target = wlr_swapchain_acquire(effect->target_chain);
+    struct wlr_render_pass *pass =
+        target != nullptr ? wlr_renderer_begin_buffer_pass(server->renderer, target,
+                                                           &(struct wlr_buffer_pass_options){0})
+                          : nullptr;
+    if (pass == nullptr) {
+        if (target != nullptr)
+            wlr_buffer_unlock(target);
+        release_capture(effect);
+        return; /* another go next frame */
+    }
+    double started = glfx->timing ? now_seconds() : 0;
+    /* The pass made SceneFX's context current with the target bound. */
+    glViewport(0, 0, width_px, height_px);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    xd_glfx_draw draw = {.bounds = bounds, .scale = scale, .glfx = glfx};
+    xd_glfx_set_ortho(draw.projection, bounds);
+    effect->impl->draw(effect, &draw);
+    if (glfx->timing)
+        glFinish();
+    wlr_render_pass_submit(pass);
+    if (glfx->timing)
+        glfx->draw_total += now_seconds() - started;
+    release_capture(effect);
+
+    struct wlr_scene_buffer *node = effect->node;
+    wlr_scene_buffer_set_buffer(node, target);
+    wlr_buffer_unlock(target); /* the scene holds its own lock */
+    wlr_scene_buffer_set_source_box(node, &(struct wlr_fbox){0, 0, width_px, height_px});
+    wlr_scene_buffer_set_dest_size(node, bounds.width, bounds.height);
+    wlr_scene_node_set_position(&node->node, bounds.x - view->tree->node.x,
+                                bounds.y - view->tree->node.y);
+    wlr_scene_node_raise_to_top(&node->node);
+    hide_window(effect);
+}
+
+/* Our node can't be a plane of its own, nor the window it hides: no
+ * direct scanout on the output while window effects run. */
+static void lock_scanout(xd_output *output, bool lock) {
+    if (output->effects_scanout_locked == lock)
+        return;
+    output->effects_scanout_locked = lock;
+    wlr_output_lock_attach_render(output->wlr_output, lock);
+}
+
+void xd_glfx_frame(xd_server *server, xd_output *output, double now) {
+    xd_glfx *glfx = server->glfx;
+    if (glfx == nullptr)
+        return;
+    lock_scanout(output, !wl_list_empty(&glfx->windows));
+    if (wl_list_empty(&glfx->windows))
+        return;
+    if (glfx->timing)
+        glfx->frame_start = now_seconds();
+    /* Another output's frame of the same moment: drawn already. */
+    if (now - glfx->last_frame < SAME_FRAME_SECONDS)
+        return;
+    glfx->last_frame = now;
+    xd_window_effect *effect, *next;
+    wl_list_for_each_safe(effect, next, &glfx->windows, link) {
+        draw_window_effect(glfx, effect, now);
+    }
+}
+
+void xd_glfx_frame_done(xd_server *server, [[maybe_unused]] xd_output *output) {
+    xd_glfx *glfx = server->glfx;
+    if (glfx == nullptr)
+        return;
+    if (wl_list_empty(&glfx->windows)) {
+        glfx->last_done = 0;
+        return;
+    }
+    /* Frames keep coming while an effect runs, at the outputs' pace. */
+    schedule_frames(server);
+    if (!glfx->timing)
+        return;
+    double now = now_seconds();
+    if (glfx->last_done > 0) {
+        double interval = now - glfx->last_done;
+        glfx->interval_total += interval;
+        glfx->interval_max = XD_MAX(glfx->interval_max, interval);
+        glfx->frame_total += now - glfx->frame_start;
+        glfx->frames++;
+    } else {
+        glfx->timing_start = now;
+    }
+    glfx->last_done = now;
+    if (glfx->frames > 0 && now - glfx->timing_start >= TIMING_SECONDS) {
+        wlr_log(WLR_INFO,
+                "effects: %d frames, %.1f ms apart (at most %.1f), %.2f ms to draw a frame, "
+                "%.2f ms of it the effects'",
+                glfx->frames, glfx->interval_total / glfx->frames * 1000.0,
+                glfx->interval_max * 1000.0, glfx->frame_total / glfx->frames * 1000.0,
+                glfx->draw_total / glfx->frames * 1000.0);
+        glfx->frames = 0;
+        glfx->interval_total = glfx->interval_max = glfx->frame_total = glfx->draw_total = 0;
+        glfx->timing_start = now;
+    }
+}
+
+bool xd_glfx_init(xd_server *server, xd_effects_support *support) {
+    xd_glfx *glfx = XD_NEW(xd_glfx);
+    glfx->server = server;
+    wl_list_init(&glfx->windows);
+    glfx->timing = getenv("XD_EFFECTS_TIMING") != nullptr;
+    server->glfx = glfx;
+    /* The renderer's name, for the log and Desktop Effects: GL needs the
+     * context, which a pass on a scratch buffer makes current. */
+    struct wlr_swapchain *chain = create_chain(server, CAPTURE_STEP, CAPTURE_STEP);
+    struct wlr_buffer *buffer = chain != nullptr ? wlr_swapchain_acquire(chain) : nullptr;
+    struct wlr_render_pass *pass =
+        buffer != nullptr ? wlr_renderer_begin_buffer_pass(server->renderer, buffer,
+                                                           &(struct wlr_buffer_pass_options){0})
+                          : nullptr;
+    bool ok = pass != nullptr;
+    if (ok) {
+        const GLubyte *renderer = glGetString(GL_RENDERER);
+        snprintf(support->renderer, sizeof(support->renderer), "%s",
+                 renderer != nullptr ? (const char *)renderer : "OpenGL ES");
+        wlr_render_pass_submit(pass);
+    } else {
+        snprintf(support->reason, sizeof(support->reason), "%s",
+                 "The compositor cannot draw with OpenGL ES on this computer.");
+    }
+    if (buffer != nullptr)
+        wlr_buffer_unlock(buffer);
+    if (chain != nullptr)
+        wlr_swapchain_destroy(chain);
+    return ok;
+}
+
+void xd_glfx_finish(xd_server *server) {
+    xd_glfx *glfx = server->glfx;
+    if (glfx == nullptr)
+        return;
+    xd_window_effect *effect, *next;
+    wl_list_for_each_safe(effect, next, &glfx->windows, link) {
+        xd_glfx_end_window(effect);
+    }
+    /* The shaders go with the renderer's context. */
+    server->glfx = nullptr;
+    xd_free(glfx);
+}

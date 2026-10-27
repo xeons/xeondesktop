@@ -11,6 +11,7 @@
 
 #include "../core/alloc.h"
 #include "../settings/soundplay.h"
+#include "effects/effects.h"
 #include "server.h"
 
 /* ---- xdg-shell / X11 ------------------------------------------------------ */
@@ -243,8 +244,11 @@ void xd_view_set_outer_box(xd_view *view, struct wlr_box outer) {
 }
 
 void xd_view_set_tiled_box(xd_view *view, struct wlr_box outer, uint32_t edges) {
+    struct wlr_box before = xd_view_outer_box(view);
     xd_view_set_outer_box(view, outer);
     xd_view_set_tiled(view, edges);
+    if (before.width != outer.width || before.height != outer.height)
+        xd_effects_window_event(view, XD_WINDOW_EVENT_MAXIMIZE, &before);
 }
 
 void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t moving) {
@@ -396,6 +400,7 @@ void xd_view_focus(xd_view *view) {
     xd_view *prev = xd_view_focused(server);
     server->desktop_focus = nullptr;
 
+    bool unminimized = view->minimized;
     if (view->minimized) {
         view->minimized = false;
         xd_sound_play_event(XD_SOUND_RESTORE_UP);
@@ -428,6 +433,10 @@ void xd_view_focus(xd_view *view) {
     /* An exclusive layer surface (open Start menu) keeps the keyboard;
      * the window gets it when that ends. */
     xd_keyboard_refocus(server);
+    if (unminimized)
+        xd_effects_window_event(view, XD_WINDOW_EVENT_UNMINIMIZE, nullptr);
+    if (prev != view)
+        xd_effects_window_event(view, XD_WINDOW_EVENT_FOCUS, nullptr);
 }
 
 void xd_view_deactivate_front(xd_server *server) {
@@ -511,6 +520,7 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
         return;
     }
     struct wlr_box before = caption_box(view);
+    struct wlr_box outer_before = xd_view_outer_box(view);
     if (maximized) {
         struct wlr_box outer = xd_view_outer_box(view);
         view->restore = outer;
@@ -537,6 +547,7 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
                                          before.height},
                         nullptr);
     }
+    xd_effects_window_event(view, XD_WINDOW_EVENT_MAXIMIZE, &outer_before);
 }
 
 void xd_view_set_fullscreen(xd_view *view, bool fullscreen) {
@@ -593,6 +604,7 @@ void xd_view_minimize(xd_view *view) {
         }
     }
     bool was_focused = xd_view_focused(view->server) == view;
+    xd_effects_window_event(view, XD_WINDOW_EVENT_MINIMIZE, nullptr);
     xd_animate_forget_view(view->server, view);
     view->minimized = true;
     xd_sound_play_event(XD_SOUND_MINIMIZE);
@@ -927,6 +939,7 @@ void xd_view_on_map(xd_view *view) {
     xd_frame_render(view, true);
     if (view_wants_fullscreen(view))
         xd_view_set_fullscreen(view, true);
+    xd_effects_window_event(view, XD_WINDOW_EVENT_MAP, nullptr);
 }
 
 static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -936,6 +949,7 @@ static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data
 void xd_view_on_unmap(xd_view *view) {
     xd_server *server = view->server;
     bool was_focused = xd_view_focused(server) == view;
+    xd_effects_window_event(view, XD_WINDOW_EVENT_UNMAP, nullptr);
     if (server->grab_view == view) {
         /* The grab ends where it is; an unmapped window isn't configured. */
         if (server->mode == XD_CURSOR_MOVE)
@@ -1267,6 +1281,7 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
 }
 
 void xd_view_on_destroy(xd_view *view) {
+    xd_effects_window_event(view, XD_WINDOW_EVENT_DESTROY, nullptr);
     ftl_destroy(view);
     xd_server *server = view->server;
     if (server->grab_view == view) {

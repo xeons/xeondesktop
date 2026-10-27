@@ -145,6 +145,9 @@ settings_lib = static_library(
   'src/settings/nightlight.c',
   'src/settings/themepkg.c',
   'src/settings/themeset.c',
+  # Desktop Effects: the table (one file per effect) and effects.ini.
+  'src/settings/effects.c',
+  'src/settings/effects/wobbly_windows.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -404,6 +407,14 @@ compositor_src += x11_grab_server_src
 # Gamma ramps: night light, and monitor calibration from ICC profiles'
 # vcgt curves, read with Little CMS when it's there.
 compositor_src += files('src/compositor/gamma.c', 'src/compositor/vcgt.c')
+# Desktop Effects: effects.ini and window events for every effect, in both
+# builds; the OpenGL effects (one file each) in xd-compositor-fx alone.
+compositor_src += files('src/compositor/effects/effects.c')
+effects_fx_src = files(
+  'src/compositor/effects/glfx.c',
+  'src/compositor/effects/wobbly.c',
+  'src/compositor/effects/wobbly_model.c',
+)
 lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
 lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
@@ -471,6 +482,7 @@ if scenefx_dep.found()
   executable(
     'xd-compositor-fx',
     compositor_src,
+    effects_fx_src,
     server_protocol_headers,
     server_protocol_headers_extra,
     arranger_server_src,
@@ -1445,6 +1457,7 @@ test_exe = executable(
   'src/shell/recent.c',
   'src/privacy/permissions.c',
   'src/compositor/vcgt.c',
+  'src/compositor/effects/wobbly_model.c',
   'src/color/colorlib.c',
   'src/keys/keyslib.c',
   'src/keys/sshkeys.c',

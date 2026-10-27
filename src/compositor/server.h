@@ -66,6 +66,7 @@ typedef struct xd_touch xd_touch;
 typedef struct xd_tablets xd_tablets;
 typedef struct xd_gestures xd_gestures;
 typedef struct xd_constraints xd_constraints;
+typedef struct xd_effects xd_effects;
 
 /* A client on a connection the compositor made for it (trust.c). */
 typedef struct xd_trusted_client {
@@ -90,6 +91,9 @@ typedef struct xd_output {
     xd_vrr_mode vrr;
     bool vrr_rejected;
     bool lock_shown; /* has shown a frame with the lock's cover (lock.c) */
+#ifdef XD_SCENEFX
+    bool effects_scanout_locked; /* effects/glfx.c: direct scanout off for an effect */
+#endif
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
@@ -139,6 +143,11 @@ typedef struct xd_view {
 
     struct wlr_scene_tree *tree;    /* at the outer frame origin */
     struct wlr_scene_buffer *frame; /* server-side decoration */
+    /* frame.c: the frame's pixels, kept while keep_frame says (an effect
+     * draws the window: the scene graph lets go of them once it has a
+     * texture). */
+    struct wlr_buffer *kept_frame;
+    int keep_frame;
 #ifdef XD_SCENEFX
     /* Aero: the blur behind its glass (masked by the frame) and its shadow. */
     struct wlr_scene_blur *blur;
@@ -498,6 +507,10 @@ struct xd_server {
     xd_tablets *tablets;   /* tablet.c's: drawing tablets */
     xd_gestures *gestures; /* gestures.c's: touchpad gestures */
     xd_constraints *constraints; /* constraints.c's: pointer lock, shortcut inhibitors */
+    xd_effects *effects;   /* effects/effects.c's: Desktop Effects */
+#ifdef XD_SCENEFX
+    struct xd_glfx *glfx; /* effects/glfx.c's: the OpenGL effect path */
+#endif
 };
 
 /* output.c */
@@ -929,6 +942,9 @@ void xd_capture_view_committed(xd_view *view);
 
 /* frame.c */
 void xd_frame_render(xd_view *view, bool force);
+/* Keeps the frame's pixels in view->kept_frame (redrawing it now if
+ * needed) while anyone wants them; calls pair up. */
+void xd_frame_keep_pixels(xd_view *view, bool keep);
 /* An application's icon has loaded: redraws its windows' frames. */
 void xd_frame_icon_ready(void *server, const char *app_id);
 double xd_view_scale(const xd_view *view);

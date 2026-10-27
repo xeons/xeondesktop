@@ -64,16 +64,19 @@ SCENARIOS = {}
 # function of the session run before the compositor starts (a system bus
 # for the programs it starts); "x11", whether Xwayland can run (a private
 # /tmp/.X11-unix, as the real one's owner, root, isn't ours in the session's
-# user namespace).
+# user namespace); "fx", whether it needs xd-compositor-fx drawing with
+# OpenGL ES (fx_environment).
 SCENARIO_OPTIONS = {}
 
 
 def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11=False,
-             showcase=False):
+             showcase=False, fx=False):
     """Registers a scenario: a function of the session (Session), run with
     that desktop.ini; it's skipped without the Python modules it requires.
     A showcase one takes a README screenshot (tools/screenshots.sh) and
-    runs only when named, never in the suite."""
+    runs only when named, never in the suite. An fx one runs on
+    xd-compositor-fx (Desktop Effects' OpenGL effects), and is skipped
+    where that can't draw."""
 
     def register(fn):
         SCENARIOS[fn.__name__] = (fn, desktop_ini, requires)
@@ -82,6 +85,7 @@ def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11
             "setup": setup,
             "x11": x11,
             "showcase": showcase,
+            "fx": fx,
         }
         return fn
 
@@ -90,6 +94,25 @@ def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11
 
 class Failure(Exception):
     pass
+
+
+class Skip(Exception):
+    """The scenario can't run here (said why); not a failure."""
+
+
+def fx_environment():
+    """What an fx scenario's session gets: OpenGL ES, so xd-compositor
+    hands over to xd-compositor-fx. Without a GPU of its own
+    (XD_UI_RENDERER=gles2 asks for the machine's), Mesa's software
+    rasterizer, llvmpipe, through EGL on no device at all
+    (WLR_RENDERER_FORCE_SOFTWARE), buffers coming from /dev/udmabuf: the
+    same pictures on every machine, and no GPU of the machine's touched.
+    XD_VM_GPU: in a virtual machine too, where xd-compositor would
+    otherwise keep to pixman."""
+    env = {"WLR_RENDERER": "gles2", "XD_VM_GPU": "1"}
+    if os.environ.get("XD_UI_RENDERER") != "gles2":
+        env["WLR_RENDERER_FORCE_SOFTWARE"] = "1"
+    return env
 
 
 # ---- outer side: the session's lifetime -------------------------------------------
@@ -256,7 +279,8 @@ def standin_identity():
 
 
 def run_scenario(name, build, keep, keep_all=False):
-    """Runs one scenario in a session of its own; True if it passed."""
+    """Runs one scenario in a session of its own: "pass", "fail" or
+    "skip"."""
     desktop_ini = SCENARIOS[name][1]
     home = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
     base = tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=scratch_parent(home))
@@ -310,6 +334,7 @@ def run_scenario(name, build, keep, keep_all=False):
             # (xd-compositor-fx, Aero's glass); CI has none.
             "WLR_RENDERER": os.environ.get("XD_UI_RENDERER", "pixman"),
             "WLR_HEADLESS_OUTPUTS": str(len(outputs)),
+            **(fx_environment() if SCENARIO_OPTIONS[name]["fx"] else {}),
             "PATH": build + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -358,6 +383,7 @@ def run_scenario(name, build, keep, keep_all=False):
 
     log_path = os.path.join(base, "log")
     passed = False
+    skipped = False
     proc = None
     try:
         with open(log_path, "wb") as log:
@@ -367,9 +393,12 @@ def run_scenario(name, build, keep, keep_all=False):
             except subprocess.TimeoutExpired:
                 rc = None
         passed = rc == 0
+        skipped = rc == SKIP
         with open(log_path, "rb") as f:
             out = f.read().decode(errors="replace")
-        if not passed:
+        if skipped:
+            sys.stdout.write("".join(l + "\n" for l in out.splitlines() if l.startswith("SKIPPED")))
+        elif not passed:
             sys.stdout.write(out)
             if rc is None:
                 print(f"{name}: timed out")
@@ -390,7 +419,7 @@ def run_scenario(name, build, keep, keep_all=False):
                 shutil.copy(log_path, dest)
                 print(f"{name}: screenshots and log are in {dest}")
             remove_tree(base)
-    return passed
+    return "pass" if passed else "skip" if skipped else "fail"
 
 
 def suite():
@@ -428,11 +457,18 @@ def outer(args):
                 print(f"SKIP {n} (needs the Python module {', '.join(missing)})", flush=True)
                 skipped.append(n)
                 continue
+            fx = os.path.join(build, "xd-compositor-fx")
+            if SCENARIO_OPTIONS[n]["fx"] and not os.access(fx, os.X_OK):
+                print(f"SKIP {n} (xd-compositor-fx isn't built: SceneFX)", flush=True)
+                skipped.append(n)
+                continue
             start = time.monotonic()
-            ok = run_scenario(n, build, args.keep, args.keep_all)
-            print(f"{'PASS' if ok else 'FAIL'} {n} ({time.monotonic() - start:.1f}s)", flush=True)
-            if not ok:
+            result = run_scenario(n, build, args.keep, args.keep_all)
+            print(f"{result.upper()} {n} ({time.monotonic() - start:.1f}s)", flush=True)
+            if result == "fail":
                 failed.append(n)
+            elif result == "skip":
+                skipped.append(n)
     except KeyboardInterrupt:
         print("interrupted")
         return 1
@@ -653,6 +689,9 @@ def inner(args):
         fn(s)
         s.log("passed")
         rc = 0
+    except Skip as e:
+        print(f"SKIPPED: {e}", flush=True)
+        rc = SKIP
     except Failure as e:
         print(f"FAILED: {e}", flush=True)
     except Exception:
@@ -806,6 +845,89 @@ def aero_glass_caption_buttons(s):
     inactive_hot = s.settle("inactive-close-hot")
     share = min(red_share(inactive_hot, rect) for rect in sides)
     s.check(share > 0.9, f"an inactive window's hot Close is red ({share:.2f})")
+
+
+def effects_setup(text):
+    """A setup writing effects.ini (Desktop Effects) before the compositor
+    starts."""
+
+    def setup(s):
+        os.makedirs(s.config, exist_ok=True)
+        with open(os.path.join(s.config, "effects.ini"), "w") as f:
+            f.write(text)
+
+    return setup
+
+
+def effects_support():
+    """What the compositor told Desktop Effects it can draw (its support
+    file), or None."""
+    path = os.path.join(os.environ["XDG_RUNTIME_DIR"], "xeondesktop",
+                        f"effects-{os.environ.get('WAYLAND_DISPLAY', 'wayland-0')}.ini")
+    c = configparser.ConfigParser(interpolation=None)
+    c.optionxform = str
+    c.read(path)
+    return dict(c["Support"]) if c.has_section("Support") else None
+
+
+def require_opengl_effects(s):
+    """Skips unless xd-compositor-fx is drawing with OpenGL ES."""
+    support = effects_support()
+    if support is None or support.get("OpenGL") != "true":
+        why = support.get("Reason") if support else "no support file"
+        raise Skip(f"xd-compositor-fx can't draw OpenGL effects here: {why}")
+    s.log(f"OpenGL effects on {support.get('Renderer')}")
+
+
+def left_edge(shot, empty, y):
+    """The leftmost x where row y differs from the empty desktop, or None."""
+    for x in range(WIDTH):
+        if max(abs(a - b) for a, b in zip(shot.pixel(x, y), empty.pixel(x, y))) > 8:
+            return x
+    return None
+
+
+@scenario(setup=effects_setup("[WobblyWindows]\nEnabled=true\n"), fx=True)
+def wobbly_windows_drag(s):
+    """Wobbly Windows (xd-compositor-fx): dragged quickly by its title bar,
+    a window bends, its bottom lagging behind its top, so its left edge
+    isn't straight mid-drag; let go, it settles into its rectangle again
+    where it was dropped."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    x, y, w, h = s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    rows = (y + 40, y + h // 2, y + h - 12)
+    start = s.shot("before")
+    before = [left_edge(start, empty, row) for row in rows]
+    s.check(before.count(before[0]) == 3, f"the window starts square ({before})")
+    # Right along the caption, 300 px in about half a second (xd-inject
+    # waits for each move to be handled), then held still.
+    cx, cy = x + w // 2, y + 10
+    steps = ["move", cx, cy, "down", "sleep", 150]
+    for i in range(1, 21):
+        steps += ["move", cx + 15 * i, cy]
+    steps += ["sleep", 1500, "up"]
+    drag = s.launch(s.tool("xd-inject"), *map(str, steps))
+    # A few pictures while it moves: the most bent one counts.
+    time.sleep(0.3)
+    bent = []
+    for _ in range(4):
+        shot = s.shot("dragging")
+        edges = [left_edge(shot, empty, row) for row in rows]
+        s.log(f"left edge mid-drag at rows {rows}: {edges}")
+        if None not in edges:
+            bent.append(edges)
+    edges = max(bent, key=lambda e: max(e) - min(e), default=[None])
+    s.check(None not in edges and max(edges) - min(edges) >= 4,
+            f"mid-drag the left edge isn't straight ({edges})")
+    s.check(edges[2] < edges[0], f"its bottom lags behind its top ({edges})")
+    drag.wait(timeout=20)
+    dropped = s.settle("dropped")
+    after = [left_edge(dropped, empty, row) for row in rows]
+    s.check(after.count(after[0]) == 3 and abs(after[0] - (before[0] + 300)) <= 4,
+            f"let go, it's square again where it was dropped ({after})")
 
 
 @scenario(AERO_INI)

@@ -66,6 +66,8 @@
 #include "../src/saver/savers.h"
 #include "../src/color/colorlib.h"
 #include "../src/compositor/vcgt.h"
+#include "../src/compositor/effects/wobbly_model.h"
+#include "../src/settings/effects.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"
 #include "../src/compositor/grabkeys.h"
@@ -10835,6 +10837,386 @@ static void test_file_chooser(void) {
     g_free(scratch);
 }
 
+/* ---- Desktop Effects ------------------------------------------------------------ */
+
+static void test_effects_table(void) {
+    /* Every built-in effect: a unique id, its texts, defaults that parse
+     * (creating the settings asserts that), every one off. */
+    xd_effects_settings *settings = xd_effects_create_settings();
+    size_t count = xd_effects_get_count(settings);
+    CHECK(count == xd_effects_get_builtin_count() && count > 0);
+    for (size_t effect = 0; effect < count; effect++) {
+        const xd_effect_info *info = xd_effects_get_info(settings, effect);
+        CHECK(info->id != nullptr && info->name != nullptr && info->description != nullptr &&
+              info->icon != nullptr && info->category < XD_EFFECT_CATEGORY_COUNT);
+        CHECK(!xd_effects_is_enabled(settings, effect));
+        size_t found = 0;
+        CHECK(xd_effects_find(settings, info->id, &found) && found == effect);
+        for (size_t option = 0; option < info->option_count; option++) {
+            const xd_effect_option *opt = &info->options[option];
+            CHECK(opt->key != nullptr && opt->label != nullptr && opt->default_value != nullptr);
+            CHECK(xd_effects_is_default(settings, effect, option));
+            size_t same = 0;
+            CHECK(xd_effects_find_option(info, opt->key, &same) && same == option);
+        }
+    }
+    size_t wobbly = 0;
+    CHECK(xd_effects_find(settings, "WobblyWindows", &wobbly));
+    CHECK(xd_effects_get_info(settings, wobbly)->needs_opengl);
+    CHECK(xd_effects_get_double(settings, wobbly, "SpringConstant") == 8.0);
+    CHECK(xd_effects_get_double(settings, wobbly, "Friction") == 3.0);
+    CHECK(xd_effects_get_int(settings, wobbly, "GridResolution") == 16);
+    CHECK(xd_effects_get_bool(settings, wobbly, "WobbleOnMove"));
+    CHECK(!xd_effects_get_bool(settings, wobbly, "WobbleOnFocus"));
+    CHECK(strcmp(xd_effects_get_text(settings, wobbly, "Windows"), "") == 0);
+    CHECK(!xd_effects_find(settings, "NoSuchEffect", &wobbly));
+    xd_effects_destroy_settings(settings);
+    CHECK(strcmp(xd_effects_get_category_name(XD_EFFECT_CATEGORY_WINDOW_MANAGEMENT),
+                 "Window Management") == 0);
+}
+
+static void test_effects_file(void) {
+    char *dir = g_dir_make_tmp("xd-effects-XXXXXX", nullptr);
+    char *saved = g_strdup(g_getenv("XDG_CONFIG_HOME"));
+    g_setenv("XDG_CONFIG_HOME", dir, TRUE);
+    char *path = xd_effects_get_default_path();
+    char *want = g_build_filename(dir, "xeondesktop", "effects.ini", nullptr);
+    CHECK(strcmp(path, want) == 0);
+
+    /* No file: every default. */
+    xd_effects_settings *settings = xd_effects_create_settings();
+    size_t wobbly = 0;
+    CHECK(xd_effects_find(settings, "WobblyWindows", &wobbly));
+    xd_effects_load(settings);
+    CHECK(!xd_effects_is_enabled(settings, wobbly));
+    CHECK(xd_effects_get_warn_conflicts(settings));
+
+    /* Watched: a save shows up. */
+    int watch = xd_effects_watch();
+    CHECK(watch >= 0);
+
+    /* Round trip: only what differs from the defaults is written. */
+    const xd_effect_info *info = xd_effects_get_info(settings, wobbly);
+    size_t spring = 0, grid = 0, windows = 0, focus = 0;
+    CHECK(xd_effects_find_option(info, "SpringConstant", &spring));
+    CHECK(xd_effects_find_option(info, "GridResolution", &grid));
+    CHECK(xd_effects_find_option(info, "Windows", &windows));
+    CHECK(xd_effects_find_option(info, "WobbleOnFocus", &focus));
+    xd_effects_set_enabled(settings, wobbly, true);
+    CHECK(xd_effects_set_value(settings, wobbly, spring, &(xd_effect_value){.number = 5.5}));
+    CHECK(!xd_effects_set_value(settings, wobbly, spring, &(xd_effect_value){.number = 5.5}));
+    CHECK(xd_effects_set_value(settings, wobbly, grid, &(xd_effect_value){.integer = 32}));
+    CHECK(xd_effects_set_value(settings, wobbly, focus, &(xd_effect_value){.boolean = true}));
+    char match[] = "type=normal & !app_id=org.mozilla.*";
+    CHECK(xd_effects_set_value(settings, wobbly, windows, &(xd_effect_value){.text = match}));
+    xd_effects_set_warn_conflicts(settings, false);
+    CHECK(xd_effects_save(settings));
+    struct pollfd poll_fd = {.fd = watch, .events = POLLIN};
+    CHECK(poll(&poll_fd, 1, 1000) == 1 && xd_effects_has_changed(watch));
+    close(watch);
+
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(text != nullptr && strstr(text, "[WobblyWindows]") != nullptr &&
+          strstr(text, "Enabled=true") != nullptr && strstr(text, "SpringConstant=5.5") != nullptr &&
+          strstr(text, "GridResolution=32") != nullptr && strstr(text, "Friction") == nullptr &&
+          strstr(text, "WarnConflicts=false") != nullptr);
+    g_free(text);
+
+    xd_effects_settings *loaded = xd_effects_create_settings();
+    xd_effects_load(loaded);
+    CHECK(xd_effects_is_enabled(loaded, wobbly));
+    CHECK(xd_effects_get_double(loaded, wobbly, "SpringConstant") == 5.5);
+    CHECK(xd_effects_get_int(loaded, wobbly, "GridResolution") == 32);
+    CHECK(xd_effects_get_bool(loaded, wobbly, "WobbleOnFocus"));
+    CHECK(strcmp(xd_effects_get_text(loaded, wobbly, "Windows"), match) == 0);
+    CHECK(xd_effects_is_default(loaded, wobbly, 1)); /* Friction */
+    CHECK(!xd_effects_get_warn_conflicts(loaded));
+
+    /* Back to a default: its key goes. */
+    xd_effects_reset_value(loaded, wobbly, grid);
+    CHECK(xd_effects_get_int(loaded, wobbly, "GridResolution") == 16);
+    CHECK(xd_effects_save(loaded));
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(text != nullptr && strstr(text, "GridResolution") == nullptr &&
+          strstr(text, "SpringConstant=5.5") != nullptr);
+    g_free(text);
+
+    /* Out of range: clamped; unparsable: the default. */
+    CHECK(g_file_set_contents(path,
+                              "# mine\n[WobblyWindows]\nEnabled= yes \nSpringConstant=99\n"
+                              "GridResolution=-5\nFriction=lots\nWobbleOnMove=maybe\n"
+                              "FutureOption=42\n\n[FutureEffect]\nEnabled=true\nSpeed=3\n",
+                              -1, nullptr));
+    xd_effects_load(loaded);
+    CHECK(xd_effects_is_enabled(loaded, wobbly));
+    CHECK(xd_effects_get_double(loaded, wobbly, "SpringConstant") == 10.0);
+    CHECK(xd_effects_get_int(loaded, wobbly, "GridResolution") == 2);
+    CHECK(xd_effects_get_double(loaded, wobbly, "Friction") == 3.0);
+    CHECK(xd_effects_get_bool(loaded, wobbly, "WobbleOnMove"));
+    CHECK(xd_effects_get_warn_conflicts(loaded));
+    CHECK(!xd_effects_set_value(loaded, wobbly, spring, &(xd_effect_value){.number = 1e9}));
+    CHECK(xd_effects_set_value(loaded, wobbly, spring, &(xd_effect_value){.number = -1}));
+    CHECK(xd_effects_get_double(loaded, wobbly, "SpringConstant") == 0.1);
+    CHECK(!xd_effects_set_value(loaded, wobbly, spring, &(xd_effect_value){.number = (double)NAN}));
+
+    /* What this build doesn't know stays, comments too. */
+    CHECK(xd_effects_save(loaded));
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(text != nullptr && strstr(text, "# mine") != nullptr &&
+          strstr(text, "FutureOption=42") != nullptr && strstr(text, "[FutureEffect]") != nullptr &&
+          strstr(text, "Speed=3") != nullptr && strstr(text, "SpringConstant=0.1") != nullptr);
+    g_free(text);
+
+    xd_effects_reset_all(loaded);
+    CHECK(!xd_effects_is_enabled(loaded, wobbly) && xd_effects_is_default(loaded, wobbly, spring));
+
+    xd_effects_destroy_settings(loaded);
+    xd_effects_destroy_settings(settings);
+    g_free(want);
+    g_free(path);
+    env_restore("XDG_CONFIG_HOME", saved);
+    rm_tree(dir);
+    g_free(dir);
+}
+
+static void test_effects_values(void) {
+    const xd_effect_option color = {.key = "Color", .label = "Colour",
+                                    .type = XD_EFFECT_OPTION_COLOR, .default_value = "#FF000080"};
+    xd_effect_value value = {0};
+    CHECK(xd_effects_parse_value(&color, "#ff000080", &value) && value.color == 0xFF000080u);
+    CHECK(xd_effects_parse_value(&color, "#00FF00", &value) && value.color == 0x00FF00FFu);
+    CHECK(!xd_effects_parse_value(&color, "red", &value));
+    char *text = xd_effects_format_value(&color, &(xd_effect_value){.color = 0x11223344u});
+    CHECK(strcmp(text, "#11223344") == 0);
+    g_free(text);
+
+    static const char *const names[] = {"Fade", "Zoom", nullptr};
+    static const char *const labels[] = {"Fade", "Zoom", nullptr};
+    const xd_effect_option choice = {.key = "Kind", .label = "Kind",
+                                     .type = XD_EFFECT_OPTION_CHOICE, .choice_names = names,
+                                     .choice_labels = labels, .default_value = "Fade"};
+    CHECK(xd_effects_parse_value(&choice, "zoom", &value) && value.choice == 1);
+    CHECK(!xd_effects_parse_value(&choice, "Spin", &value));
+
+    const xd_effect_option edge = {.key = "Edge", .label = "Edge",
+                                   .type = XD_EFFECT_OPTION_EDGE, .default_value = ""};
+    CHECK(xd_effects_parse_value(&edge, "TopLeft; bottom", &value) &&
+          value.edges == (XD_SCREEN_EDGE_TOP_LEFT | XD_SCREEN_EDGE_BOTTOM));
+    CHECK(xd_effects_parse_value(&edge, "None", &value) && value.edges == 0);
+    CHECK(!xd_effects_parse_value(&edge, "Middle", &value));
+    text = xd_effects_format_value(&edge, &(xd_effect_value){.edges = XD_SCREEN_EDGE_RIGHT |
+                                                                       XD_SCREEN_EDGE_TOP_LEFT});
+    CHECK(strcmp(text, "TopLeft;Right") == 0);
+    g_free(text);
+    text = xd_effects_describe_value(&edge, &(xd_effect_value){.edges = XD_SCREEN_EDGE_TOP_LEFT |
+                                                                         XD_SCREEN_EDGE_BOTTOM});
+    CHECK(strcmp(text, "Top left corner, Bottom edge") == 0);
+    g_free(text);
+
+    uint32_t modifiers = 0;
+    char key[32];
+    CHECK(xd_effects_parse_binding("<Super><Shift>Tab", &modifiers, key, sizeof(key)) &&
+          modifiers == (XD_BINDING_SUPER | XD_BINDING_SHIFT) && strcmp(key, "Tab") == 0);
+    CHECK(xd_effects_parse_binding("<Primary><Mod1>Delete", &modifiers, key, sizeof(key)) &&
+          modifiers == (XD_BINDING_CONTROL | XD_BINDING_ALT));
+    CHECK(!xd_effects_parse_binding("", &modifiers, key, sizeof(key)));
+    CHECK(!xd_effects_parse_binding("Disabled", &modifiers, key, sizeof(key)));
+    CHECK(!xd_effects_parse_binding("<Bogus>a", &modifiers, key, sizeof(key)));
+    CHECK(!xd_effects_parse_binding("<Super", &modifiers, key, sizeof(key)));
+
+    const xd_effect_option keys = {.key = "Key", .label = "Key", .type = XD_EFFECT_OPTION_KEY,
+                                   .default_value = ""};
+    const xd_effect_option buttons = {.key = "Button", .label = "Button",
+                                      .type = XD_EFFECT_OPTION_BUTTON, .default_value = ""};
+    CHECK(xd_effects_parse_value(&keys, "<Super>e", &value));
+    text = xd_effects_describe_value(&keys, &value);
+    CHECK(strcmp(text, "Win+E") == 0);
+    g_free(text);
+    g_free(value.text);
+    CHECK(!xd_effects_parse_value(&keys, "<Super>Button1", &value));
+    CHECK(xd_effects_parse_value(&buttons, "<Control><Alt>Button1", &value));
+    text = xd_effects_describe_value(&buttons, &value);
+    CHECK(strcmp(text, "Ctrl+Alt+Left button") == 0);
+    g_free(text);
+    g_free(value.text);
+    CHECK(!xd_effects_parse_value(&buttons, "<Super>Tab", &value));
+    CHECK(xd_effects_parse_value(&buttons, "", &value) && value.text[0] == '\0');
+    text = xd_effects_describe_value(&buttons, &value);
+    CHECK(strcmp(text, "None") == 0);
+    g_free(text);
+    g_free(value.text);
+}
+
+/* Two made-up effects with the same bindings and an edge in common. */
+static const xd_effect_option conflict_options_a[] = {
+    {.key = "Initiate", .label = "Initiate", .type = XD_EFFECT_OPTION_KEY,
+     .default_value = "<Super>Tab"},
+    {.key = "Corner", .label = "Hot corner", .type = XD_EFFECT_OPTION_EDGE,
+     .default_value = "TopLeft;Left"},
+    {.key = "Drag", .label = "Drag", .type = XD_EFFECT_OPTION_BUTTON,
+     .default_value = "<Alt>Button1"},
+};
+static const xd_effect_option conflict_options_b[] = {
+    {.key = "Next", .label = "Next window", .type = XD_EFFECT_OPTION_KEY,
+     .default_value = "<Mod4>tab"},
+    {.key = "Edges", .label = "Edges", .type = XD_EFFECT_OPTION_EDGE, .default_value = "Left"},
+    {.key = "Pick", .label = "Pick", .type = XD_EFFECT_OPTION_BUTTON,
+     .default_value = "<Alt>Button3"},
+};
+static const xd_effect_info conflict_a = {
+    .id = "A", .name = "Effect A", .description = "", .icon = "", .options = conflict_options_a,
+    .option_count = XD_ARRAY_LEN(conflict_options_a)};
+static const xd_effect_info conflict_b = {
+    .id = "B", .name = "Effect B", .description = "", .icon = "", .options = conflict_options_b,
+    .option_count = XD_ARRAY_LEN(conflict_options_b)};
+
+static void test_effects_conflicts(void) {
+    static const xd_effect_info *const table[] = {&conflict_a, &conflict_b};
+    xd_effects_settings *settings = xd_effects_create_settings_for(table, 2);
+    xd_effect_conflict conflicts[4];
+    /* B is off: nothing clashes. */
+    CHECK(xd_effects_find_conflicts(settings, 0, conflicts, 4) == 0);
+    xd_effects_set_enabled(settings, 1, true);
+    size_t found = xd_effects_find_conflicts(settings, 0, conflicts, 4);
+    CHECK(found == 2);
+    CHECK(conflicts[0].option == 0 && conflicts[0].other_effect == 1 &&
+          conflicts[0].other_option == 0);
+    CHECK(conflicts[1].option == 1 && conflicts[1].other_option == 1);
+    /* Different buttons don't clash; the same one does. */
+    char same_button[] = "<Alt>Button1";
+    CHECK(xd_effects_set_value(settings, 1, 2, &(xd_effect_value){.text = same_button}));
+    CHECK(xd_effects_find_conflicts(settings, 0, conflicts, 4) == 3);
+    CHECK(xd_effects_find_conflicts(settings, 0, conflicts, 1) == 3); /* counted past cap */
+    char none[] = "";
+    CHECK(xd_effects_set_value(settings, 0, 0, &(xd_effect_value){.text = none}));
+    CHECK(xd_effects_find_conflicts(settings, 0, conflicts, 4) == 2);
+    xd_effects_destroy_settings(settings);
+}
+
+static void test_effects_match(void) {
+    CHECK(xd_effects_match_window("", "foot", "Terminal", false));
+    CHECK(xd_effects_match_window(" any ", "foot", "Terminal", true));
+    CHECK(xd_effects_match_window("app_id=foot", "foot", "Terminal", false));
+    CHECK(!xd_effects_match_window("app_id=foo", "foot", "Terminal", false));
+    CHECK(xd_effects_match_window("app_id=org.mozilla.*", "org.mozilla.firefox", "", false));
+    CHECK(xd_effects_match_window("type=Dialog", "x", "", true));
+    CHECK(!xd_effects_match_window("type=dialog", "x", "", false));
+    CHECK(xd_effects_match_window("type=normal & !app_id=org.mozilla.*", "foot", "", false));
+    CHECK(!xd_effects_match_window("type=normal & !app_id=org.mozilla.*", "org.mozilla.firefox",
+                                   "", false));
+    CHECK(xd_effects_match_window("title=*Notepad | app_id=foot", "gedit", "Untitled - Notepad",
+                                  false));
+    CHECK(!xd_effects_match_window("title=*Notepad | app_id=foot", "gedit", "Paint", false));
+    CHECK(!xd_effects_match_window("colour=red", "foot", "", false));
+    CHECK(xd_effects_match_window("!colour=red", "foot", "", false));
+    CHECK(xd_effects_match_window("class=foot", "foot", nullptr, false));
+}
+
+static void test_effects_support(void) {
+    char *dir = g_dir_make_tmp("xd-effects-run-XXXXXX", nullptr);
+    char *saved = g_strdup(g_getenv("XDG_RUNTIME_DIR"));
+    g_setenv("XDG_RUNTIME_DIR", dir, TRUE);
+    xd_effects_support support = {0};
+    CHECK(!xd_effects_read_support("wayland-7", &support));
+    xd_effects_support written = {.opengl = true};
+    g_strlcpy(written.renderer, "llvmpipe", sizeof(written.renderer));
+    CHECK(xd_effects_write_support("wayland-7", &written));
+    char *file = g_build_filename(dir, "xeondesktop", "effects-wayland-7.ini", nullptr);
+    CHECK(g_file_test(file, G_FILE_TEST_EXISTS));
+    CHECK(xd_effects_read_support("wayland-7", &support) && support.opengl &&
+          strcmp(support.renderer, "llvmpipe") == 0);
+    /* Not a path: a display name with slashes stays in the folder. */
+    written.opengl = false;
+    g_strlcpy(written.reason, "Software", sizeof(written.reason));
+    CHECK(xd_effects_write_support("../x/y", &written));
+    char *odd = g_build_filename(dir, "xeondesktop", "effects-.._x_y.ini", nullptr);
+    CHECK(g_file_test(odd, G_FILE_TEST_EXISTS));
+    CHECK(xd_effects_read_support("../x/y", &support) && !support.opengl &&
+          strcmp(support.reason, "Software") == 0);
+    xd_effects_remove_support("wayland-7");
+    xd_effects_remove_support("../x/y");
+    CHECK(!g_file_test(file, G_FILE_TEST_EXISTS) && !g_file_test(odd, G_FILE_TEST_EXISTS));
+    g_free(odd);
+    g_free(file);
+    env_restore("XDG_RUNTIME_DIR", saved);
+    rm_tree(dir);
+    g_free(dir);
+}
+
+/* Wobbly Windows' springs: a dragged window bends and lags, and settles
+ * on its rectangle once let go. */
+static void test_wobbly_model(void) {
+    xd_wobbly_model model;
+    xd_wobbly_init(&model, 100, 100, 400, 300, 8.0, 3.0);
+    double x = 0, y = 0;
+    xd_wobbly_evaluate(&model, 0, 0, &x, &y);
+    CHECK(fabs(x - 100) < 1e-9 && fabs(y - 100) < 1e-9);
+    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
+    CHECK(fabs(x - 500) < 1e-9 && fabs(y - 400) < 1e-9);
+    /* At rest the patch is the rectangle itself, evenly. */
+    xd_wobbly_evaluate(&model, 0.25, 0.5, &x, &y);
+    CHECK(fabs(x - 200) < 1e-9 && fabs(y - 250) < 1e-9);
+    CHECK(!xd_wobbly_step(&model, 0.016));
+
+    /* Grabbed by the title bar and dragged right, a frame at a time. */
+    xd_wobbly_grab(&model, 110, 110);
+    CHECK(model.grabbed == 0);
+    double rest_x = 100;
+    for (int frame = 0; frame < 12; frame++) {
+        rest_x += 20;
+        xd_wobbly_set_rest(&model, rest_x, 100, 400, 300);
+        CHECK(xd_wobbly_step(&model, 0.016));
+    }
+    xd_wobbly_evaluate(&model, 0, 0, &x, &y);
+    CHECK(fabs(x - rest_x) < 1e-9 && fabs(y - 100) < 1e-9); /* held at the pointer */
+    double far_x = 0, far_y = 0;
+    xd_wobbly_evaluate(&model, 1, 1, &far_x, &far_y);
+    CHECK(far_x < rest_x + 400 - 20); /* the far corner lags behind */
+    /* The left edge bows: its middle is off the line between its ends. */
+    double top_x = 0, top_y = 0, bottom_x = 0, bottom_y = 0, middle_x = 0, middle_y = 0;
+    xd_wobbly_evaluate(&model, 0, 0, &top_x, &top_y);
+    xd_wobbly_evaluate(&model, 0, 1, &bottom_x, &bottom_y);
+    xd_wobbly_evaluate(&model, 0, 0.5, &middle_x, &middle_y);
+    CHECK(fabs(middle_x - (top_x + bottom_x) / 2) > 1.0);
+
+    /* Let go: it settles exactly on the window within a few seconds. */
+    xd_wobbly_release(&model);
+    bool moving = true;
+    int frames = 0;
+    for (; moving && frames < 300; frames++)
+        moving = xd_wobbly_step(&model, 0.016);
+    CHECK(!moving && frames > 5);
+    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
+    CHECK(fabs(x - (rest_x + 400)) < 1e-9 && fabs(y - 400) < 1e-9);
+
+    /* Maximized: it wobbles from the old shape into the new one. */
+    xd_wobbly_set_rest(&model, 0, 0, 1024, 740);
+    xd_wobbly_displace(&model, rest_x, 100, 400, 300, 0.15);
+    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
+    CHECK(x < 1024 - 50);
+    moving = xd_wobbly_step(&model, 0.016);
+    CHECK(moving);
+    for (frames = 0; moving && frames < 300; frames++)
+        moving = xd_wobbly_step(&model, 0.016);
+    CHECK(!moving && frames > 5);
+    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
+    CHECK(fabs(x - 1024) < 1e-9 && fabs(y - 740) < 1e-9);
+
+    /* The stiffest springs, the least friction, a hard shiver and a long
+     * stall: it stays finite and near the window. */
+    xd_wobbly_init(&model, 0, 0, 300, 200, 10.0, 0.1);
+    xd_wobbly_shiver(&model, 50.0);
+    for (int frame = 0; frame < 600; frame++)
+        xd_wobbly_step(&model, frame == 300 ? 5.0 : 0.016);
+    bool finite = true, near = true;
+    for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
+        finite = finite && isfinite(model.points[i].x) && isfinite(model.points[i].y);
+        near = near && fabs(model.points[i].x) < 2000 && fabs(model.points[i].y) < 2000;
+    }
+    CHECK(finite && near);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -10940,6 +11322,13 @@ int main(void) {
     test_explorer_panes();
     test_previous_versions();
     test_file_chooser();
+    test_effects_table();
+    test_effects_file();
+    test_effects_values();
+    test_effects_conflicts();
+    test_effects_match();
+    test_effects_support();
+    test_wobbly_model();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

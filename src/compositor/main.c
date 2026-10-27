@@ -41,6 +41,7 @@
 #include "../settings/soundplay.h"
 #include "../settings/themepkg.h"
 #include "appicons.h"
+#include "effects/effects.h"
 #include "server.h"
 
 static void usage(FILE *file) {
@@ -308,6 +309,8 @@ static bool server_init(xd_server *server) {
     xd_lock_init(server);
     xd_ime_init(server);
     xd_xwayland_init(server);
+    /* Desktop Effects: effects.ini, and the OpenGL path in this build. */
+    xd_effects_init(server);
     if (server->config.virtual_input)
         xd_input_enable_virtual(server);
 
@@ -346,6 +349,8 @@ static void server_finish(xd_server *server) {
     xd_constraints_finish(server);
     xd_ime_finish(server);
     xd_input_finish(server);
+    /* The windows are gone: their effects ended with them. */
+    xd_effects_finish(server);
     /* wlroots asserts that nothing still listens to an object it
      * destroys, so detach every server-level listener first. */
     struct wl_listener *listeners[] = {
@@ -720,6 +725,8 @@ int main(int argc, char **argv) {
         server_finish(&server);
         return EXIT_FAILURE;
     }
+    /* What Desktop Effects may offer on this display. */
+    xd_effects_publish(&server, socket);
     if (!wlr_backend_start(server.backend)) {
         wlr_log(WLR_ERROR, "cannot start backend");
         server_finish(&server);

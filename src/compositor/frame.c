@@ -176,6 +176,11 @@ void xd_frame_render(xd_view *view, bool force) {
 
     wlr_scene_buffer_set_buffer(view->frame, &buf->base);
     wlr_scene_buffer_set_dest_size(view->frame, outer.width, outer.height);
+    if (view->keep_frame > 0) {
+        if (view->kept_frame != nullptr)
+            wlr_buffer_unlock(view->kept_frame);
+        view->kept_frame = wlr_buffer_lock(&buf->base);
+    }
     wlr_buffer_drop(&buf->base); /* the scene holds its own lock */
 
     view->drawn.width = outer.width;
@@ -188,6 +193,18 @@ void xd_frame_render(xd_view *view, bool force) {
     view->drawn.pressed = view->pressed;
     view->drawn.title_dirty = false;
     view->drawn.icon = icon;
+}
+
+void xd_frame_keep_pixels(xd_view *view, bool keep) {
+    view->keep_frame += keep ? 1 : -1;
+    if (view->keep_frame > 0 && view->kept_frame == nullptr) {
+        xd_frame_render(view, true);
+    } else if (view->keep_frame <= 0) {
+        view->keep_frame = 0;
+        if (view->kept_frame != nullptr)
+            wlr_buffer_unlock(view->kept_frame);
+        view->kept_frame = nullptr;
+    }
 }
 
 void xd_frame_icon_ready(void *data, const char *app_id) {

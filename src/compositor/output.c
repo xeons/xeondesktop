@@ -10,6 +10,7 @@
 
 #include "../core/alloc.h"
 #include "../settings/monitors.h"
+#include "effects/effects.h"
 #include "server.h"
 
 /* Picks a scale from the panel's physical DPI, rounded to the 25% steps
@@ -61,6 +62,8 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
     struct wlr_scene_output *so = wlr_scene_get_scene_output(out->server->scene, out->wlr_output);
     if (so == nullptr)
         return;
+    /* Effects update what the scene shows (effects/effects.h). */
+    xd_effects_output_frame(out);
     /* wlr_scene_output_commit, with our gamma ramp (gamma.c) in the same
      * commit when it changed, and adaptive sync and tearing (present.c). */
     if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out) || xd_present_pending(out)) {
@@ -74,6 +77,7 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
         }
         wlr_output_state_finish(&state);
     }
+    xd_effects_output_frame_done(out);
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_scene_output_send_frame_done(so, &now);
