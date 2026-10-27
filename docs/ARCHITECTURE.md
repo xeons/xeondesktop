@@ -45,7 +45,7 @@ they die.
 | `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
 | `xd-control` | none | Opens `control:` in `xd-files`, or one applet (`xd-control desk`). |
 | `xdg-desktop-portal-xeondesktop` | GTK3 | The xdg-desktop-portal FileChooser backend: our Open and Save As dialogs (XP's layout with 7's search box, around the folder view) for Flatpaks, GTK 4, Firefox, Chromium and GtkFileChooserNative. In libexecdir, D-Bus activated. |
-| `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
+| `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-effects`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
 
 Development tools: `xd-themeview` (renders theme previews to PNG),
 `xd-inject` (virtual pointer and keyboard, touch, pen and touchpad
@@ -260,6 +260,108 @@ and xdg-shell, they use:
   sessions never touch the user manager. A drop-in makes VirtualBox's
   guest client share the clipboard as a Wayland client.
 
+## Desktop Effects
+
+Compiz Fusion's effects, configured in Desktop Effects (`xd-effects`, laid
+out as CompizConfig Settings Manager was). Every effect is off by default:
+out of the box the desktop behaves as Windows does.
+
+**The table** (`src/settings/effects.h`, in `libxdsettings`). Each effect
+is an `xd_effect_info` in a file of its own under `src/settings/effects/`
+and one `XD_EFFECT(name)` line in `src/settings/effects_list.h`: its id
+(its group in the file), name, category (CCSM's: Effects, Window
+Management, Desktop, Accessibility, Utility), one-line description, icon
+name, whether it's drawn with OpenGL, and its options. An option has a
+key, a label, an optional tooltip and tab (`group`), a type (bool, int or
+double with a range, colour, choice with labels, key binding, mouse button
+binding, screen edges and corners, window match) and a default in the
+file's syntax. The panel builds every page from the table, so a new effect
+needs no panel code.
+
+- Settings: `xd_effects_create_settings()`, `xd_effects_load()`,
+  `xd_effects_save()`; `xd_effects_is_enabled()`, `xd_effects_get_value()`
+  and `xd_effects_set_value()` (clamped) by index; `xd_effects_get_bool()`,
+  `_int()`, `_double()`, `_color()`, `_choice()`, `_edges()`, `_text()` by
+  key, for the compositor's effects.
+- `xd_effects_find_conflicts()`: an effect's bindings and edges that clash
+  with those of the effects turned on (`xd_effects_bindings_overlap()`
+  compares two values; `xd_effects_parse_binding()` reads GTK's
+  accelerator syntax).
+- `xd_effects_match_window()`: the window-match syntax (`app_id=`,
+  `title=`, `type=normal|dialog`, `!`, `&`, `|`, globs).
+
+**The file.** `~/.config/xeondesktop/effects.ini`, a GKeyFile like
+`monitors.ini` (desktop.ini has its own parser): one group per effect,
+`Enabled=` and the options that differ from their defaults; `[Preferences]
+WarnConflicts`. Values are checked against the table (out of range:
+clamped; unparsable: the default), and saving keeps groups, keys and
+comments this build doesn't know. The panel saves each change at once; the
+compositor watches the folder (inotify, as `desktop.ini`) and applies it.
+
+**The support file.** The compositor writes
+`$XDG_RUNTIME_DIR/xeondesktop/effects-$WAYLAND_DISPLAY.ini` at startup
+(`OpenGL=`, `Reason=`, `Renderer=`) and removes it at exit; the panel greys
+out the OpenGL effects with the reason when it says so, or when there's
+none.
+
+**In the compositor** (`src/compositor/effects/`). `effects.c`, in both
+builds, loads and watches the settings and turns each `xd_effect_impl` on
+and off; an implementation is a file of its own and one
+`XD_EFFECT_IMPL(name)` line in `impl_list.h` (inside `#ifdef XD_SCENEFX`
+for OpenGL ones, whose files are `effects_fx_src` in meson.build). Its
+hooks, all optional: `enable` (returns its state), `disable`, `configure`
+(its options, after enable and on every change), `window_event` (map,
+unmap, destroy, focus, maximize/restore/snap with the box before,
+minimize, unminimize; sent from `view.c`) and `frame` (before each
+output's frame, Compiz's preparePaint). The plain `xd-compositor` compiles
+none of the OpenGL ones and reports them unavailable.
+
+**The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
+takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
+frame, from the output's frame event before the scene is drawn:
+
+1. the window's subtree (frame, surfaces, subsurfaces, popups) is drawn
+   into an offscreen buffer, `effect->texture` (`box`: where it is, layout
+   units; `u_scale`/`v_scale`: the part of the texture it fills);
+2. `begin` (the first frame) and `update(effect, seconds)` (false: over)
+   run, and `get_bounds` says where it will draw;
+3. `draw(effect, draw)` draws into a buffer covering those bounds with
+   GLES2 calls of its own, inside a pass of SceneFX's renderer (its context
+   current, the buffer bound; `draw->projection` maps layout units to it);
+4. that buffer is shown by a scene buffer node at the top of the window's
+   own tree, while the window's own buffers are drawn at opacity 0 and its
+   blur and shadow are off.
+
+So the picture is stacked where the window is (windows above stay above,
+raising it raises the picture, a fullscreen window's moves with it) and
+input still reaches the window where it really is; the scene graph damages
+what the node covered and covers. While any window effect runs, direct
+scanout is off on the outputs (`wlr_output_lock_attach_render`) and frames
+keep coming from their frame events until every effect is done; `done`
+frees the effect's data. Helpers: `xd_glfx_init_mesh()` (a grid of
+vertices with texture coordinates, `xd_glfx_set_mesh_rect()`,
+`xd_glfx_get_mesh_bounds()`), `xd_glfx_draw_mesh()` (the built-in shader)
+and `xd_glfx_draw_mesh_with()`, `xd_glfx_init_shader()` (GLSL ES 1.00,
+compiled for 2D or external textures: `XD_SAMPLER`), `xd_glfx_set_ortho()`
+and `xd_glfx_multiply()`. The frame's pixels are kept for the capture while
+an effect runs (`xd_frame_keep_pixels`): the scene graph lets go of a
+buffer once it has a texture. Buffers are whole multiples of 64 px
+(llvmpipe overruns smaller udmabuf buffers). `XD_EFFECTS_TIMING=1` logs
+frame times.
+
+**Wobbly Windows** (`wobbly.c`, the model in `wobbly_model.c`, unit-tested)
+is Compiz's wobbly plugin: a 4 x 4 grid of masses joined by springs, the
+grabbed one held at the pointer, drawn as the bicubic Bézier patch they
+are the control points of (exactly the rectangle at rest), in steps of
+15 ms. Let go, each mass is also drawn to its place on the window, so it
+settles where the window is (Compiz moved the window instead).
+
+**Testing headless.** `tests/ui/run.py` runs a scenario declared with
+`fx=True` on `xd-compositor-fx` with Mesa's llvmpipe, through EGL on no
+device (`WLR_RENDERER_FORCE_SOFTWARE`, buffers from `/dev/udmabuf`), and
+skips it where that can't draw; `XD_UI_RENDERER=gles2` uses the machine's
+GPU instead.
+
 ## Display and DPI model
 
 - All theme metrics are in **logical units** (1 unit = 1 px at 96 DPI).
@@ -395,6 +497,7 @@ separate `.cpl` you could run on its own:
 | Bluetooth Devices | BlueZ |
 | Color Management | colord; monitors registered from `wlr-output-management`, their default profile in `desktop.ini` for the compositor |
 | Date and Time | timedated; timesyncd (org.freedesktop.timesync1) and systemd for the time server and Update Now |
+| Desktop Effects | `effects.ini` (see Desktop Effects), the compositor's support file |
 | Display | `desktop.ini`, `monitors.ini`, `wlr-output-management`; Night Light's location from GeoClue |
 | Flatpak | libflatpak (remotes), the user's override files (`flatpak override --user`'s format) |
 | Folder Options | the file manager's settings, `mimeapps.list`, the user's shared-mime-info database |
@@ -472,7 +575,8 @@ separate `.cpl` you could run on its own:
   with a scratch home, no system bus and sounds logged rather than played,
   drives it with `xd-inject`, and checks windows (`xd-windows`), files,
   settings and parts of screenshots. Regressions fixed so far each get a
-  scenario that fails without the fix.
+  scenario that fails without the fix. Scenarios declared `fx` run on `xd-compositor-fx` with
+  llvmpipe (see Desktop Effects).
 - **CI**: GCC and Clang debug builds with the unit tests, optimized GCC and
   Clang builds, a GCC `-fanalyzer` build, the UI tests, and Debian, Arch
   and CachyOS packages built and installed in containers.

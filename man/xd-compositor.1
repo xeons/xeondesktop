@@ -331,6 +331,16 @@ and its variable refresh rate:
 .BR always .
 The compositor rewrites the file when display settings change.
 .TP
+.I $XDG_CONFIG_HOME/xeondesktop/effects.ini
+Desktop Effects' settings
+.RB ( xd\-effects (1)),
+applied as soon as the file is saved.
+.TP
+.I $XDG_RUNTIME_DIR/xeondesktop/effects\-$WAYLAND_DISPLAY.ini
+Written at startup for Desktop Effects: whether effects drawn with OpenGL
+can be drawn, and if not why (this build draws none; see
+.BR xd\-compositor\-fx (1)).
+.TP
 .I ~/.local/share/themes/XeonDesktop
 The generated GTK 3 theme.
 .TP

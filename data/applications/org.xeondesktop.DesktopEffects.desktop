@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Desktop Effects
+Comment=Turn on animated effects for windows and the desktop, such as wobbly windows, and change how they look
+Exec=xd-effects
+Icon=preferences-desktop-effects
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance
+Keywords=effects;animation;wobbly;compiz;opengl;3d;cube;window;
+StartupWMClass=org.xeondesktop.DesktopEffects

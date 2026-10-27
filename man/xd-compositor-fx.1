@@ -26,12 +26,24 @@ It sets
 .B XD_GLASS=1
 for the session, which tells the shell and the other programs that glass
 is blurred, so they draw Aero translucent.
+.PP
+It also draws the effects of Desktop Effects
+.RB ( xd\-effects (1))
+that need OpenGL, such as Wobbly Windows: a window an effect owns is drawn
+into a texture and the effect draws it as a mesh, in the window's place
+among the others.
 .SH OPTIONS
 As for
 .BR xd\-compositor (1).
 .SH ENVIRONMENT
 As for
-.BR xd\-compositor (1).
+.BR xd\-compositor (1),
+and:
+.TP
+.B XD_EFFECTS_TIMING
+Set: while an OpenGL effect runs, how far apart frames are and how long
+drawing them takes are logged every two seconds.
 .SH SEE ALSO
 .BR xd\-compositor (1),
+.BR xd\-effects (1),
 .BR xeondesktop\-session (1)

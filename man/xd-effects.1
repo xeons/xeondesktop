@@ -1,0 +1,66 @@
+.TH XD\-EFFECTS 1 2026-10-26 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-effects \- Desktop Effects
+.SH SYNOPSIS
+.SY xd\-effects
+.OP \-\-effect id
+.YS
+.SH DESCRIPTION
+.B xd\-effects
+is the Desktop Effects applet (Control Panel > Appearance and Themes):
+the compositor's animated effects for windows and the desktop, laid out as
+CompizConfig Settings Manager was.
+.TP
+.B Side bar
+A Filter box, which finds effects by their name, description or options
+(Enter opens the only one found); the categories (All, Effects, Window
+Management, Desktop, Accessibility, Utility); Preferences; and Close.
+.TP
+.B Effects
+Every effect under its category, with its icon, its name and a check box
+that turns it on or off at once.
+Clicking an effect opens its page.
+.TP
+.B An effect's page
+Its description, Use this effect, and its options (on tabs when it has
+many), each with a button that puts it back to its default; Back (or Esc)
+returns to the effects.
+Key and mouse button bindings are set by pressing them; screen edges and
+corners by choosing them.
+.TP
+.B Preferences
+Whether to warn when an effect turned on, or a binding chosen, uses the
+same key, mouse button or screen edge as another effect that is on; and
+Reset All, which turns every effect off and sets their options back to
+their defaults.
+.PP
+Every effect is off at first.
+Changes are saved as they are made, in
+.BR ~/.config/xeondesktop/effects.ini ,
+which
+.BR xd\-compositor (1)
+watches and applies at once.
+.PP
+Effects drawn with OpenGL (Wobbly Windows) need
+.BR xd\-compositor\-fx (1)
+drawing with OpenGL ES; under the plain compositor, in software rendering
+or a virtual machine they are greyed out with the reason, which the
+compositor gives in
+.BR $XDG_RUNTIME_DIR/xeondesktop/effects\-$WAYLAND_DISPLAY.ini .
+.SH OPTIONS
+.TP
+.BI \-\-effect " id"
+Open that effect's page; the ids are effects.ini's group names, such as
+.BR WobblyWindows .
+.SH FILES
+.TP
+.B ~/.config/xeondesktop/effects.ini
+One group per effect:
+.B Enabled=
+and the options that differ from their defaults; keys this version does
+not know are kept.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-compositor\-fx (1),
+.BR xd\-control (1),
+.BR xd\-desk (1)

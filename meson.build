@@ -692,6 +692,7 @@ install_data(
   'data/applications/org.xeondesktop.Sound.desktop',
   'data/applications/org.xeondesktop.Power.desktop',
   'data/applications/org.xeondesktop.Privacy.desktop',
+  'data/applications/org.xeondesktop.DesktopEffects.desktop',
   'data/applications/org.xeondesktop.ColorManagement.desktop',
   'data/applications/org.xeondesktop.RegionalOptions.desktop',
   'data/applications/org.xeondesktop.UserAccounts.desktop',
@@ -922,6 +923,16 @@ executable(
   'src/privacy/permissions.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
+  install: true,
+)
+
+# Desktop Effects: the compositor's Compiz-style effects (effects.ini),
+# every page built from the table in src/settings/effects.h.
+executable(
+  'xd-effects',
+  'src/effects/main.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
   install: true,
 )
 
@@ -1599,7 +1610,8 @@ configure_file(
 install_man(
   'man/xd-access.1', 'man/xd-admintools.1', 'man/xd-appwiz.1', 'man/xd-bluetooth.1',
   'man/xd-choose-file.1', 'man/xd-color.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
-  'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
+  'man/xd-diskmgmt.1', 'man/xd-effects.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1',
+  'man/xd-files.1',
   'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
   'man/xd-keys.1',

@@ -887,17 +887,12 @@ def left_edge(shot, empty, y):
     return None
 
 
-@scenario(setup=effects_setup("[WobblyWindows]\nEnabled=true\n"), fx=True)
-def wobbly_windows_drag(s):
-    """Wobbly Windows (xd-compositor-fx): dragged quickly by its title bar,
-    a window bends, its bottom lagging behind its top, so its left edge
-    isn't straight mid-drag; let go, it settles into its rectangle again
-    where it was dropped."""
-    require_opengl_effects(s)
-    empty = s.settle("desktop")
-    s.launch("xd-control")
-    s.wait_window(title="Control Panel", state="activated")
-    x, y, w, h = s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+def check_wobbles(s, empty, box):
+    """Drags the window at box (x, y, w, h) quickly right by its title bar:
+    mid-drag it bends, its bottom lagging behind its top, so its left edge
+    isn't straight; let go, it settles into its rectangle again where it
+    was dropped."""
+    x, y, w, h = box
     rows = (y + 40, y + h // 2, y + h - 12)
     start = s.shot("before")
     before = [left_edge(start, empty, row) for row in rows]
@@ -928,6 +923,76 @@ def wobbly_windows_drag(s):
     after = [left_edge(dropped, empty, row) for row in rows]
     s.check(after.count(after[0]) == 3 and abs(after[0] - (before[0] + 300)) <= 4,
             f"let go, it's square again where it was dropped ({after})")
+
+
+@scenario(setup=effects_setup("[WobblyWindows]\nEnabled=true\n"), fx=True)
+def wobbly_windows_drag(s):
+    """Wobbly Windows (xd-compositor-fx): dragged quickly by its title bar,
+    a window bends, its bottom lagging behind its top, so its left edge
+    isn't straight mid-drag; let go, it settles into its rectangle again
+    where it was dropped."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    check_wobbles(s, empty, s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40)))
+
+
+def effects_ini_value(s, group, key):
+    return s.ini("effects.ini").get(group, key, fallback=None)
+
+
+@scenario(fx=True)
+def desktop_effects_panel(s):
+    """Desktop Effects on xd-compositor-fx: typing in the Filter box finds
+    Wobbly Windows and Enter opens its page; Use this effect (Space) turns
+    it on, saved at once; Spring constant (Alt+S) set to 5.5 is saved; and
+    the compositor applies it: the panel's own window wobbles when
+    dragged."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-effects")
+    s.wait_window(title="Desktop Effects", state="activated")
+    grid = s.settle("grid")
+    s.inject("type", "zzz", "sleep", 300)
+    nothing = s.settle("nothing-found")
+    s.check(nothing.differs(grid, (300, 80, 400, 60), step=2) > 0.05,
+            "a filter finding nothing leaves no effect shown")
+    s.inject("key", "ctrl+a", "type", "wobbly", "sleep", 300)
+    found = s.settle("filtered")
+    s.check(found.differs(grid, (300, 80, 400, 60), step=2) < 0.01,
+            "one finding Wobbly Windows shows it again")
+    s.inject("key", "Return")
+    s.settle("page")
+    s.inject("key", "space")
+    s.wait(lambda: effects_ini_value(s, "WobblyWindows", "Enabled") == "true",
+           "Wobbly Windows turned on in effects.ini")
+    s.log("ok: Use this effect saved Enabled=true")
+    s.inject("key", "alt+s", "sleep", 200, "key", "ctrl+a", "type", "5.5", "key", "Tab")
+    s.wait(lambda: effects_ini_value(s, "WobblyWindows", "SpringConstant") == "5.5",
+           "SpringConstant=5.5 in effects.ini")
+    s.log("ok: Spring constant saved")
+    s.check(effects_ini_value(s, "WobblyWindows", "Friction") is None,
+            "options left at their defaults aren't written")
+    page = s.settle("page-set")
+    check_wobbles(s, empty, page.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40)))
+
+
+@scenario()
+def desktop_effects_unavailable(s):
+    """Under the plain compositor (pixman) OpenGL effects are unavailable,
+    and the compositor says why; Desktop Effects shows Wobbly Windows' page
+    but can't turn it on (Use this effect is greyed out)."""
+    support = effects_support()
+    s.check(support is not None and support.get("OpenGL") == "false" and support.get("Reason"),
+            f"the compositor says OpenGL effects are unavailable, and why ({support})")
+    s.launch("xd-effects", "--effect", "WobblyWindows")
+    s.wait_window(title="Desktop Effects", state="activated")
+    s.settle("page")
+    s.inject("key", "space", "sleep", 500)
+    s.settle("after-space")
+    s.check(effects_ini_value(s, "WobblyWindows", "Enabled") != "true",
+            "Wobbly Windows stays off")
 
 
 @scenario(AERO_INI)
