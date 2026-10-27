@@ -43,6 +43,14 @@ gboolean xd_extract_archive(const char *archive, const char *into, const char *r
                             GCancellable *cancel, XdExtractProgress progress, gpointer data,
                             GError **error);
 
+/* Lists an archive's entries (paths made safe as above), calling `func`
+ * for each until it returns FALSE: the search's "Include compressed
+ * files". */
+typedef gboolean (*XdArchiveEntryFunc)(const char *path, gboolean is_dir, guint64 size,
+                                       gint64 modified, gpointer data);
+gboolean xd_archive_list(const char *archive, GCancellable *cancel, XdArchiveEntryFunc func,
+                         gpointer data, GError **error);
+
 G_END_DECLS
 
 #endif

@@ -44,6 +44,7 @@
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
 #include "../src/files/extract.h"
+#include "../src/files/search.h"
 #if XD_HAVE_LIBARCHIVE
 #include <archive.h>
 #include <archive_entry.h>
@@ -7817,6 +7818,784 @@ static void test_gpu(void) {
     g_free(root);
 }
 
+/* xd-files' search: AQS parsed into queries, names, words, wildcards and
+ * regular expressions matched, dates and sizes as ranges, contents read
+ * as UTF-8, UTF-16 and bytes, saved searches, highlight spans, the walk. */
+static GDateTime *search_now(void) {
+    /* A Wednesday afternoon; weeks start on Monday in these tests. */
+    return g_date_time_new_local(2026, 10, 28, 15, 0, 0);
+}
+
+static int64_t local_day(int year, int month, int day) {
+    GDateTime *date_time = g_date_time_new_local(year, month, day, 0, 0, 0);
+    int64_t unix_time = g_date_time_to_unix(date_time);
+    g_date_time_unref(date_time);
+    return unix_time;
+}
+
+/* The query for `text` with 7's defaults, described ("" if it failed). */
+static char *describe_aqs(const char *text) {
+    xd_search_criteria flags;
+    xd_search_criteria_init(&flags);
+    GDateTime *now = search_now();
+    xd_search_query *query = xd_search_query_parse(text, &flags, now, 1, nullptr);
+    g_date_time_unref(now);
+    char *described = query != nullptr ? xd_search_query_describe(query) : g_strdup("");
+    xd_search_query_unref(query);
+    return described;
+}
+
+static bool describes_as(const char *text, const char *expected) {
+    char *described = describe_aqs(text);
+    bool same = strcmp(described, expected) == 0;
+    if (!same)
+        fprintf(stderr, "  AQS %s -> %s (expected %s)\n", text, described, expected);
+    g_free(described);
+    return same;
+}
+
+typedef struct search_file {
+    const char *name;
+    bool is_dir;
+    uint64_t size;
+    int64_t modified;
+    const char *content_type;
+    const char *contents;
+    size_t contents_length;
+} search_file;
+
+static GBytes *read_search_file(const void *data) {
+    const search_file *file = data;
+    if (file->contents == nullptr)
+        return nullptr;
+    return g_bytes_new(file->contents, file->contents_length > 0 ? file->contents_length
+                                                                 : strlen(file->contents));
+}
+
+static bool query_matches(const xd_search_query *query, const search_file *file) {
+    xd_search_item item = {
+        .name = file->name,
+        .is_dir = file->is_dir,
+        .size = file->size,
+        .modified = file->modified,
+        .content_type = file->content_type,
+        .read_contents = read_search_file,
+        .read_data = file,
+    };
+    bool matches = xd_search_query_matches(query, &item);
+    xd_search_item_clear(&item);
+    return matches;
+}
+
+/* Whether 7's box text `text` finds `file`. */
+static bool aqs_finds(const char *text, const search_file *file, bool partial,
+                      bool names_and_contents) {
+    xd_search_criteria flags;
+    xd_search_criteria_init(&flags);
+    flags.partial = partial;
+    flags.names_and_contents = names_and_contents;
+    GDateTime *now = search_now();
+    GError *error = nullptr;
+    xd_search_query *query = xd_search_query_parse(text, &flags, now, 1, &error);
+    g_date_time_unref(now);
+    if (query == nullptr) {
+        fprintf(stderr, "  AQS %s: %s\n", text, error->message);
+        g_error_free(error);
+        return false;
+    }
+    bool matches = query_matches(query, file);
+    xd_search_query_unref(query);
+    return matches;
+}
+
+static bool aqs_finds_name(const char *text, const char *name) {
+    search_file file = {.name = name, .content_type = "text/plain", .size = 10,
+                        .modified = local_day(2026, 10, 28)};
+    return aqs_finds(text, &file, true, false);
+}
+
+static char *aqs_error(const char *text) {
+    xd_search_criteria flags;
+    xd_search_criteria_init(&flags);
+    GError *error = nullptr;
+    GDateTime *now = search_now();
+    xd_search_query *query = xd_search_query_parse(text, &flags, now, 1, &error);
+    g_date_time_unref(now);
+    xd_search_query_unref(query);
+    if (error == nullptr)
+        return nullptr;
+    char *message = g_strdup(error->message);
+    g_error_free(error);
+    return message;
+}
+
+static void test_search_aqs(void) {
+    /* Bare words: all of them (implicit AND), anywhere in the name. */
+    CHECK(describes_as("report", "any~i:report"));
+    CHECK(describes_as("annual  report", "(AND any~i:annual any~i:report)"));
+    CHECK(describes_as("", "(AND)"));
+    CHECK(describes_as("   ", "(AND)"));
+    CHECK(aqs_finds_name("report", "Annual REPORT.odt"));
+    CHECK(aqs_finds_name("annual report", "report annual.odt"));
+    CHECK(!aqs_finds_name("annual report", "report.odt"));
+    CHECK(aqs_finds_name("", "anything"));
+    /* AND, OR, NOT (upper case only), -term, grouping. */
+    CHECK(describes_as("a OR b", "(OR any~i:a any~i:b)"));
+    CHECK(describes_as("a AND b", "(AND any~i:a any~i:b)"));
+    CHECK(describes_as("a or b", "(AND any~i:a any~i:or any~i:b)"));
+    CHECK(describes_as("NOT a", "(NOT any~i:a)"));
+    CHECK(describes_as("-a b", "(AND (NOT any~i:a) any~i:b)"));
+    CHECK(describes_as("(a OR b) c", "(AND (OR any~i:a any~i:b) any~i:c)"));
+    CHECK(describes_as("a OR b c", "(OR any~i:a (AND any~i:b any~i:c))"));
+    CHECK(aqs_finds_name("cat OR dog", "hotdog.png"));
+    CHECK(!aqs_finds_name("cat -dog", "catdog.png"));
+    CHECK(aqs_finds_name("cat -dog", "cat.png"));
+    CHECK(aqs_finds_name("NOT (x OR y) cat", "cat.png"));
+    /* Properties and operators. */
+    CHECK(describes_as("name:report", "name~i:report"));
+    CHECK(describes_as("NAME:=report.txt", "name=i:report.txt"));
+    CHECK(describes_as("name:~rep", "name~i:rep"));
+    CHECK(describes_as("name:<>a.txt", "(NOT name=i:a.txt)"));
+    CHECK(describes_as("name:(a OR b)", "(OR name~i:a name~i:b)"));
+    CHECK(aqs_finds_name("name:=report.txt", "Report.TXT"));
+    CHECK(!aqs_finds_name("name:=report.txt", "report.txt.bak"));
+    CHECK(describes_as("kind:picture", "kind:0x4"));
+    CHECK(describes_as("kind:pictures OR kind:music", "(OR kind:0x4 kind:0x8)"));
+    CHECK(describes_as("kind:nonsense", "kind:0x0"));
+    CHECK(describes_as("ext:.TXT", "type:ext=txt"));
+    CHECK(describes_as("type:image/png", "type:mime=image/png"));
+    CHECK(describes_as("type:jpeg", "type:ext=jpeg|desc=jpeg"));
+    CHECK(describes_as("type:\"plain text\"", "type:|desc=plain text"));
+    /* Exact phrases, wildcards. */
+    CHECK(describes_as("\"annual report\"", "any~i:annual report"));
+    CHECK(aqs_finds_name("\"annual report\"", "The Annual Report.odt"));
+    CHECK(!aqs_finds_name("\"annual report\"", "report annual.odt"));
+    CHECK(describes_as("*.txt", "any*i:*.txt"));
+    CHECK(aqs_finds_name("*.TXT", "notes.txt"));
+    CHECK(!aqs_finds_name("*.txt", "notes.txt.bak"));
+    CHECK(aqs_finds_name("l?tter*", "Letter to Ann.odt"));
+    CHECK(!aqs_finds_name("l?tter*", "a letter.odt"));
+    CHECK(aqs_finds_name("\"*\"", "a*b"));
+    CHECK(!aqs_finds_name("\"*\"", "ab"));
+    /* Unknown properties are words; malformed text is read as best it can. */
+    CHECK(describes_as("foo:bar", "any~i:foo:bar"));
+    CHECK(describes_as("(a b", "(AND any~i:a any~i:b)"));
+    CHECK(describes_as("a) b", "(AND any~i:a any~i:b)"));
+    CHECK(describes_as(")))", "(AND)"));
+    CHECK(describes_as("((((", "(AND)"));
+    CHECK(describes_as("OR a OR", "any~i:a"));
+    CHECK(describes_as("a AND", "any~i:a"));
+    CHECK(describes_as("NOT", "(AND)"));
+    CHECK(describes_as("a - b", "(AND any~i:a any~i:b)"));
+    CHECK(describes_as("size:", "(AND)"));
+    CHECK(describes_as("name:", "(AND)"));
+    CHECK(describes_as("\"unclosed phrase", "any~i:unclosed phrase"));
+    CHECK(describes_as("AND OR NOT", "(AND)"));
+    /* Find partial matches off: whole words only. */
+    search_file letter = {.name = "my report.txt", .content_type = "text/plain"};
+    CHECK(aqs_finds("rep", &letter, true, false));
+    CHECK(!aqs_finds("rep", &letter, false, false));
+    CHECK(aqs_finds("report", &letter, false, false));
+    /* Always search file names and contents. */
+    search_file note = {.name = "note.txt", .content_type = "text/plain",
+                        .contents = "remember the milk"};
+    CHECK(!aqs_finds("milk", &note, true, false));
+    CHECK(aqs_finds("milk", &note, true, true));
+    CHECK(aqs_finds("content:milk", &note, true, false));
+    CHECK(aqs_finds("content:\"the milk\"", &note, true, false));
+    CHECK(!aqs_finds("content:\"milk the\"", &note, true, false));
+    CHECK(describes_as("content:milk", "content~i:milk"));
+}
+
+static void test_search_regex(void) {
+    /* /pattern/ names, /i ignores case, content:/pattern/ contents. */
+    CHECK(describes_as("/^rep.*t$/", "any/:^rep.*t$"));
+    CHECK(describes_as("/^Rep/i", "any/i:^Rep"));
+    CHECK(describes_as("name:/a\\/b/", "name/:a/b"));
+    CHECK(aqs_finds_name("/^rep.*\\.txt$/", "report.txt"));
+    CHECK(!aqs_finds_name("/^rep.*\\.txt$/", "Report.txt"));
+    CHECK(aqs_finds_name("/^rep.*\\.txt$/i", "Report.txt"));
+    CHECK(aqs_finds_name("/[0-9]{4}/ -/draft/", "taxes 2026.pdf"));
+    CHECK(!aqs_finds_name("/[0-9]{4}/ -/draft/", "taxes 2026 draft.pdf"));
+    search_file note = {.name = "a.txt", .content_type = "text/plain",
+                        .contents = "Invoice no. 4711\nDue soon"};
+    CHECK(aqs_finds("content:/no\\. \\d+/", &note, true, false));
+    CHECK(!aqs_finds("content:/^due/", &note, true, false));
+    CHECK(aqs_finds("content:/(?im)^due/", &note, true, false));
+    /* Invalid patterns are plain errors, never a crash or nothing found. */
+    char *message = aqs_error("/a(/");
+    CHECK(message != nullptr &&
+          strstr(message, "\"a(\" isn't a valid regular expression") != nullptr);
+    g_free(message);
+    message = aqs_error("content:/[z-a]/");
+    CHECK(message != nullptr && strstr(message, "isn't a valid regular expression") != nullptr);
+    g_free(message);
+    message = aqs_error("good /*/");
+    CHECK(message != nullptr);
+    g_free(message);
+    /* An unclosed /pattern runs to the end. */
+    CHECK(describes_as("/abc", "any/:abc"));
+    /* With /pattern/ turned off in Folder Options, a slash is a letter. */
+    xd_search_criteria flags;
+    xd_search_criteria_init(&flags);
+    flags.allow_regex = false;
+    xd_search_query *query = xd_search_query_parse("/a(/", &flags, nullptr, 1, nullptr);
+    CHECK(query != nullptr);
+    if (query != nullptr) {
+        char *described = xd_search_query_describe(query);
+        CHECK(strcmp(described, "any~i:/a/") == 0 || strcmp(described, "(AND any~i:/a any~i:/)") == 0);
+        g_free(described);
+    }
+    xd_search_query_unref(query);
+    /* XP's Use regular expressions: the name and phrase fields. */
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.regex = true;
+    criteria.name = g_strdup("^(a|b)\\d+,x$");
+    criteria.contents = g_strdup("fo+");
+    GError *error = nullptr;
+    query = xd_search_query_new(&criteria, nullptr, 1, &error);
+    CHECK(query != nullptr && error == nullptr);
+    if (query != nullptr) {
+        search_file hit = {.name = "B12,x", .contents = "foooo"};
+        search_file miss = {.name = "c12,x", .contents = "foooo"};
+        CHECK(query_matches(query, &hit));
+        CHECK(!query_matches(query, &miss));
+    }
+    xd_search_query_unref(query);
+    g_free(criteria.name);
+    criteria.name = g_strdup("(unclosed");
+    query = xd_search_query_new(&criteria, nullptr, 1, &error);
+    CHECK(query == nullptr && error != nullptr &&
+          strstr(error->message, "\"(unclosed\" isn't a valid regular expression") != nullptr);
+    g_clear_error(&error);
+    xd_search_criteria_clear(&criteria);
+}
+
+static bool range_is(const char *text, const char *property, int64_t low, int64_t high) {
+    char low_text[32], high_text[32];
+    if (low == INT64_MIN)
+        g_strlcpy(low_text, "-inf", sizeof(low_text));
+    else
+        g_snprintf(low_text, sizeof(low_text), "%" G_GINT64_FORMAT, (gint64)low);
+    if (high == INT64_MAX)
+        g_strlcpy(high_text, "inf", sizeof(high_text));
+    else
+        g_snprintf(high_text, sizeof(high_text), "%" G_GINT64_FORMAT, (gint64)high);
+    char *expected = g_strdup_printf("%s[%s,%s)", property, low_text, high_text);
+    bool same = describes_as(text, expected);
+    g_free(expected);
+    return same;
+}
+
+static void test_search_ranges(void) {
+    const int64_t kb = 1024;
+    /* 7's size words. */
+    CHECK(range_is("size:empty", "size", 0, 1));
+    CHECK(range_is("size:tiny", "size", 0, 10 * kb));
+    CHECK(range_is("size:small", "size", 10 * kb, 100 * kb));
+    CHECK(range_is("size:Medium", "size", 100 * kb, 1024 * kb));
+    CHECK(range_is("size:large", "size", 1024 * kb, 16 * 1024 * kb));
+    CHECK(range_is("size:huge", "size", 16 * 1024 * kb, 128 * 1024 * kb));
+    CHECK(range_is("size:gigantic", "size", 128 * 1024 * kb, INT64_MAX));
+    /* Numbers, units, comparisons and ranges. */
+    CHECK(range_is("size:100", "size", 100, 101));
+    CHECK(range_is("size:=2KB", "size", 2048, 2049));
+    CHECK(range_is("size:>5MB", "size", 5 * 1024 * kb + 1, INT64_MAX));
+    CHECK(range_is("size:>=5mb", "size", 5 * 1024 * kb, INT64_MAX));
+    CHECK(range_is("size:<1k", "size", INT64_MIN, 1024));
+    CHECK(range_is("size:<=1.5KB", "size", INT64_MIN, 1537));
+    CHECK(range_is("size:1KB..2KB", "size", 1024, 2049));
+    CHECK(range_is("size:small..medium", "size", 10 * kb, 1024 * kb));
+    CHECK(range_is("size:>large", "size", 16 * 1024 * kb, INT64_MAX));
+    char *message = aqs_error("size:enormous");
+    CHECK(message != nullptr && strcmp(message, "\"enormous\" isn't a size.") == 0);
+    g_free(message);
+    message = aqs_error("size:5XB");
+    CHECK(message != nullptr);
+    g_free(message);
+    message = aqs_error("size:-5");
+    CHECK(message != nullptr);
+    g_free(message);
+    /* Folders have no size. */
+    search_file folder = {.name = "f", .is_dir = true, .size = 0};
+    CHECK(!aqs_finds("size:empty", &folder, true, false));
+    search_file empty = {.name = "e", .size = 0, .content_type = "text/plain"};
+    CHECK(aqs_finds("size:empty", &empty, true, false));
+    CHECK(!aqs_finds("size:>0", &empty, true, false));
+
+    /* Date words, from Wednesday 28 October 2026, weeks from Monday. */
+    CHECK(range_is("datemodified:today", "modified", local_day(2026, 10, 28),
+                   local_day(2026, 10, 29)));
+    CHECK(range_is("modified:yesterday", "modified", local_day(2026, 10, 27),
+                   local_day(2026, 10, 28)));
+    CHECK(range_is("datemodified:this week", "modified", local_day(2026, 10, 26),
+                   local_day(2026, 11, 2)));
+    CHECK(range_is("datemodified:last week", "modified", local_day(2026, 10, 19),
+                   local_day(2026, 10, 26)));
+    CHECK(range_is("datecreated:this month", "created", local_day(2026, 10, 1),
+                   local_day(2026, 11, 1)));
+    CHECK(range_is("created:\"last month\"", "created", local_day(2026, 9, 1),
+                   local_day(2026, 10, 1)));
+    CHECK(range_is("dateaccessed:this year", "accessed", local_day(2026, 1, 1),
+                   local_day(2027, 1, 1)));
+    CHECK(range_is("accessed:last year", "accessed", local_day(2025, 1, 1),
+                   local_day(2026, 1, 1)));
+    CHECK(range_is("datemodified:earlier this week", "modified", local_day(2026, 10, 26),
+                   local_day(2026, 10, 27)));
+    CHECK(range_is("datemodified:earlier this month", "modified", local_day(2026, 10, 1),
+                   local_day(2026, 10, 19)));
+    CHECK(range_is("datemodified:earlier this year", "modified", local_day(2026, 1, 1),
+                   local_day(2026, 10, 1)));
+    CHECK(range_is("datemodified:a long time ago", "modified", INT64_MIN,
+                   local_day(2026, 1, 1)));
+    CHECK(range_is("datemodified:2025", "modified", local_day(2025, 1, 1),
+                   local_day(2026, 1, 1)));
+    CHECK(range_is("datemodified:2026-03-05", "modified", local_day(2026, 3, 5),
+                   local_day(2026, 3, 6)));
+    CHECK(range_is("datemodified:>2026-03-05", "modified", local_day(2026, 3, 6), INT64_MAX));
+    CHECK(range_is("datemodified:<=2026-03-05", "modified", INT64_MIN, local_day(2026, 3, 6)));
+    CHECK(range_is("datemodified:2026-03-05..2026-03-07", "modified", local_day(2026, 3, 5),
+                   local_day(2026, 3, 8)));
+    message = aqs_error("datemodified:someday");
+    CHECK(message != nullptr && strcmp(message, "\"someday\" isn't a date.") == 0);
+    g_free(message);
+    /* "this" alone isn't a date. */
+    message = aqs_error("datemodified:this cat");
+    CHECK(message != nullptr && strcmp(message, "\"this\" isn't a date.") == 0);
+    g_free(message);
+    /* The locale's own format (C: month/day/year). */
+    CHECK(range_is("datemodified:10/27/2026", "modified", local_day(2026, 10, 27),
+                   local_day(2026, 10, 28)));
+    search_file old = {.name = "old.txt", .modified = local_day(2024, 5, 1),
+                       .content_type = "text/plain"};
+    CHECK(aqs_finds("datemodified:a long time ago", &old, true, false));
+    CHECK(!aqs_finds("datemodified:this year", &old, true, false));
+    search_file unknown = {.name = "x"};
+    CHECK(!aqs_finds("datemodified:a long time ago", &unknown, true, false));
+
+    /* XP's fields. */
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.size = XD_SEARCH_SIZE_SMALL;
+    criteria.when = XD_SEARCH_WHEN_DATES;
+    criteria.date_property = XD_SEARCH_PROP_CREATED;
+    criteria.date_from = g_strdup("2026-10-01");
+    criteria.date_to = g_strdup("2026-10-27");
+    GDateTime *now = search_now();
+    xd_search_query *query = xd_search_query_new(&criteria, now, 1, nullptr);
+    CHECK(query != nullptr);
+    if (query != nullptr) {
+        char *described = xd_search_query_describe(query);
+        char *expected = g_strdup_printf("(AND created[%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT
+                                         ") size[0,102400))",
+                                         (gint64)local_day(2026, 10, 1),
+                                         (gint64)local_day(2026, 10, 28));
+        CHECK(strcmp(described, expected) == 0);
+        g_free(expected);
+        g_free(described);
+    }
+    xd_search_query_unref(query);
+    criteria.when = XD_SEARCH_WHEN_WEEK;
+    criteria.size = XD_SEARCH_SIZE_AT_MOST;
+    criteria.size_kb = 3;
+    query = xd_search_query_new(&criteria, now, 1, nullptr);
+    if (query != nullptr) {
+        char *described = xd_search_query_describe(query);
+        char *expected = g_strdup_printf("(AND created[%" G_GINT64_FORMAT ",inf) size[0,3073))",
+                                         (gint64)(g_date_time_to_unix(now) - 7 * 86400));
+        CHECK(strcmp(described, expected) == 0);
+        g_free(expected);
+        g_free(described);
+    }
+    xd_search_query_unref(query);
+    criteria.size = XD_SEARCH_SIZE_LARGE;
+    criteria.when = XD_SEARCH_WHEN_DATES;
+    g_free(criteria.date_to);
+    criteria.date_to = g_strdup("not a date");
+    GError *error = nullptr;
+    query = xd_search_query_new(&criteria, now, 1, &error);
+    CHECK(query == nullptr && error != nullptr);
+    g_clear_error(&error);
+    g_date_time_unref(now);
+    xd_search_criteria_clear(&criteria);
+}
+
+static void test_search_contents_and_kinds(void) {
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.contents = g_strdup("Grüße");
+    xd_search_query *query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    CHECK(query != nullptr && xd_search_query_needs_contents(query));
+    if (query != nullptr) {
+        search_file utf8 = {.name = "a", .contents = "Viele GRÜßE"};
+        CHECK(query_matches(query, &utf8));
+        /* UTF-16 with its byte order mark. */
+        static const char utf16[] = "\xFF\xFEG\0r\0\xFC\0\xDF\0" "e\0";
+        search_file wide = {.name = "b", .contents = utf16, .contents_length = sizeof(utf16) - 1};
+        CHECK(query_matches(query, &wide));
+        search_file none = {.name = "c", .contents = "Gruesse"};
+        CHECK(!query_matches(query, &none));
+        search_file unread = {.name = "d"};
+        CHECK(!query_matches(query, &unread));
+        search_file folder = {.name = "Grüße", .is_dir = true, .contents = "Grüße"};
+        CHECK(!query_matches(query, &folder));
+    }
+    xd_search_query_unref(query);
+    /* Binary files: their bytes, ASCII letters either case, and the phrase
+     * as UTF-16LE too. */
+    g_free(criteria.contents);
+    criteria.contents = g_strdup("Hello World");
+    query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    if (query != nullptr) {
+        static const char binary[] = "\x7F" "ELF\0\0\x01hello world\xFF\xFE";
+        search_file elf = {.name = "a.out", .contents = binary,
+                           .contents_length = sizeof(binary) - 1};
+        CHECK(query_matches(query, &elf));
+        static const char wide[] = "\0\x01H\0e\0l\0l\0o\0 \0W\0o\0r\0l\0d\0\xFF";
+        search_file exe = {.name = "x.exe", .contents = wide, .contents_length = sizeof(wide) - 1};
+        CHECK(query_matches(query, &exe));
+        static const char other[] = "\0\x01Hello\0World";
+        search_file apart = {.name = "y", .contents = other, .contents_length = sizeof(other) - 1};
+        CHECK(!query_matches(query, &apart));
+    }
+    xd_search_query_unref(query);
+    /* Case sensitive. */
+    criteria.case_sensitive = true;
+    query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    if (query != nullptr) {
+        search_file lower = {.name = "a", .contents = "hello world"};
+        search_file exact = {.name = "b", .contents = "Hello World!"};
+        CHECK(!query_matches(query, &lower));
+        CHECK(query_matches(query, &exact));
+    }
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&criteria);
+
+    /* Kinds. */
+    CHECK(xd_search_kind_of("image/png", false, false) == XD_SEARCH_KIND_PICTURE);
+    CHECK(xd_search_kind_of("audio/mpeg", false, false) == XD_SEARCH_KIND_MUSIC);
+    CHECK(xd_search_kind_of("video/mp4", false, false) == XD_SEARCH_KIND_VIDEO);
+    CHECK(xd_search_kind_of("text/plain", false, false) == XD_SEARCH_KIND_DOCUMENT);
+    CHECK(xd_search_kind_of("application/pdf", false, false) == XD_SEARCH_KIND_DOCUMENT);
+    CHECK(xd_search_kind_of("application/x-shellscript", false, false) ==
+          XD_SEARCH_KIND_PROGRAM);
+    CHECK(xd_search_kind_of("text/calendar", false, false) == XD_SEARCH_KIND_CALENDAR);
+    CHECK(xd_search_kind_of("image/png", false, true) == XD_SEARCH_KIND_LINK);
+    CHECK(xd_search_kind_of(nullptr, true, false) == XD_SEARCH_KIND_FOLDER);
+    CHECK(xd_search_kind_of(nullptr, false, false) == XD_SEARCH_KIND_OTHER);
+    CHECK(xd_search_kind_from_name("Movies") == XD_SEARCH_KIND_VIDEO);
+    CHECK(xd_search_kind_from_name("nonsense") == XD_SEARCH_KIND_NONE);
+    search_file photo = {.name = "beach.jpg", .content_type = "image/jpeg"};
+    CHECK(aqs_finds("kind:picture", &photo, true, false));
+    CHECK(!aqs_finds("kind:music", &photo, true, false));
+    CHECK(aqs_finds("ext:jpg", &photo, true, false));
+    CHECK(aqs_finds("type:.JPG", &photo, true, false));
+    CHECK(aqs_finds("type:image/jpeg", &photo, true, false));
+    CHECK(!aqs_finds("ext:png", &photo, true, false));
+    /* XP's Pictures, music, or video page: any of the kinds ticked. */
+    xd_search_criteria media;
+    xd_search_criteria_init(&media);
+    media.kinds = XD_SEARCH_KIND_PICTURE | XD_SEARCH_KIND_VIDEO;
+    media.name = g_strdup("beach, sea");
+    query = xd_search_query_new(&media, nullptr, 1, nullptr);
+    if (query != nullptr) {
+        search_file sea = {.name = "Sea.mp4", .content_type = "video/mp4"};
+        search_file song = {.name = "beach.mp3", .content_type = "audio/mpeg"};
+        CHECK(query_matches(query, &photo));
+        CHECK(query_matches(query, &sea));
+        CHECK(!query_matches(query, &song));
+        char *described = xd_search_query_describe(query);
+        CHECK(strcmp(described, "(AND (OR name~i:beach name~i:sea) kind:0x14)") == 0);
+        g_free(described);
+    }
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&media);
+}
+
+static bool spans_are(const char *text, const char *label, const char *expected) {
+    xd_search_criteria flags;
+    xd_search_criteria_init(&flags);
+    xd_search_query *query = xd_search_query_parse(text, &flags, nullptr, 1, nullptr);
+    GArray *spans = xd_search_query_name_spans(query, label);
+    GString *got = g_string_new(nullptr);
+    for (guint i = 0; i < spans->len; i++) {
+        xd_search_span span = g_array_index(spans, xd_search_span, i);
+        g_string_append_printf(got, "%s%zu-%zu", i > 0 ? "," : "", span.start, span.end);
+    }
+    bool same = strcmp(got->str, expected) == 0;
+    if (!same)
+        fprintf(stderr, "  spans of %s in %s: %s (expected %s)\n", text, label, got->str,
+                expected);
+    g_string_free(got, TRUE);
+    g_array_unref(spans);
+    xd_search_query_unref(query);
+    return same;
+}
+
+static void test_search_spans(void) {
+    /* Substrings, every one, ignoring case. */
+    CHECK(spans_are("rep", "Report rep.txt", "0-3,7-10"));
+    CHECK(spans_are("report notes", "notes report", "0-5,6-12"));
+    /* UTF-8: byte ranges of the letters, whatever their case. */
+    CHECK(spans_are("grü", "Ärger GRÜN", "7-11"));
+    CHECK(spans_are("é", "café Été", "3-5,6-8,9-11"));
+    /* Wildcards: what their letters cover. */
+    CHECK(spans_are("*.txt", "notes.txt", "5-9"));
+    CHECK(spans_are("rep*", "Report.odt", "0-3"));
+    CHECK(spans_are("l?tter*", "letter.odt", "0-6"));
+    CHECK(spans_are("*.txt", "notes.txt.bak", ""));
+    CHECK(spans_are("*", "anything", ""));
+    /* Regular expressions: each match. */
+    CHECK(spans_are("/[0-9]+/", "a1 b22 c333", "1-2,4-6,8-11"));
+    CHECK(spans_are("/^x/", "xyz", "0-1"));
+    CHECK(spans_are("/ü+/i", "MÜÜde", "1-5"));
+    /* OR: each that matched; NOT: none. */
+    CHECK(spans_are("cat OR dog", "dog.png", "0-3"));
+    CHECK(spans_are("cat -dog", "cat dog", "0-3"));
+    CHECK(spans_are("name:=a.txt", "A.TXT", "0-5"));
+    CHECK(spans_are("kind:picture size:small", "photo.png", ""));
+    CHECK(spans_are("content:milk", "milk.txt", ""));
+    /* Overlapping matches merge. */
+    CHECK(spans_are("abc bcd", "abcde", "0-4"));
+    CHECK(spans_are("rep", "", ""));
+    /* XP's fields: each name. */
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.name = g_strdup("*.odt; report");
+    xd_search_query *query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    GArray *spans = xd_search_query_name_spans(query, "report.odt");
+    /* "report" and ".odt" touch: one span. */
+    CHECK(spans->len == 1 && g_array_index(spans, xd_search_span, 0).start == 0 &&
+          g_array_index(spans, xd_search_span, 0).end == 10);
+    g_array_unref(spans);
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&criteria);
+}
+
+static void test_search_saved(void) {
+    char *dir = g_dir_make_tmp("xd-search-XXXXXX", nullptr);
+    CHECK(dir != nullptr);
+    if (dir == nullptr)
+        return;
+    char *path = g_build_filename(dir, "Files named report.xdsearch", nullptr);
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.name = g_strdup("report; *.odt");
+    criteria.contents = g_strdup("quarterly = results");
+    const char *const look_in[] = {"/home/user/Documents", "/media/My Disk", nullptr};
+    criteria.look_in = g_strsplit("/home/user/Documents|/media/My Disk", "|", -1);
+    criteria.kinds = XD_SEARCH_KIND_PICTURE | XD_SEARCH_KIND_MUSIC;
+    criteria.content_type = g_strdup("image/png");
+    criteria.date_property = XD_SEARCH_PROP_ACCESSED;
+    criteria.when = XD_SEARCH_WHEN_DATES;
+    criteria.date_from = g_strdup("2026-01-02");
+    criteria.date_to = g_strdup("2026-03-04");
+    criteria.size = XD_SEARCH_SIZE_AT_LEAST;
+    criteria.size_kb = 250;
+    criteria.query = g_strdup("kind:music OR /^x/i");
+    criteria.subfolders = false;
+    criteria.case_sensitive = true;
+    criteria.hidden = true;
+    criteria.system = false;
+    criteria.regex = true;
+    criteria.archives = true;
+    criteria.partial = false;
+    criteria.names_and_contents = true;
+    criteria.allow_regex = false;
+    GError *error = nullptr;
+    CHECK(xd_search_criteria_save(&criteria, path, &error));
+    g_clear_error(&error);
+    xd_search_criteria loaded;
+    xd_search_criteria_init(&loaded);
+    CHECK(xd_search_criteria_load(&loaded, path, &error));
+    g_clear_error(&error);
+    CHECK(g_strcmp0(loaded.name, criteria.name) == 0);
+    CHECK(g_strcmp0(loaded.contents, criteria.contents) == 0);
+    CHECK(loaded.look_in != nullptr && g_strv_equal((const char *const *)loaded.look_in, look_in));
+    CHECK(loaded.kinds == criteria.kinds);
+    CHECK(g_strcmp0(loaded.content_type, "image/png") == 0);
+    CHECK(loaded.date_property == XD_SEARCH_PROP_ACCESSED);
+    CHECK(loaded.when == XD_SEARCH_WHEN_DATES);
+    CHECK(g_strcmp0(loaded.date_from, "2026-01-02") == 0 &&
+          g_strcmp0(loaded.date_to, "2026-03-04") == 0);
+    CHECK(loaded.size == XD_SEARCH_SIZE_AT_LEAST && loaded.size_kb == 250);
+    CHECK(g_strcmp0(loaded.query, criteria.query) == 0);
+    CHECK(!loaded.subfolders && loaded.case_sensitive && loaded.hidden && !loaded.system &&
+          loaded.regex && loaded.archives && !loaded.partial && loaded.names_and_contents &&
+          !loaded.allow_regex);
+    char *title = xd_search_criteria_title(&loaded);
+    CHECK(strcmp(title, "Files named report; *.odt") == 0);
+    g_free(title);
+    /* The defaults come back for keys a file doesn't have. */
+    CHECK(g_file_set_contents(path, "[Search]\nName=x\n", -1, nullptr));
+    CHECK(xd_search_criteria_load(&loaded, path, nullptr));
+    CHECK(g_strcmp0(loaded.name, "x") == 0 && loaded.look_in == nullptr && loaded.subfolders &&
+          loaded.system && !loaded.hidden && loaded.when == XD_SEARCH_WHEN_ANY &&
+          loaded.query == nullptr);
+    /* Not a saved search. */
+    CHECK(g_file_set_contents(path, "[Other]\nName=x\n", -1, nullptr));
+    CHECK(!xd_search_criteria_load(&loaded, path, &error) && error != nullptr);
+    g_clear_error(&error);
+    CHECK(g_file_set_contents(path, "not a key file\n", -1, nullptr));
+    CHECK(!xd_search_criteria_load(&loaded, path, &error) && error != nullptr);
+    g_clear_error(&error);
+    xd_search_criteria copy;
+    xd_search_criteria_copy(&copy, &criteria);
+    CHECK(copy.name != criteria.name && strcmp(copy.name, criteria.name) == 0);
+    xd_search_criteria_clear(&copy);
+    xd_search_criteria_clear(&loaded);
+    xd_search_criteria_clear(&criteria);
+    g_unlink(path);
+    g_free(path);
+    g_rmdir(dir);
+    g_free(dir);
+}
+
+typedef struct walk_result {
+    GMainLoop *loop;
+    GPtrArray *names; /* relative paths */
+    const char *root;
+    guint done_count;
+    double last_fraction;
+    bool fraction_fell;
+} walk_result;
+
+static void walk_found(GPtrArray *hits, gpointer data) {
+    walk_result *result = data;
+    for (guint i = 0; i < hits->len; i++) {
+        xd_search_hit *hit = g_ptr_array_index(hits, i);
+        char *path = g_file_get_path(hit->file);
+        g_ptr_array_add(result->names, g_strdup(path + strlen(result->root) + 1));
+        g_free(path);
+    }
+}
+
+static void walk_progress(double fraction, [[maybe_unused]] const char *folder, gpointer data) {
+    walk_result *result = data;
+    if (fraction < result->last_fraction)
+        result->fraction_fell = true;
+    result->last_fraction = fraction;
+}
+
+static void walk_done(guint found, gpointer data) {
+    walk_result *result = data;
+    result->done_count = found;
+    g_main_loop_quit(result->loop);
+}
+
+static gint compare_strings(gconstpointer left, gconstpointer right) {
+    return strcmp(*(const char *const *)left, *(const char *const *)right);
+}
+
+/* Runs `text` (7's box) over `root`; the relative paths found, sorted and
+ * joined by spaces. */
+static char *walk_tree(const char *root, const char *text, bool hidden, bool subfolders) {
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.query = g_strdup(text);
+    criteria.hidden = hidden;
+    criteria.subfolders = subfolders;
+    criteria.look_in = g_new0(char *, 2);
+    criteria.look_in[0] = g_strdup(root);
+    xd_search_query *query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    walk_result result = {g_main_loop_new(nullptr, FALSE), g_ptr_array_new_with_free_func(g_free),
+                          root, 0, 0, false};
+    xd_search_callbacks callbacks = {walk_found, walk_progress, walk_done, &result};
+    xd_search_job *job = xd_search_job_start(&criteria, query, &callbacks);
+    CHECK(job != nullptr);
+    g_main_loop_run(result.loop);
+    CHECK(result.done_count == result.names->len);
+    CHECK(!result.fraction_fell && result.last_fraction == 1.0);
+    g_ptr_array_sort(result.names, compare_strings);
+    g_ptr_array_add(result.names, nullptr);
+    char *joined = g_strjoinv(" ", (char **)result.names->pdata);
+    g_ptr_array_unref(result.names);
+    g_main_loop_unref(result.loop);
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&criteria);
+    return joined;
+}
+
+static bool walk_finds(const char *root, const char *text, bool hidden, bool subfolders,
+                       const char *expected) {
+    char *found = walk_tree(root, text, hidden, subfolders);
+    bool same = strcmp(found, expected) == 0;
+    if (!same)
+        fprintf(stderr, "  walk %s: %s (expected %s)\n", text, found, expected);
+    g_free(found);
+    return same;
+}
+
+static void test_search_walk(void) {
+    char *root = g_dir_make_tmp("xd-walk-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *path = g_build_filename(root, "sub", "deeper", nullptr);
+    g_mkdir_with_parents(path, 0700);
+    g_free(path);
+    path = g_build_filename(root, ".hidden", nullptr);
+    g_mkdir_with_parents(path, 0700);
+    g_free(path);
+    static const struct {
+        const char *name, *contents;
+    } files[] = {
+        {"report.txt", "the quarterly figures"},
+        {"sub/report 2.txt", "nothing here"},
+        {"sub/deeper/notes.txt", "quarterly again"},
+        {".hidden/report secret.txt", "quarterly"},
+        {".dotreport", ""},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(files); i++) {
+        path = g_build_filename(root, files[i].name, nullptr);
+        CHECK(g_file_set_contents(path, files[i].contents, -1, nullptr));
+        g_free(path);
+    }
+    /* A link back up: not followed, so no loop. */
+    path = g_build_filename(root, "sub", "loop", nullptr);
+    CHECK(symlink(root, path) == 0);
+    g_free(path);
+    CHECK(walk_finds(root, "report", false, true, "report.txt sub/report 2.txt"));
+    CHECK(walk_finds(root, "report", true, true,
+                     ".dotreport .hidden/report secret.txt report.txt sub/report 2.txt"));
+    CHECK(walk_finds(root, "report", false, false, "report.txt"));
+    CHECK(walk_finds(root, "content:quarterly", false, true, "report.txt sub/deeper/notes.txt"));
+    CHECK(walk_finds(root, "kind:folder", false, true, "sub sub/deeper"));
+    CHECK(walk_finds(root, "loop", false, true, "sub/loop"));
+    CHECK(walk_finds(root, "nothing-is-called-this", false, true, ""));
+    CHECK(walk_finds(root, "/^notes\\./", false, true, "sub/deeper/notes.txt"));
+    /* Cancelled at once: no callbacks afterwards, nothing leaks. */
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.look_in = g_new0(char *, 2);
+    criteria.look_in[0] = g_strdup(root);
+    xd_search_query *query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    walk_result result = {g_main_loop_new(nullptr, FALSE), g_ptr_array_new_with_free_func(g_free),
+                          root, 0, 0, false};
+    xd_search_callbacks callbacks = {walk_found, walk_progress, walk_done, &result};
+    xd_search_job *job = xd_search_job_start(&criteria, query, &callbacks);
+    xd_search_job_cancel(job);
+    for (int i = 0; i < 30; i++) {
+        g_usleep(10000);
+        while (g_main_context_iteration(nullptr, FALSE)) {
+        }
+    }
+    CHECK(result.names->len == 0 && result.done_count == 0);
+    g_ptr_array_unref(result.names);
+    g_main_loop_unref(result.loop);
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&criteria);
+    /* System folders. */
+    bool pseudo = false;
+    CHECK(xd_search_is_system_folder("/proc", &pseudo) && pseudo);
+    CHECK(xd_search_is_system_folder("/usr", &pseudo) && !pseudo);
+    CHECK(!xd_search_is_system_folder("/home", &pseudo));
+    CHECK(!xd_search_is_system_folder("/usr/share", &pseudo));
+    rm_tree(root);
+    g_free(root);
+}
+
 static void test_search_match(void) {
     xd_search_name search_name;
     xd_search_name_init(&search_name, "  ");
@@ -11332,6 +12111,13 @@ int main(void) {
     test_startup_services();
     test_gpu();
     test_search_match();
+    test_search_aqs();
+    test_search_regex();
+    test_search_ranges();
+    test_search_contents_and_kinds();
+    test_search_spans();
+    test_search_saved();
+    test_search_walk();
     test_thumbnail_cache();
     test_favorites();
     test_launcher_fields();

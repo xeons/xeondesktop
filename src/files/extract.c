@@ -274,6 +274,44 @@ gboolean xd_extract_archive(const char *archive, const char *into, const char *r
     return ok;
 }
 
+
+gboolean xd_archive_list(const char *archive, GCancellable *cancel, XdArchiveEntryFunc func,
+                         gpointer data, GError **error) {
+    struct archive *in = archive_read_new();
+    archive_read_support_filter_all(in);
+    archive_read_support_format_all(in);
+    gboolean ok = archive_read_open_filename(in, archive, 64 * 1024) == ARCHIVE_OK;
+    if (!ok)
+        archive_failed(in, error);
+    while (ok && !g_cancellable_is_cancelled(cancel)) {
+        struct archive_entry *entry = nullptr;
+        int status = archive_read_next_header(in, &entry);
+        if (status == ARCHIVE_EOF)
+            break;
+        if (status < ARCHIVE_WARN) {
+            ok = archive_failed(in, error);
+            break;
+        }
+        const char *path = archive_entry_pathname_utf8(entry);
+        if (path == nullptr)
+            path = archive_entry_pathname(entry);
+        char *safe = path != nullptr ? xd_archive_safe_path(path) : nullptr;
+        if (safe != nullptr) {
+            gboolean is_dir = archive_entry_filetype(entry) == AE_IFDIR;
+            la_int64_t size = archive_entry_size(entry);
+            gboolean more = func(safe, is_dir, size > 0 ? (guint64)size : 0,
+                                 (gint64)archive_entry_mtime(entry), data);
+            g_free(safe);
+            if (!more)
+                break;
+        }
+        archive_read_data_skip(in);
+    }
+    archive_read_close(in);
+    archive_read_free(in);
+    return ok;
+}
+
 #else
 
 gboolean xd_extract_archive([[maybe_unused]] const char *archive,
@@ -282,6 +320,15 @@ gboolean xd_extract_archive([[maybe_unused]] const char *archive,
                             [[maybe_unused]] GCancellable *cancel,
                             [[maybe_unused]] XdExtractProgress progress,
                             [[maybe_unused]] gpointer data, GError **error) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "xd-files was built without libarchive.");
+    return FALSE;
+}
+
+gboolean xd_archive_list([[maybe_unused]] const char *archive,
+                         [[maybe_unused]] GCancellable *cancel,
+                         [[maybe_unused]] XdArchiveEntryFunc func, [[maybe_unused]] gpointer data,
+                         GError **error) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                         "xd-files was built without libarchive.");
     return FALSE;
