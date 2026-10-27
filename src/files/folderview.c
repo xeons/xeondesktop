@@ -46,6 +46,7 @@ typedef struct item {
     char *short_name; /* without a known type's extension; nullptr: no extension to hide */
     char *collate_key;
     char *type_desc;
+    char *content_type; /* nullptr: unknown (or a special folder's item) */
     char *size_text;
     char *date_text;
     char *key; /* the file's own name: where it was put (Auto Arrange off) */
@@ -120,6 +121,13 @@ struct _XdFolderView {
     XdSortColumn sort;
     gboolean desc;
     gboolean show_hidden;
+    /* The Open and Save As dialogs': which items are shown, whether more
+     * than one can be selected, and the files shown instead of a
+     * folder's (GFile*; nullptr: the folder's). */
+    XdFolderViewFilter filter;
+    gpointer filter_data;
+    gboolean single;
+    GPtrArray *fixed_files;
     gboolean groups;  /* Show in Groups */
     gboolean grouped; /* laid out in groups now (an icon view) */
     GArray *rects;    /* GdkRectangle per shown item, when grouped */
@@ -236,6 +244,7 @@ static void item_free(gpointer user_data) {
     g_free(it->short_name);
     g_free(it->collate_key);
     g_free(it->type_desc);
+    g_free(it->content_type);
     g_free(it->size_text);
     g_free(it->date_text);
     g_free(it->key);
@@ -298,6 +307,7 @@ static item *item_new(GFile *dir, GFileInfo *info) {
                   !g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE);
     it->attrs = g_strconcat(ro ? "R" : "", it->hidden ? "H" : "", nullptr);
     const char *ctype = g_file_info_get_content_type(info);
+    it->content_type = g_strdup(ctype);
     it->type_desc = it->is_dir ? g_strdup("File Folder")
                     : ctype != nullptr ? g_content_type_get_description(ctype)
                                        : g_strdup("File");
@@ -646,6 +656,13 @@ static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
 
 static void layout_contents(XdFolderView *folder_view);
 
+static gboolean passes_filter(const XdFolderView *folder_view, const item *it) {
+    if (folder_view->filter == nullptr)
+        return TRUE;
+    return folder_view->filter(it->key != nullptr ? it->key : it->name, it->content_type,
+                               it->is_dir, folder_view->filter_data);
+}
+
 static void refilter(XdFolderView *folder_view) {
     g_ptr_array_set_size(folder_view->shown, 0);
     folder_view->grouped = wants_groups(folder_view);
@@ -654,7 +671,7 @@ static void refilter(XdFolderView *folder_view) {
         item *it = g_ptr_array_index(folder_view->all, i);
         if (folder_view->grouped)
             set_group(folder_view, it, now);
-        if (folder_view->show_hidden || !it->hidden)
+        if ((folder_view->show_hidden || !it->hidden) && passes_filter(folder_view, it))
             g_ptr_array_add(folder_view->shown, it);
         else
             it->selected = FALSE;
@@ -1903,6 +1920,21 @@ static void load_network(XdFolderView *folder_view) {
     g_ptr_array_unref(items);
 }
 
+/* Files given rather than listed (xd_folder_view_set_files): few, so
+ * asked about here and now. Those gone are left out. */
+static void load_fixed(XdFolderView *folder_view) {
+    for (guint i = 0; i < folder_view->fixed_files->len; i++) {
+        GFile *file = g_ptr_array_index(folder_view->fixed_files, i);
+        GFileInfo *info = g_file_query_info(file, ATTRIBUTES, G_FILE_QUERY_INFO_NONE, nullptr,
+                                            nullptr);
+        GFile *parent = g_file_get_parent(file);
+        if (info != nullptr && parent != nullptr)
+            g_ptr_array_add(folder_view->loading, item_new(parent, info));
+        g_clear_object(&parent);
+        g_clear_object(&info);
+    }
+}
+
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
 static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data);
 
@@ -2003,6 +2035,11 @@ static void start_loading(XdFolderView *folder_view, gboolean fresh) {
         set_hover(folder_view, -1);
     }
     folder_view->cancel = g_cancellable_new();
+    if (folder_view->fixed_files != nullptr) {
+        load_fixed(folder_view);
+        loading_done(folder_view);
+        return;
+    }
     if (folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_CONTROL ||
         folder_view->place == XD_PLACE_NETWORK) {
         if (folder_view->place == XD_PLACE_COMPUTER)
@@ -2376,11 +2413,11 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
             g_signal_emit(folder_view, signals[SIG_MIDDLE], 0, mid->file, mid->is_dir);
         return TRUE;
     }
-    gboolean ctrl = ev->state & GDK_CONTROL_MASK;
-    gboolean shift = ev->state & GDK_SHIFT_MASK;
+    gboolean ctrl = (ev->state & GDK_CONTROL_MASK) && !folder_view->single;
+    gboolean shift = (ev->state & GDK_SHIFT_MASK) && !folder_view->single;
     folder_view->pressed = ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift ? i : -1;
     item *it = item_at(folder_view, i);
-    if (it == nullptr && ev->button == GDK_BUTTON_PRIMARY) {
+    if (it == nullptr && ev->button == GDK_BUTTON_PRIMARY && !folder_view->single) {
         /* A drag from empty space selects what it covers. */
         if (!ctrl)
             select_only(folder_view, -1);
@@ -2921,8 +2958,8 @@ static gboolean folder_view_key_press(GtkWidget *widget, GdkEventKey *ev) {
     XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
     forget_keep(folder_view);
     int count = (int)folder_view->shown->len;
-    gboolean ctrl = ev->state & GDK_CONTROL_MASK;
-    gboolean shift = ev->state & GDK_SHIFT_MASK;
+    gboolean ctrl = (ev->state & GDK_CONTROL_MASK) && !folder_view->single;
+    gboolean shift = (ev->state & GDK_SHIFT_MASK) && !folder_view->single;
     if (ev->keyval == GDK_KEY_Return || ev->keyval == GDK_KEY_KP_Enter) {
         activate(folder_view, folder_view->focus);
         return TRUE;
@@ -3080,6 +3117,7 @@ static void folder_view_dispose(GObject *obj) {
     }
     g_clear_pointer(&folder_view->cut, g_hash_table_unref);
     g_clear_pointer(&folder_view->band_base, g_array_unref);
+    g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
     xd_usershare_unwatch(folder_view);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
@@ -3185,8 +3223,8 @@ static void xd_folder_view_init(XdFolderView *folder_view) {
 
 GtkWidget *xd_folder_view_new(void) { return g_object_new(XD_TYPE_FOLDER_VIEW, nullptr); }
 
-void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
-    g_return_if_fail(G_IS_FILE(dir));
+/* Shows `dir`: its contents, or the fixed files when there are any. */
+static void change_location(XdFolderView *folder_view, GFile *dir) {
     g_set_object(&folder_view->dir, dir);
     forget_keep(folder_view);
     if (folder_view->thumbs != nullptr)
@@ -3200,7 +3238,7 @@ void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
         g_file_monitor_cancel(folder_view->monitor);
         g_clear_object(&folder_view->monitor);
     }
-    folder_view->place = xd_place_of(dir);
+    folder_view->place = folder_view->fixed_files != nullptr ? XD_PLACE_FOLDER : xd_place_of(dir);
     g_clear_object(&folder_view->listed);
     folder_view->listed =
         folder_view->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
@@ -3240,7 +3278,7 @@ void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
             g_signal_connect(folder_view->apps_monitor, "changed", G_CALLBACK(apps_changed),
                              folder_view);
         }
-    } else {
+    } else if (folder_view->fixed_files == nullptr) {
         folder_view->monitor = g_file_monitor_directory(
             folder_view->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
         if (folder_view->monitor != nullptr)
@@ -3254,7 +3292,40 @@ void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
     start_loading(folder_view, TRUE);
 }
 
+void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
+    g_return_if_fail(G_IS_FILE(dir));
+    g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
+    change_location(folder_view, dir);
+}
+
 GFile *xd_folder_view_get_location(XdFolderView *folder_view) { return folder_view->dir; }
+
+void xd_folder_view_set_files(XdFolderView *folder_view, GFile *location, GPtrArray *files) {
+    g_return_if_fail(G_IS_FILE(location) && files != nullptr);
+    GPtrArray *copy = g_ptr_array_new_with_free_func(g_object_unref);
+    for (guint i = 0; i < files->len; i++)
+        g_ptr_array_add(copy, g_object_ref(g_ptr_array_index(files, i)));
+    g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
+    folder_view->fixed_files = copy;
+    change_location(folder_view, location);
+}
+
+void xd_folder_view_set_filter(XdFolderView *folder_view, XdFolderViewFilter filter,
+                               gpointer data) {
+    folder_view->filter = filter;
+    folder_view->filter_data = data;
+    xd_folder_view_refilter(folder_view);
+}
+
+void xd_folder_view_refilter(XdFolderView *folder_view) {
+    refilter(folder_view);
+    g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
+    g_signal_emit(folder_view, signals[SIG_SELECTION], 0);
+}
+
+void xd_folder_view_set_multiple(XdFolderView *folder_view, gboolean multiple) {
+    folder_view->single = !multiple;
+}
 
 void xd_folder_view_reload(XdFolderView *folder_view) {
     if (folder_view->dir == nullptr)
@@ -3336,6 +3407,8 @@ void xd_folder_view_set_single_click(XdFolderView *folder_view, gboolean single)
 }
 
 void xd_folder_view_select_all(XdFolderView *folder_view) {
+    if (folder_view->single)
+        return;
     for (guint k = 0; k < folder_view->shown->len; k++)
         ((item *)g_ptr_array_index(folder_view->shown, k))->selected = TRUE;
     selection_changed(folder_view);

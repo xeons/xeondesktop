@@ -58,6 +58,7 @@
 #include "../src/files/netdrives.h"
 #include "../src/files/usershare.h"
 #include "../src/files/versions.h"
+#include "../src/portal/chooserlib.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
@@ -10683,6 +10684,157 @@ static void test_previous_versions(void) {
     g_free(scratch);
 }
 
+/* The Open and Save As dialogs (src/portal/chooserlib.c): the portal's
+ * filters as Files of type, which names they keep, the extension Save As
+ * adds, and what's typed in File name. */
+static void test_file_chooser(void) {
+    GVariant *filters = g_variant_ref_sink(g_variant_new_parsed(
+        "[('Text Documents (*.txt)', [(uint32 0, '*.txt')]),"
+        " ('Pictures', [(uint32 0, '*.[Jj][Pp][Gg]'), (uint32 1, 'image/png')]),"
+        " ('All Images', [(uint32 1, 'image/*')]),"
+        " ('All Files', [(uint32 0, '*')])]"));
+    GPtrArray *list = xd_chooser_filters_parse(filters);
+    CHECK(list->len == 4);
+    const xd_chooser_filter *text = g_ptr_array_index(list, 0);
+    const xd_chooser_filter *pictures = g_ptr_array_index(list, 1);
+    const xd_chooser_filter *images = g_ptr_array_index(list, 2);
+    const xd_chooser_filter *all = g_ptr_array_index(list, 3);
+    CHECK(strcmp(text->name, "Text Documents (*.txt)") == 0);
+    CHECK(pictures->globs->len == 1 && pictures->mimes->len == 1);
+
+    /* Globs regardless of case, as Windows matches; MIME types by the
+     * name's type, wildcards too. */
+    CHECK(xd_chooser_filter_matches(text, "Notes.txt", nullptr));
+    CHECK(xd_chooser_filter_matches(text, "NOTES.TXT", nullptr));
+    CHECK(!xd_chooser_filter_matches(text, "notes.txt.bak", nullptr));
+    CHECK(xd_chooser_filter_matches(pictures, "photo.JPG", nullptr));
+    CHECK(xd_chooser_filter_matches(pictures, "shot.png", nullptr));
+    CHECK(xd_chooser_filter_matches(pictures, "unnamed", "image/png"));
+    CHECK(!xd_chooser_filter_matches(pictures, "song.ogg", nullptr));
+    CHECK(xd_chooser_filter_matches(images, "drawing.gif", nullptr));
+    CHECK(!xd_chooser_filter_matches(images, "letter.txt", nullptr));
+    CHECK(xd_chooser_filter_matches(all, "anything", nullptr));
+    CHECK(xd_chooser_filter_matches(nullptr, "anything", nullptr));
+
+    /* current_filter: the same filter, else one of its name; else none. */
+    GVariant *current = g_variant_ref_sink(
+        g_variant_new_parsed("('All Images', [(uint32 1, 'image/*')])"));
+    CHECK(xd_chooser_filters_find(list, current) == 2);
+    g_variant_unref(current);
+    current = g_variant_ref_sink(g_variant_new_parsed("('Pictures', @a(us) [])"));
+    CHECK(xd_chooser_filters_find(list, current) == 1);
+    g_variant_unref(current);
+    current = g_variant_ref_sink(g_variant_new_parsed("('Other', @a(us) [])"));
+    CHECK(xd_chooser_filters_find(list, current) == -1);
+    g_variant_unref(current);
+
+    /* The extension Save As adds: the first glob's, brackets in lower case. */
+    char *extension = xd_chooser_filter_get_extension(text);
+    CHECK(g_strcmp0(extension, ".txt") == 0);
+    g_free(extension);
+    extension = xd_chooser_filter_get_extension(pictures);
+    CHECK(g_strcmp0(extension, ".jpg") == 0);
+    g_free(extension);
+    CHECK(xd_chooser_filter_get_extension(images) == nullptr);
+    CHECK(xd_chooser_filter_get_extension(all) == nullptr);
+
+    static const struct {
+        const char *typed, *saved;
+    } names[] = {
+        {"Report", "Report.txt"},          {"Report.txt", "Report.txt"},
+        {"Report.doc", "Report.doc"},      {"\"Report\"", "Report"},
+        {"Report.", "Report"},             {"Letters/Reply", "Letters/Reply.txt"},
+        {"my.folder/Reply", "my.folder/Reply.txt"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
+        char *saved = xd_chooser_add_extension(names[i].typed, text);
+        CHECK(strcmp(saved, names[i].saved) == 0);
+        g_free(saved);
+    }
+    char *saved = xd_chooser_add_extension("Report", all);
+    CHECK(strcmp(saved, "Report") == 0);
+    g_free(saved);
+    g_ptr_array_unref(list);
+    g_variant_unref(filters);
+
+    /* Nothing understood: no filters. */
+    list = xd_chooser_filters_parse(nullptr);
+    CHECK(list->len == 0);
+    g_ptr_array_unref(list);
+
+    /* What File name's text stands for. */
+    char *scratch = g_dir_make_tmp("xd-chooser-XXXXXX", nullptr);
+    CHECK(scratch != nullptr);
+    if (scratch == nullptr)
+        return;
+    char *folder = realpath(scratch, nullptr);
+    char *letters = g_build_filename(folder, "Letters", nullptr);
+    CHECK(g_mkdir(letters, 0700) == 0);
+
+    xd_typed_name typed = xd_chooser_parse_name(folder, "   ", false);
+    CHECK(typed.kind == XD_TYPED_EMPTY && typed.paths == nullptr);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "notes.txt", false);
+    char *expected = g_build_filename(folder, "notes.txt", nullptr);
+    CHECK(typed.kind == XD_TYPED_FILE && g_strcmp0(typed.paths[0], expected) == 0 &&
+          typed.paths[1] == nullptr);
+    g_free(expected);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "Letters", false);
+    CHECK(typed.kind == XD_TYPED_FOLDER && g_strcmp0(typed.paths[0], letters) == 0);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "Letters/../Letters/", false);
+    CHECK(typed.kind == XD_TYPED_FOLDER && g_strcmp0(typed.paths[0], letters) == 0);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "*.txt;*.log", false);
+    CHECK(typed.kind == XD_TYPED_PATTERN && g_strcmp0(typed.pattern, "*.txt;*.log") == 0 &&
+          g_strcmp0(typed.paths[0], folder) == 0);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "Letters/a?c", false);
+    CHECK(typed.kind == XD_TYPED_PATTERN && g_strcmp0(typed.pattern, "a?c") == 0 &&
+          g_strcmp0(typed.paths[0], letters) == 0);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "/etc/hostname", false);
+    CHECK(typed.kind == XD_TYPED_FILE && g_strcmp0(typed.paths[0], "/etc/hostname") == 0);
+    xd_typed_name_free(&typed);
+
+    typed = xd_chooser_parse_name(folder, "~/x.txt", false);
+    expected = g_build_filename(g_get_home_dir(), "x.txt", nullptr);
+    CHECK(typed.kind == XD_TYPED_FILE && g_strcmp0(typed.paths[0], expected) == 0);
+    g_free(expected);
+    xd_typed_name_free(&typed);
+
+    /* Several names in quotes, when the dialog takes several; one in
+     * quotes is just that name. */
+    typed = xd_chooser_parse_name(folder, "\"a b.txt\" \"c.txt\"", true);
+    char *first = g_build_filename(folder, "a b.txt", nullptr);
+    char *second = g_build_filename(folder, "c.txt", nullptr);
+    CHECK(typed.kind == XD_TYPED_FILE && g_strv_length(typed.paths) == 2 &&
+          g_strcmp0(typed.paths[0], first) == 0 && g_strcmp0(typed.paths[1], second) == 0);
+    xd_typed_name_free(&typed);
+    typed = xd_chooser_parse_name(folder, "\"a b.txt\"", true);
+    CHECK(typed.kind == XD_TYPED_FILE && g_strv_length(typed.paths) == 1 &&
+          g_strcmp0(typed.paths[0], first) == 0);
+    xd_typed_name_free(&typed);
+    g_free(first);
+    g_free(second);
+
+    CHECK(xd_chooser_is_pattern("*.txt") && xd_chooser_is_pattern("a?c"));
+    CHECK(!xd_chooser_is_pattern("notes.txt") && !xd_chooser_is_pattern(nullptr));
+
+    g_rmdir(letters);
+    g_rmdir(folder);
+    g_free(letters);
+    free(folder);
+    g_free(scratch);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -10787,6 +10939,7 @@ int main(void) {
     test_theme_package_dwm();
     test_explorer_panes();
     test_previous_versions();
+    test_file_chooser();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT
+     xdg-desktop-portal's own interface files (its pkg-config interfaces_dir),
+     built into xdg-desktop-portal-xeondesktop. -->
+<gresources>
+  <gresource prefix="/org/xeondesktop/portal">
+    <file>org.freedesktop.impl.portal.FileChooser.xml</file>
+    <file>org.freedesktop.impl.portal.Request.xml</file>
+  </gresource>
+</gresources>

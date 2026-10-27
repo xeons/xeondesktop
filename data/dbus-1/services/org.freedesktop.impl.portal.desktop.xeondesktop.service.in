@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.xeondesktop
+Exec=@LIBEXECDIR@/xdg-desktop-portal-xeondesktop
+SystemdService=xdg-desktop-portal-xeondesktop.service

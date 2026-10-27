@@ -1,0 +1,59 @@
+.TH XDG\-DESKTOP\-PORTAL\-XEONDESKTOP 8 2026-10-26 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xdg\-desktop\-portal\-xeondesktop \- XeonDesktop's Open and Save As dialogs for xdg\-desktop\-portal
+.SH SYNOPSIS
+.SY /usr/lib/xdg\-desktop\-portal\-xeondesktop
+.RB [ \-\-replace ]
+.YS
+.SH DESCRIPTION
+.B xdg\-desktop\-portal\-xeondesktop
+is a backend of
+.BR xdg\-desktop\-portal (1).
+It serves the
+.B org.freedesktop.impl.portal.FileChooser
+interface on the session bus, as
+.BR org.freedesktop.impl.portal.desktop.xeondesktop ,
+so that programs asking the portal for a file get XeonDesktop's own Open
+and Save As dialogs: Flatpak programs, GTK\~4 programs, Firefox and
+Chromium, and GTK\~3 programs' native file choosers.
+It is started by D\-Bus activation when
+.B xdg\-desktop\-portal
+first needs it; there is no need to run it by hand.
+.PP
+The dialogs are laid out as Windows XP's (Look in, the Places bar, File
+name and Files of type) in every display style, which gives them their
+colours and controls, with Windows\~7's search box for the folder shown.
+Folder pickers are the same dialog, listing folders only.
+The list is the folder view of
+.BR xd\-files (1).
+Typing a folder's path in File name goes there, typing a pattern such as
+.B *.txt
+shows only the files matching it, and Save As adds the file type's
+extension to a name without one, as Windows did.
+.PP
+A XeonDesktop session uses it through
+.IR /usr/share/xdg\-desktop\-portal/xeondesktop\-portals.conf ,
+and the compositor
+.RB ( xd\-compositor (1))
+sets
+.B GTK_USE_PORTAL=1
+and adds
+.B portals
+to
+.B GDK_DEBUG
+so that GTK programs ask the portal.
+Plain GTK\~3 file chooser dialogs (GtkFileChooserDialog) stay GTK's own.
+.SH OPTIONS
+.TP
+.BR \-r ", " \-\-replace
+Take over the bus name from another instance.
+.SH FILES
+.TP
+.I /usr/share/xdg\-desktop\-portal/portals/xeondesktop.portal
+Tells
+.B xdg\-desktop\-portal
+which interfaces this backend serves.
+.SH SEE ALSO
+.BR xdg\-desktop\-portal (1),
+.BR xd\-files (1),
+.BR xd\-compositor (1)

@@ -14,7 +14,10 @@ is an internal helper of XeonDesktop: the Browse... buttons of Run
 .RB ( xd\-run (1))
 and Display Properties
 .RB ( xd\-desk (1))
-use it to show GTK's file chooser.
+use it to show a file chooser: through the file chooser portal, which in
+a XeonDesktop session is its own Open and Save As dialogs
+.RB ( xdg\-desktop\-portal\-xeondesktop (8)),
+else GTK's.
 It prints the chosen file's path on standard output.
 .SH OPTIONS
 .TP
@@ -25,8 +28,8 @@ The window's title (default \(lqBrowse\(rq).
 Offer pictures first, then all files.
 .TP
 .B \-\-programs
-Offer programs (executable files and desktop entries) first, then all
-files.
+Offer programs (executables, scripts, desktop entries and AppImages, by
+their type) first, then all files.
 .TP
 .B \-\-styles
 Offer visual styles first (Windows\(aq .msstyles and .theme files, and

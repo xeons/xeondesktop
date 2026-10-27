@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# XeonDesktop's xdg-desktop-portal backend (file choosers), started by
+# D-Bus activation when xdg-desktop-portal first asks for it.
+[Unit]
+Description=Portal service (XeonDesktop implementation)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.impl.portal.desktop.xeondesktop
+ExecStart=@LIBEXECDIR@/xdg-desktop-portal-xeondesktop

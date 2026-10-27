@@ -435,6 +435,36 @@ static void set_gtk_theme_env(const xd_server *server, const xd_settings *settin
     }
 }
 
+/* GTK programs' file dialogs go to the portal, whose FileChooser is ours
+ * (xdg-desktop-portal-xeondesktop): GTK 3's GtkFileChooserNative (Firefox
+ * among them) with GTK_USE_PORTAL, GTK 4's file dialogs with GDK_DEBUG's
+ * "portals". A GTK_USE_PORTAL the user set is left alone, and "portals" is
+ * added to a GDK_DEBUG of theirs. The flags say which of the two were set
+ * here, for D-Bus and systemd to get too. */
+static void set_portal_env(bool *use_portal_set, bool *debug_set) {
+    *use_portal_set = getenv("GTK_USE_PORTAL") == nullptr;
+    if (*use_portal_set)
+        setenv("GTK_USE_PORTAL", "1", true);
+    const char *debug = getenv("GDK_DEBUG");
+    *debug_set = false;
+    if (debug == nullptr || *debug == '\0') {
+        setenv("GDK_DEBUG", "portals", true);
+        *debug_set = true;
+        return;
+    }
+    char **flags = g_strsplit_set(debug, ",: ", -1);
+    bool has_portals = g_strv_contains((const char *const *)flags, "portals") ||
+                       g_strv_contains((const char *const *)flags, "no-portals") ||
+                       g_strv_contains((const char *const *)flags, "all");
+    g_strfreev(flags);
+    if (!has_portals) {
+        char *more = g_strconcat(debug, ",portals", nullptr);
+        setenv("GDK_DEBUG", more, true);
+        g_free(more);
+        *debug_set = true;
+    }
+}
+
 /* Qt programs started from now on follow the GTK theme and get
  * Display Properties' Qt style (see xd_settings_qt_env); so do those D-Bus
  * and systemd start, once the session is real. Running Qt programs can't
@@ -727,6 +757,8 @@ int main(int argc, char **argv) {
     install_gtk_theme(&server, nullptr);
     set_gtk_theme_env(&server, &settings, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
+    bool use_portal_set = false, debug_set = false;
+    set_portal_env(&use_portal_set, &debug_set);
     /* Qt programs follow the GTK theme, unless the user set up their own
      * (qt6ct, Kvantum, ...) in the environment. */
     set_qt_env(&server, &settings, true);
@@ -747,10 +779,15 @@ int main(int argc, char **argv) {
                     v5[] = "XDG_SESSION_DESKTOP", v6[] = "DBUS_SESSION_BUS_ADDRESS",
                     v7[] = "GTK_THEME", v8[] = "XEONDESKTOP_PID", v9[] = "XEONDESKTOP_NESTED",
                     qt1[] = "QT_QPA_PLATFORMTHEME", qt2[] = "QT_STYLE_OVERRIDE",
-                    qt3[] = "QT_GUI_GTK_JSON";
-        char *update[16 + XD_IM_ENV_VARS] = {sh, flag, script, arg0, v1, v2, v3,
+                    qt3[] = "QT_GUI_GTK_JSON", portal1[] = "GTK_USE_PORTAL",
+                    portal2[] = "GDK_DEBUG";
+        char *update[18 + XD_IM_ENV_VARS] = {sh, flag, script, arg0, v1, v2, v3,
                                              v4, v5, v6, v7, v8, v9};
         size_t count = 13;
+        if (use_portal_set)
+            update[count++] = portal1;
+        if (debug_set)
+            update[count++] = portal2;
         /* The Qt variables only if they're ours: the user's own setup
          * (environment.d) is the user manager's already. */
         if (xd_qt_env_ours(qt1))

@@ -8554,6 +8554,317 @@ def alt_tab_package(s):
     s.log("ok: Alt+Tab's window is the package's, and closes with Alt")
 
 
+# ---- the file chooser portal (xdg-desktop-portal-xeondesktop) ---------------------
+
+PORTAL_NAME = "org.freedesktop.impl.portal.desktop.xeondesktop"
+PORTAL_PATH = "/org/freedesktop/portal/desktop"
+PORTAL_HANDLE = "/org/freedesktop/portal/desktop/request/1_1/t"
+
+
+class PortalCall:
+    """A FileChooser call to our backend, made straight to it on the session
+    bus (as xdg-desktop-portal would), answered in a thread while the
+    scenario drives the dialog."""
+
+    def __init__(self, s, method, title, options, handle=PORTAL_HANDLE):
+        import gi
+
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio, GLib
+
+        self.Gio = Gio
+        self.handle = handle
+        self.result = None
+        self.error = None
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        args = GLib.Variant("(osssa{sv})", (handle, "org.example.Test", "", title, options))
+
+        def run():
+            try:
+                self.result = self.bus.call_sync(
+                    PORTAL_NAME, PORTAL_PATH, "org.freedesktop.impl.portal.FileChooser",
+                    method, args, GLib.VariantType("(ua{sv})"), Gio.DBusCallFlags.NONE,
+                    120000, None,
+                ).unpack()  # fmt: skip
+            except Exception as e:  # noqa: BLE001
+                self.error = e
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.bus.call_sync(
+            PORTAL_NAME, self.handle, "org.freedesktop.impl.portal.Request", "Close", None,
+            None, self.Gio.DBusCallFlags.NONE, 10000, None,
+        )  # fmt: skip
+
+    def wait(self, s, timeout=30):
+        self.thread.join(timeout)
+        if self.thread.is_alive():
+            raise Failure("the portal call didn't return")
+        if self.error is not None:
+            raise Failure(f"the portal call failed: {self.error}")
+        s.log(f"portal answered {self.result}")
+        return self.result
+
+
+def start_portal(s):
+    """Starts our backend in the session and waits for its bus name."""
+    import gi
+
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    s.launch(s.tool("xdg-desktop-portal-xeondesktop"))
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+    def owned():
+        return bus.call_sync(
+            "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+            "NameHasOwner", GLib.Variant("(s)", (PORTAL_NAME,)), GLib.VariantType("(b)"),
+            Gio.DBusCallFlags.NONE, 5000, None,
+        ).unpack()[0]  # fmt: skip
+
+    s.wait(owned, "the portal backend's bus name")
+
+
+def text_filters():
+    from gi.repository import GLib
+
+    return GLib.Variant("a(sa(us))", [("Text Documents (*.txt)", [(0, "*.txt")]),
+                                      ("All Files", [(0, "*")])])  # fmt: skip
+
+
+def in_documents(s, **options):
+    """Options starting in Documents (current_folder, a byte string with its
+    NUL), plus `options`."""
+    from gi.repository import GLib
+
+    folder = os.path.join(s.home, "Documents").encode() + b"\0"
+    return {"current_folder": GLib.Variant("ay", folder), **options}
+
+
+def documents_uri(s, *names):
+    return "file://" + urllib.parse.quote(os.path.join(s.home, "Documents", *names))
+
+
+@scenario(LUNA_INI)
+def portal_open(s):
+    """The Open dialog from the portal backend: Files of type lists the program's
+    filters, a pattern typed in File name (*.md) filters the list, and the
+    file double-clicked comes back as a file:// URI with the filter chosen."""
+    empty = s.settle("desktop")
+    start_portal(s)
+    call = PortalCall(s, "OpenFile", "Open Test", in_documents(s, filters=text_filters()))
+    s.wait_window(title="Open Test", state="activated")
+    shot = s.settle("open")
+    box = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None and box[2] > 500 and box[3] > 380, f"the Open dialog is up at {box}")
+    x, y = box[0], box[1]
+    # The List view: Letters, then Notes.txt (the type's filter keeps it).
+    notes = (x + 108, y + 88, 140, 16)
+    # File name has the focus: a pattern hides Notes.txt, *.txt shows it.
+    s.inject("type", "*.md", "key", "Return", "sleep", 500)
+    hidden = s.settle("pattern")
+    s.check(hidden.differs(shot, notes, step=1) > 0.05, "*.md hid Notes.txt")
+    s.inject("key", "ctrl+a", "type", "*.txt", "key", "Return", "sleep", 500)
+    shown = s.settle("pattern-txt")
+    s.check(shown.differs(shot, notes, step=1) < 0.01, "*.txt showed it again")
+    s.inject("move", x + 150, y + 96, "click", "sleep", 100, "click")
+    response, results = call.wait(s)
+    s.check(response == 0, "Open answered OK")
+    want = documents_uri(s, "Notes.txt")
+    s.check(results.get("uris") == [want], f"it returned {want}")
+    s.check(results.get("current_filter", (None,))[0] == "Text Documents (*.txt)",
+            "with the filter chosen")  # fmt: skip
+    s.check(results.get("writable") is True, "writable, as Open as read-only was off")
+    s.wait_window(title="Open Test", gone=True)
+
+
+@scenario(LUNA_INI)
+def portal_save_as(s):
+    """Save As adds the type's extension to a name without one, and asks
+    before replacing a file that's there (Yes replaces it)."""
+    from gi.repository import GLib
+
+    start_portal(s)
+    options = in_documents(s, filters=text_filters(), current_name=GLib.Variant("s", "Report"))
+    call = PortalCall(s, "SaveFile", "Save Test", options)
+    s.wait_window(title="Save Test", state="activated")
+    s.settle("save-as")
+    s.inject("key", "Return")
+    response, results = call.wait(s)
+    want = documents_uri(s, "Report.txt")
+    s.check(response == 0 and results.get("uris") == [want], f"Save As returned {want}")
+    s.wait_window(title="Save Test", gone=True)
+
+    options["current_name"] = GLib.Variant("s", "Notes")
+    call = PortalCall(s, "SaveFile", "Save Test", options, handle=PORTAL_HANDLE + "2")
+    s.wait_window(title="Save Test", state="activated")
+    asking = s.settle("save-as-again")
+    s.inject("key", "Return")
+    # The question is the dialog's own window (no taskbar button of its
+    # own), so the dialog loses the focus to it.
+    s.wait(lambda: "activated" not in s.window(title="Save Test")["states"],
+           "Notes.txt already exists. Do you want to replace it?")  # fmt: skip
+    replace = s.settle("replace")
+    s.check(replace.differs(asking, (0, 0, WIDTH, HEIGHT - 40)) > 0.01, "the question shows")
+    s.inject("key", "alt+y")
+    response, results = call.wait(s)
+    want = documents_uri(s, "Notes.txt")
+    s.check(response == 0 and results.get("uris") == [want], "Yes replaced Notes.txt")
+
+
+@scenario(LUNA_INI)
+def portal_cancel(s):
+    """Esc cancels the Open dialog (response 1), and the portal's
+    Request.Close closes one (response 2)."""
+    start_portal(s)
+    call = PortalCall(s, "OpenFile", "Cancel Test", {})
+    s.wait_window(title="Cancel Test", state="activated")
+    s.inject("key", "Escape")
+    response, _ = call.wait(s)
+    s.check(response == 1, "Esc answered Cancel")
+    s.wait_window(title="Cancel Test", gone=True)
+    call = PortalCall(s, "OpenFile", "Close Test", {}, handle=PORTAL_HANDLE + "2")
+    s.wait_window(title="Close Test", state="activated")
+    call.close()
+    response, _ = call.wait(s)
+    s.check(response == 2, "Request.Close ended it")
+    s.wait_window(title="Close Test", gone=True)
+
+
+@scenario(AERO_INI)
+def portal_folder(s):
+    """A folder picker (directory), here in the Aero style (the same form,
+    in its colours): only folders are listed, and the folder named comes
+    back."""
+    from gi.repository import GLib
+
+    start_portal(s)
+    call = PortalCall(s, "OpenFile", "Folder Test",
+                      in_documents(s, directory=GLib.Variant("b", True)))  # fmt: skip
+    s.wait_window(title="Folder Test", state="activated")
+    s.settle("folder")
+    s.inject("type", "Letters", "key", "Return")
+    response, results = call.wait(s)
+    want = documents_uri(s, "Letters")
+    s.check(response == 0 and results.get("uris") == [want], f"it returned {want}")
+
+
+def portal_frontend():
+    """xdg-desktop-portal's own program, or None."""
+    for path in ("/usr/lib/xdg-desktop-portal", "/usr/libexec/xdg-desktop-portal"):
+        if os.access(path, os.X_OK):
+            return path
+    return None
+
+
+GTK4_FILE_DIALOG = r"""
+import sys
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, GLib
+
+loop = GLib.MainLoop()
+window = Gtk.Window(title="Owner Window")
+window.set_default_size(400, 300)
+window.present()
+
+def done(dialog, result):
+    try:
+        print(dialog.open_finish(result).get_path(), flush=True)
+    except GLib.Error as e:
+        print("error: " + e.message, flush=True)
+    loop.quit()
+
+def ask():
+    Gtk.FileDialog(title="GTK4 Test").open(window, None, done)
+    return False
+
+GLib.timeout_add(500, ask)
+loop.run()
+"""
+
+
+def start_frontend(s):
+    """This session's own xdg-desktop-portal, sending FileChooser to our
+    backend as our portals.conf says; False if it isn't installed."""
+    import gi
+
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    frontend = portal_frontend()
+    if frontend is None:
+        return False
+    start_portal(s)
+    conf = os.path.join(os.environ["XDG_CONFIG_HOME"], "xdg-desktop-portal")
+    os.makedirs(conf, exist_ok=True)
+    shutil.copy(os.path.join(SOURCE_ROOT, "data", "xdg-desktop-portal",
+                             "xeondesktop-portals.conf"), conf)  # fmt: skip
+    portals = os.path.join(s.base, "portals")
+    os.makedirs(portals, exist_ok=True)
+    shutil.copy(os.path.join(SOURCE_ROOT, "data", "xdg-desktop-portal", "portals",
+                             "xeondesktop.portal"), portals)  # fmt: skip
+    s.launch(frontend, "--replace",
+             env={"XDG_DESKTOP_PORTAL_DIR": portals, "XDG_CURRENT_DESKTOP": "XeonDesktop"})
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+
+    def frontend_up():
+        try:
+            pid = bus.call_sync(
+                "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                "GetConnectionUnixProcessID",
+                GLib.Variant("(s)", ("org.freedesktop.portal.Desktop",)),
+                GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 5000, None,
+            ).unpack()[0]  # fmt: skip
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                return b"XDG_DESKTOP_PORTAL_DIR=" + portals.encode() in f.read().split(b"\0")
+        except (GLib.Error, OSError):
+            return False
+
+    s.wait(frontend_up, "this session's xdg-desktop-portal")
+    return True
+
+
+@scenario(LUNA_INI, requires=("gi",))
+def portal_frontend_gtk4(s):
+    """A GTK 4 program's GtkFileDialog (GDK_DEBUG=portals, as the session
+    sets it) gets our dialog through xdg-desktop-portal, opened over its
+    window through xdg-foreign: an owned window, without a taskbar button
+    of its own. The file chosen is what the program gets."""
+    import gi
+
+    try:
+        gi.require_version("Gtk", "4.0")
+    except ValueError:
+        s.log("skipped: GTK 4's introspection data isn't installed")
+        return
+    if not start_frontend(s):
+        s.log("skipped: xdg-desktop-portal isn't installed")
+        return
+    empty = s.settle("desktop")
+    env = dict(os.environ, GDK_DEBUG="portals", XDG_CURRENT_DESKTOP="XeonDesktop",
+               GDK_BACKEND="wayland")  # fmt: skip
+    program = subprocess.Popen([sys.executable, "-c", GTK4_FILE_DIALOG], env=env,
+                               stdout=subprocess.PIPE, preexec_fn=die_with_parent)  # fmt: skip
+    s.children.append(program)
+    s.wait_window(title="Owner Window")
+    # The dialog takes the focus from its owner, but has no window of its
+    # own in the taskbar's list.
+    s.wait(lambda: "activated" not in s.window(title="Owner Window")["states"],
+           "the dialog over the owner window")  # fmt: skip
+    shot = s.settle("gtk4")
+    s.check(s.window(title="GTK4 Test") is None, "the dialog is the program window's own")
+    box = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None and box[2] > 500, f"the dialog shows at {box}")
+    path = os.path.join(s.home, "Documents", "Notes.txt")
+    s.inject("type", path, "key", "Return")
+    out, _ = program.communicate(timeout=30)
+    s.check(out.decode().strip() == path, f"the GTK 4 program got {path}")
+
+
 # ---- showcase: the README's screenshots ----------------------------------------
 #
 # tools/screenshots.sh runs these (the Aero ones on the GPU, for blurred

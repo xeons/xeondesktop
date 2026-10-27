@@ -94,6 +94,23 @@ gsize xd_folder_view_get_positions(XdFolderView *view, XdViewMode *mode, char **
 void xd_folder_view_set_hide_extensions(XdFolderView *view, gboolean hide);
 void xd_folder_view_set_single_click(XdFolderView *view, gboolean single);
 
+/* The Open and Save As dialogs' "Files of type": only the items the
+ * filter keeps are shown (`name` is the file's own name, `content_type`
+ * may be nullptr). nullptr shows everything. Call refilter when what the
+ * filter keeps changes. */
+typedef gboolean (*XdFolderViewFilter)(const char *name, const char *content_type,
+                                       gboolean is_directory, gpointer data);
+void xd_folder_view_set_filter(XdFolderView *view, XdFolderViewFilter filter, gpointer data);
+void xd_folder_view_refilter(XdFolderView *view);
+/* Whether more than one item can be selected (the default); with FALSE,
+ * Ctrl, Shift, Ctrl+A and dragging select one item only, as an Open
+ * dialog's list does. */
+void xd_folder_view_set_multiple(XdFolderView *view, gboolean multiple);
+/* Shows `files` (GFile*), wherever they are, instead of a folder's
+ * contents, under the location `location` (XP's My Recent Documents in
+ * the Open dialogs). Not watched for changes. */
+void xd_folder_view_set_files(XdFolderView *view, GFile *location, GPtrArray *files);
+
 void xd_folder_view_select_all(XdFolderView *view);
 void xd_folder_view_invert_selection(XdFolderView *view);
 guint xd_folder_view_get_item_count(XdFolderView *view);

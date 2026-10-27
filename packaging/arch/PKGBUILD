@@ -62,7 +62,9 @@ depends=(
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
 # mesa: EGL/GLES headers for SceneFX (xd-compositor-fx, Aero's blur).
-makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm' 'mesa')
+# xdg-desktop-portal: the file chooser portal's D-Bus interfaces.
+makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm' 'mesa'
+             'xdg-desktop-portal')
 checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
@@ -74,7 +76,8 @@ optdepends=(
   'oxygen-icons: the Oxygen icon theme (Display Properties > Linux)'
   'papirus-icon-theme: the Papirus icon theme (Display Properties > Linux)'
   'mate-icon-theme: the MATE icon theme (Display Properties > Linux)'
-  'xdg-desktop-portal-gtk: file chooser and settings portals'
+  'xdg-desktop-portal: our Open and Save As dialogs for Flatpaks, GTK 4, Firefox, Chromium'
+  'xdg-desktop-portal-gtk: settings and other portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'accountsservice: User Accounts'
   'gnome-keyring: Passwords and Keys (or another Secret Service, such as KeePassXC)'

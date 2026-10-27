@@ -44,6 +44,7 @@ they die.
 | `xd-snip` | GTK3 | The Snipping Tool (its overlay through gtk-layer-shell), Print Screen's clipboard copies, and screen recording (GStreamer). |
 | `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
 | `xd-control` | none | Opens `control:` in `xd-files`, or one applet (`xd-control desk`). |
+| `xdg-desktop-portal-xeondesktop` | GTK3 | The xdg-desktop-portal FileChooser backend: our Open and Save As dialogs (XP's layout with 7's search box, around the folder view) for Flatpaks, GTK 4, Firefox, Chromium and GtkFileChooserNative. In libexecdir, D-Bus activated. |
 | `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
 
 Development tools: `xd-themeview` (renders theme previews to PNG),
@@ -118,6 +119,8 @@ and xdg-shell, they use:
   compositor's own while they hold it);
 - `wp_fractional_scale_v1` and `wp_viewporter`, `wp_cursor_shape_v1`,
   `xdg-activation-v1`;
+- `xdg-foreign` v1 and v2: portal dialogs (the file chooser) owned by the
+  window of the program that asked;
 - `xdg-decoration` and KDE's server decoration (GTK 3 uses it) to put our
   frames on every window;
 - `wlr-data-control` and `ext-data-control` (clipboard managers and

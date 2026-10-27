@@ -1185,6 +1185,50 @@ executable(
   install: true,
 )
 
+# Our Open and Save As dialogs for every program asking xdg-desktop-portal
+# for a file. Its D-Bus interfaces are xdg-desktop-portal's own files
+# (xdg-desktop-portal's pkg-config gives where), built in as a resource.
+gnome = import('gnome')
+portal_dep = dependency('xdg-desktop-portal', include_type: 'system')
+portal_interfaces = portal_dep.get_variable(pkgconfig: 'interfaces_dir')
+portal_resources = gnome.compile_resources(
+  'xd-portal-resources',
+  'data/xdg-desktop-portal/xeondesktop.gresource.xml',
+  source_dir: portal_interfaces,
+  c_name: 'xd_portal',
+  extra_args: ['--internal'],
+)
+# glib-compile-resources' code isn't ours: built apart, without our
+# warnings.
+portal_resources_lib = static_library(
+  'xdportalresources',
+  portal_resources,
+  dependencies: [gio_unix_dep],
+  override_options: ['warning_level=0', 'werror=false'],
+  c_args: ['-w'],
+)
+executable(
+  'xdg-desktop-portal-xeondesktop',
+  'src/portal/main.c',
+  'src/portal/chooser.c',
+  'src/portal/chooserlib.c',
+  'src/shell/recent.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: [folder_lib, gtkapp_lib, rename_lib, portal_resources_lib],
+  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep],
+  install: true,
+  install_dir: get_option('libexecdir'),
+)
+portal_libexec = {'LIBEXECDIR': get_option('prefix') / get_option('libexecdir')}
+install_data('data/xdg-desktop-portal/portals/xeondesktop.portal',
+             install_dir: get_option('datadir') / 'xdg-desktop-portal' / 'portals')
+configure_file(
+  input: 'data/dbus-1/services/org.freedesktop.impl.portal.desktop.xeondesktop.service.in',
+  output: 'org.freedesktop.impl.portal.desktop.xeondesktop.service',
+  configuration: portal_libexec,
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
+)
+
 executable(
   'xd-shell',
   'src/shell/main.c',
@@ -1413,6 +1457,7 @@ test_exe = executable(
   'src/vboxdnd/hgcm.c',
   'src/vboxdnd/fakehost.c',
   'src/files/versions.c',
+  'src/portal/chooserlib.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
@@ -1493,6 +1538,14 @@ configure_file(
   install_dir: systemd_user_unit_dir,
   install_tag: 'runtime',
 )
+# The portal backend, as D-Bus activation starts it (as GTK's is).
+configure_file(
+  input: 'data/systemd/user/xdg-desktop-portal-xeondesktop.service.in',
+  output: 'xdg-desktop-portal-xeondesktop.service',
+  configuration: portal_libexec,
+  install_dir: systemd_user_unit_dir,
+  install_tag: 'runtime',
+)
 # Theme packages: Windows visual styles converted with xd-theme-import
 # (python-pefile, PyGObject's GdkPixbuf, PyCairo); uxtheme's names for it and the
 # theme engine. docs/THEMES.md.
@@ -1545,6 +1598,7 @@ install_man(
   'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-vboxdnd.1', 'man/xd-wifi-key.1',
   'man/xd-wuaucpl.1',
 )
+install_man('man/xdg-desktop-portal-xeondesktop.8')
 if build_compositor
   install_man('man/xd-compositor.1', 'man/xeondesktop-session.1')
 endif

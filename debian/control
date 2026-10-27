@@ -66,6 +66,8 @@ Build-Depends:
  libxkbregistry-dev,
  libcrypt-dev,
  libjson-glib-dev,
+# The file chooser portal's D-Bus interfaces (xdg-desktop-portal.pc).
+ xdg-desktop-portal-dev,
  libegl-dev,
  libgles-dev,
  libpixman-1-dev,
@@ -93,6 +95,7 @@ Depends:
  fonts-open-sans,
 Recommends:
  xwayland,
+ xdg-desktop-portal,
  gstreamer1.0-plugins-good,
  gstreamer1.0-plugins-bad,
  gstreamer1.0-plugins-ugly,
