@@ -1291,14 +1291,31 @@ against mocks or scratch directories; none yet against the real services.
 
 - [~] Desktop Effects (`xd-effects`): Compiz Fusion's effects, all off by
       default, configured from a CCSM-style panel built from one effect
-      table (`effects.ini`, applied live). An OpenGL path in
-      xd-compositor-fx draws effected windows as meshes; the plain build
-      greys those effects out. Done: Wobbly Windows (tested headless on
-      llvmpipe, about 4.5 ms a frame; untested on a real GPU). Being
-      built: Scale, Animations, Opacity, Ring Switcher, Enhanced Zoom,
-      Annotate, Show Mouse; Magic Lamp, Burn, Explode, Water; virtual
-      desktops with Desktop Wall, Cube, Rotate Cube, Expo, Shift Switcher.
-      CI likely skips the OpenGL scenarios (no /dev/udmabuf).
+      table (`effects.ini`, applied live); no two defaults clash with every
+      effect on. OpenGL effects need xd-compositor-fx (greyed out
+      otherwise). All tested headless only (pixman, and llvmpipe for the
+      OpenGL ones, 2-12 ms a frame); none yet on a real GPU. CI likely
+      skips the OpenGL scenarios (no /dev/udmabuf).
+      - [x] Scene graph (both builds): Scale (Shift+Alt+Up, top-right
+        corner), Animations (Fade, Zoom, Glide 1/2 for open, close,
+        minimize), Window Opacity (rules, dim inactive, Alt+wheel), Ring
+        Switcher (Super+Tab), Enhanced Zoom (Super+wheel), Annotate
+        (Super+Alt+drag, Super+Alt+K), Show Mouse (Super+K; its look
+        awaits the user's review).
+      - [x] OpenGL: Wobbly Windows, Magic Lamp, Burn, Explode, Water
+        (Super+Shift+click, Shift+F9 rain, Ctrl+Super wake). Magic Lamp,
+        Burn and Explode take precedence over Animations.
+      - [x] Virtual desktops (General Options' Desktop Size): Ctrl+Alt+
+        arrows switch, Ctrl+Alt+Shift+arrows carry the window, window menu
+        items, a taskbar pager; Desktop Wall (slide, map, edge flip),
+        Desktop Cube and Rotate Cube (Ctrl+Alt+drag), Expo (Super+W,
+        top-left corner), Shift Switcher (Super+Shift+Tab).
+      - [ ] Not done: Brightness and Saturation (the scene graph can't),
+        Glide's 3D tilt and Sidekick, Burn's smoke, Water's wiper, Expo's
+        tilt and reflection, pager thumbnails, Shift's window title; Task
+        Manager lists only the current desktop's windows; attention
+        requests on other desktops don't show; Annotate and Show Mouse
+        draw under Expo; output filters skip rotated outputs.
 
 - [~] Input methods: the compositor relays text-input-v3 to
       input-method-v2 (Fcitx 5 or IBus, started from Keyboard Properties'
