@@ -1067,6 +1067,28 @@ def magic_lamp_over_animations(s):
            "the window gone into its button", timeout=10)
 
 
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"
+                              "[Animations]\nEnabled=true\nCloseEffect=fade\n"
+                              "CloseDuration=4000\n"), fx=True)
+def burn_over_animations(s):
+    """Burn and Animations (Fade on close) both on, both slowed to 4 s:
+    Burn alone closes the window. Midway its top is gone, which a fading
+    copy of the whole window (Animations as well) would still cover."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1800)
+    mid = s.shot("midway")
+    top = mid.differs(empty, (x, y, w, 40), step=2)
+    bottom = mid.differs(empty, (x, y + h - 60, w, 50), step=2)
+    s.log(f"midway: {top:.2f} of its top differs from the desktop, {bottom:.2f} of its bottom")
+    s.check(top < 0.05, f"midway its top is gone, no fading copy over it ({top:.2f})")
+    s.check(bottom > 0.5, f"midway its bottom is still there ({bottom:.2f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window burnt away", timeout=10)
+
+
 @scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"), fx=True)
 def burn_close(s):
     """Burn (xd-compositor-fx), slowed to 4 s: a window closed with Alt+F4

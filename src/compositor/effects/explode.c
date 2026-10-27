@@ -242,13 +242,25 @@ static void explode_configure([[maybe_unused]] xd_server *server, void *data,
              xd_effects_get_text(settings, effect, "Windows"));
 }
 
+/* Whether it takes this window's closing: Animations, later in the
+ * list, then leaves the window alone (xd_effects_is_animated_before). */
+static bool explode_is_wanted(const explode_state *state, const xd_view *view,
+                              xd_window_event_kind kind) {
+    return kind == XD_WINDOW_EVENT_UNMAP && !view->fullscreen &&
+           xd_effects_match_window(state->options.windows, xd_view_app_id(view),
+                                   xd_view_title(view), view->dialog);
+}
+
+static bool explode_animates([[maybe_unused]] xd_server *server, void *data, const xd_view *view,
+                             xd_window_event_kind kind) {
+    return explode_is_wanted(data, view, kind);
+}
+
 static void explode_handle_window_event([[maybe_unused]] xd_server *server, void *data,
                                         const xd_window_event *event) {
     explode_state *state = data;
     xd_view *view = event->view;
-    if (event->kind != XD_WINDOW_EVENT_UNMAP || view->fullscreen ||
-        !xd_effects_match_window(state->options.windows, xd_view_app_id(view),
-                                 xd_view_title(view), view->dialog))
+    if (!explode_is_wanted(state, view, event->kind))
         return;
     explode_window *window = XD_NEW(explode_window);
     window->state = state;
@@ -266,4 +278,5 @@ const xd_effect_impl xd_effect_impl_explode = {
     .disable = explode_disable,
     .configure = explode_configure,
     .window_event = explode_handle_window_event,
+    .animates = explode_animates,
 };

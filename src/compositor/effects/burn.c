@@ -375,13 +375,25 @@ static void burn_configure([[maybe_unused]] xd_server *server, void *data,
              xd_effects_get_text(settings, effect, "Windows"));
 }
 
+/* Whether it takes this window's closing: Animations, later in the
+ * list, then leaves the window alone (xd_effects_is_animated_before). */
+static bool burn_is_wanted(const burn_state *state, const xd_view *view,
+                           xd_window_event_kind kind) {
+    return kind == XD_WINDOW_EVENT_UNMAP && !view->fullscreen &&
+           xd_effects_match_window(state->options.windows, xd_view_app_id(view),
+                                   xd_view_title(view), view->dialog);
+}
+
+static bool burn_animates([[maybe_unused]] xd_server *server, void *data, const xd_view *view,
+                          xd_window_event_kind kind) {
+    return burn_is_wanted(data, view, kind);
+}
+
 static void burn_handle_window_event([[maybe_unused]] xd_server *server, void *data,
                                      const xd_window_event *event) {
     burn_state *state = data;
     xd_view *view = event->view;
-    if (event->kind != XD_WINDOW_EVENT_UNMAP || view->fullscreen ||
-        !xd_effects_match_window(state->options.windows, xd_view_app_id(view),
-                                 xd_view_title(view), view->dialog))
+    if (!burn_is_wanted(state, view, event->kind))
         return;
     burn_window *window = XD_NEW(burn_window);
     window->state = state;
@@ -403,4 +415,5 @@ const xd_effect_impl xd_effect_impl_burn = {
     .disable = burn_disable,
     .configure = burn_configure,
     .window_event = burn_handle_window_event,
+    .animates = burn_animates,
 };
