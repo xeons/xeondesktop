@@ -10,6 +10,7 @@
 #include "names.h"
 #include "netdrives.h"
 #include "places.h"
+#include "search.h"
 #include "udisks.h"
 #include "usershare.h"
 
@@ -77,6 +78,7 @@ typedef struct item {
     /* Show in Groups: the heading it's under, and the groups' order. */
     char *group;
     int group_rank;
+    char *folder_text; /* search results: In Folder */
 } item;
 
 /* A group's heading in the grouped icon views (content coordinates). */
@@ -128,6 +130,12 @@ struct _XdFolderView {
     gpointer filter_data;
     gboolean single;
     GPtrArray *fixed_files;
+    /* Search results: shown as they come (results), the query whose
+     * matches are drawn highlighted, in the colour given (or the theme's). */
+    gboolean results;
+    xd_search_query *highlight;
+    gboolean has_highlight_color;
+    GdkRGBA highlight_color;
     gboolean groups;  /* Show in Groups */
     gboolean grouped; /* laid out in groups now (an icon view) */
     GArray *rects;    /* GdkRectangle per shown item, when grouped */
@@ -255,6 +263,7 @@ static void item_free(gpointer user_data) {
     g_free(it->thumb_path);
     g_free(it->extra);
     g_free(it->group);
+    g_free(it->folder_text);
     xd_free(it);
 }
 
@@ -510,6 +519,9 @@ static void set_group(const XdFolderView *folder_view, item *it, GDateTime *now)
     case XD_SORT_OWNER:
         it->group = g_strdup(it->owner != nullptr ? it->owner : "");
         return;
+    case XD_SORT_FOLDER:
+        it->group = g_strdup(it->folder_text != nullptr ? it->folder_text : "");
+        return;
     case XD_SORT_SIZE: {
         static const struct {
             guint64 below;
@@ -645,6 +657,10 @@ static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
         order = g_utf8_collate(left->owner != nullptr ? left->owner : "",
                                right->owner != nullptr ? right->owner : "");
         break;
+    case XD_SORT_FOLDER:
+        order = g_utf8_collate(left->folder_text != nullptr ? left->folder_text : "",
+                               right->folder_text != nullptr ? right->folder_text : "");
+        break;
     case XD_SORT_NAME:
     case XD_SORT_COUNT:
         break;
@@ -671,7 +687,8 @@ static void refilter(XdFolderView *folder_view) {
         item *it = g_ptr_array_index(folder_view->all, i);
         if (folder_view->grouped)
             set_group(folder_view, it, now);
-        if ((folder_view->show_hidden || !it->hidden) && passes_filter(folder_view, it))
+        if ((folder_view->show_hidden || !it->hidden || folder_view->results) &&
+            passes_filter(folder_view, it))
             g_ptr_array_add(folder_view->shown, it);
         else
             it->selected = FALSE;
@@ -785,7 +802,8 @@ static void layout_detail_groups(XdFolderView *folder_view) {
 /* ---- Details columns ---------------------------------------------------------------- */
 
 static const char *const folder_titles[XD_SORT_COUNT] = {
-    "Name", "Size", "Type", "Date Modified", "Date Created", "Date Accessed", "Attributes", "Owner"};
+    "Name",          "Size",       "Type",  "Date Modified", "Date Created",
+    "Date Accessed", "Attributes", "Owner", "In Folder"};
 
 static const char *column_title(const XdFolderView *folder_view, int col) {
     static const char *const computer_titles[] = {"Name", "Total Size", "Type", "Free Space"};
@@ -817,7 +835,7 @@ static const char *column_title(const XdFolderView *folder_view, int col) {
 static gboolean column_available(const XdFolderView *folder_view, int col) {
     switch (folder_view->place) {
     case XD_PLACE_FOLDER:
-        return col >= 0 && col < XD_SORT_COUNT;
+        return col >= 0 && col < XD_SORT_COUNT && (col != XD_SORT_FOLDER || folder_view->results);
     case XD_PLACE_CONTROL:
         return col == XD_SORT_NAME || col == XD_SORT_TYPE;
     case XD_PLACE_NETWORK:
@@ -844,6 +862,8 @@ static int default_width(const XdFolderView *folder_view, int col, int view_w) {
         return 70;
     case XD_SORT_OWNER:
         return 120;
+    case XD_SORT_FOLDER:
+        return 200;
     case XD_SORT_NAME:
     case XD_SORT_COUNT:
         break;
@@ -853,8 +873,12 @@ static int default_width(const XdFolderView *folder_view, int col, int view_w) {
 
 static void default_columns(XdFolderView *folder_view) {
     folder_view->ncols = 0;
-    for (int column = 0; column <= XD_SORT_MODIFIED; column++)
+    for (int column = 0; column <= XD_SORT_MODIFIED; column++) {
         folder_view->order[folder_view->ncols++] = column;
+        /* Search results: XP's Name, In Folder, Size, Type, Date Modified. */
+        if (column == XD_SORT_NAME && folder_view->results)
+            folder_view->order[folder_view->ncols++] = XD_SORT_FOLDER;
+    }
     memset(folder_view->width, 0, sizeof(folder_view->width));
 }
 
@@ -897,6 +921,8 @@ static const char *cell_text(item *it, int col) {
         return or_empty(it->attrs);
     case XD_SORT_OWNER:
         return or_empty(it->owner);
+    case XD_SORT_FOLDER:
+        return or_empty(it->folder_text);
     case XD_SORT_COUNT:
         break;
     }
@@ -1256,6 +1282,74 @@ static void draw_text(XdFolderView *folder_view, cairo_t *cairo, const char *tex
     g_object_unref(layout);
 }
 
+static guint16 color_channel(double value) {
+    return (guint16)CLAMP(value * 65535.0 + 0.5, 0.0, 65535.0);
+}
+
+/* WCAG's relative luminance and contrast ratio, to tell whether a colour
+ * still shows on the selection's. */
+static double luminance(GdkRGBA color) {
+    double channels[3] = {color.red, color.green, color.blue};
+    for (size_t i = 0; i < 3; i++)
+        channels[i] = channels[i] <= 0.03928 ? channels[i] / 12.92
+                                             : pow((channels[i] + 0.055) / 1.055, 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+static double contrast(GdkRGBA first, GdkRGBA second) {
+    double lighter = MAX(luminance(first), luminance(second));
+    double darker = MIN(luminance(first), luminance(second));
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+static void insert_ranged(PangoAttrList *attrs, PangoAttribute *attr, xd_search_span span) {
+    attr->start_index = (guint)span.start;
+    attr->end_index = (guint)span.end;
+    pango_attr_list_insert(attrs, attr);
+}
+
+/* The parts of a name the search matched: bold, in the colour chosen, or
+ * by default as selected text is (HilightText on Hilight). */
+static void add_highlights(const XdFolderView *folder_view, PangoAttrList *attrs,
+                           const char *text, gboolean selected, const colors *view_colors) {
+    if (folder_view->highlight == nullptr)
+        return;
+    GArray *spans = xd_search_query_name_spans(folder_view->highlight, text);
+    GdkRGBA foreground = view_colors->sel_fg;
+    GdkRGBA background = view_colors->sel_bg;
+    gboolean has_background = !folder_view->has_highlight_color;
+    gboolean underline = FALSE;
+    if (has_background && selected) {
+        /* Inside the selection, its colours swap, so the match still shows. */
+        foreground = view_colors->sel_bg;
+        background = view_colors->sel_fg;
+    } else if (!has_background) {
+        foreground = folder_view->highlight_color;
+        if (selected && contrast(foreground, view_colors->sel_bg) < 3.0) {
+            foreground = view_colors->sel_fg;
+            underline = TRUE;
+        }
+    }
+    for (guint i = 0; i < spans->len; i++) {
+        xd_search_span span = g_array_index(spans, xd_search_span, i);
+        insert_ranged(attrs,
+                      pango_attr_foreground_new(color_channel(foreground.red),
+                                                color_channel(foreground.green),
+                                                color_channel(foreground.blue)),
+                      span);
+        insert_ranged(attrs, pango_attr_weight_new(PANGO_WEIGHT_BOLD), span);
+        if (has_background)
+            insert_ranged(attrs,
+                          pango_attr_background_new(color_channel(background.red),
+                                                    color_channel(background.green),
+                                                    color_channel(background.blue)),
+                          span);
+        if (underline)
+            insert_ranged(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE), span);
+    }
+    g_array_unref(spans);
+}
+
 /* Draws a label with its selection highlight; returns nothing. */
 static void draw_label_box(XdFolderView *folder_view, cairo_t *cairo, const char *text, int x,
                            int y, int width, int lines, PangoAlignment align, gboolean selected,
@@ -1265,10 +1359,12 @@ static void draw_label_box(XdFolderView *folder_view, cairo_t *cairo, const char
     pango_layout_set_alignment(layout, align);
     pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
     no_hyphens(layout);
-    if (folder_view->underline_label) {
+    if (folder_view->underline_label || folder_view->highlight != nullptr) {
         PangoAttrList *attrs = pango_layout_get_attributes(layout);
         attrs = attrs != nullptr ? pango_attr_list_copy(attrs) : pango_attr_list_new();
-        pango_attr_list_insert(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+        if (folder_view->underline_label)
+            pango_attr_list_insert(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+        add_highlights(folder_view, attrs, text, selected, view_colors);
         pango_layout_set_attributes(layout, attrs);
         pango_attr_list_unref(attrs);
     }
@@ -2035,6 +2131,14 @@ static void start_loading(XdFolderView *folder_view, gboolean fresh) {
         set_hover(folder_view, -1);
     }
     folder_view->cancel = g_cancellable_new();
+    if (folder_view->results) {
+        /* Filled by add_results, shown as they come. */
+        folder_view->listing_fresh = TRUE;
+        layout_contents(folder_view);
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
+        g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
+        return;
+    }
     if (folder_view->fixed_files != nullptr) {
         load_fixed(folder_view);
         loading_done(folder_view);
@@ -3118,6 +3222,7 @@ static void folder_view_dispose(GObject *obj) {
     g_clear_pointer(&folder_view->cut, g_hash_table_unref);
     g_clear_pointer(&folder_view->band_base, g_array_unref);
     g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
+    g_clear_pointer(&folder_view->highlight, xd_search_query_unref);
     xd_usershare_unwatch(folder_view);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
@@ -3238,7 +3343,9 @@ static void change_location(XdFolderView *folder_view, GFile *dir) {
         g_file_monitor_cancel(folder_view->monitor);
         g_clear_object(&folder_view->monitor);
     }
-    folder_view->place = folder_view->fixed_files != nullptr ? XD_PLACE_FOLDER : xd_place_of(dir);
+    folder_view->place = folder_view->fixed_files != nullptr || folder_view->results
+                             ? XD_PLACE_FOLDER
+                             : xd_place_of(dir);
     g_clear_object(&folder_view->listed);
     folder_view->listed =
         folder_view->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
@@ -3278,7 +3385,7 @@ static void change_location(XdFolderView *folder_view, GFile *dir) {
             g_signal_connect(folder_view->apps_monitor, "changed", G_CALLBACK(apps_changed),
                              folder_view);
         }
-    } else if (folder_view->fixed_files == nullptr) {
+    } else if (folder_view->fixed_files == nullptr && !folder_view->results) {
         folder_view->monitor = g_file_monitor_directory(
             folder_view->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
         if (folder_view->monitor != nullptr)
@@ -3292,8 +3399,23 @@ static void change_location(XdFolderView *folder_view, GFile *dir) {
     start_loading(folder_view, TRUE);
 }
 
+static void leave_results(XdFolderView *folder_view) {
+    if (!folder_view->results)
+        return;
+    folder_view->results = FALSE;
+    g_clear_pointer(&folder_view->highlight, xd_search_query_unref);
+    /* In Folder goes with them. */
+    int kept = 0;
+    for (int k = 0; k < folder_view->ncols; k++)
+        if (folder_view->order[k] != XD_SORT_FOLDER)
+            folder_view->order[kept++] = folder_view->order[k];
+    folder_view->ncols = kept;
+}
+
 void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
     g_return_if_fail(G_IS_FILE(dir));
+    leave_results(folder_view);
+    g_clear_pointer(&folder_view->highlight, xd_search_query_unref);
     g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
     change_location(folder_view, dir);
 }
@@ -3307,7 +3429,66 @@ void xd_folder_view_set_files(XdFolderView *folder_view, GFile *location, GPtrAr
         g_ptr_array_add(copy, g_object_ref(g_ptr_array_index(files, i)));
     g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
     folder_view->fixed_files = copy;
+    leave_results(folder_view);
     change_location(folder_view, location);
+}
+
+void xd_folder_view_begin_results(XdFolderView *folder_view, GFile *location) {
+    g_return_if_fail(G_IS_FILE(location));
+    g_clear_pointer(&folder_view->fixed_files, g_ptr_array_unref);
+    folder_view->results = TRUE;
+    default_columns(folder_view);
+    columns_changed(folder_view);
+    change_location(folder_view, location);
+}
+
+void xd_folder_view_add_results(XdFolderView *folder_view, GPtrArray *hits) {
+    if (!folder_view->results)
+        return;
+    for (guint i = 0; i < hits->len; i++) {
+        const xd_search_hit *hit = g_ptr_array_index(hits, i);
+        GFile *parent = g_file_get_parent(hit->file);
+        if (parent == nullptr)
+            continue;
+        item *it = item_new(parent, hit->info);
+        /* Inside an archive, the archive is a folder, as 7 shows it. */
+        it->folder_text = g_file_get_parse_name(parent);
+        if (hit->archive != nullptr)
+            it->thumb_want = FALSE;
+        g_ptr_array_add(folder_view->loading, it);
+        g_object_unref(parent);
+    }
+    if (folder_view->loading->len == 0 || folder_view->publish_source != 0)
+        return;
+    /* The first ones show at once, the rest a few times a second. */
+    if (folder_view->all->len == 0)
+        publish_loaded(folder_view);
+    folder_view->publish_source = g_timeout_add(250, publish_timeout, folder_view);
+}
+
+void xd_folder_view_end_results(XdFolderView *folder_view) {
+    if (!folder_view->results)
+        return;
+    stop_publishing(folder_view);
+    publish_loaded(folder_view);
+    g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
+}
+
+gboolean xd_folder_view_is_results(XdFolderView *folder_view) { return folder_view->results; }
+
+void xd_folder_view_set_highlight(XdFolderView *folder_view, xd_search_query *query) {
+    if (query != nullptr)
+        xd_search_query_ref(query);
+    g_clear_pointer(&folder_view->highlight, xd_search_query_unref);
+    folder_view->highlight = query;
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
+}
+
+void xd_folder_view_set_highlight_color(XdFolderView *folder_view, const GdkRGBA *color) {
+    folder_view->has_highlight_color = color != nullptr;
+    if (color != nullptr)
+        folder_view->highlight_color = *color;
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
 void xd_folder_view_set_filter(XdFolderView *folder_view, XdFolderViewFilter filter,
@@ -3328,7 +3509,7 @@ void xd_folder_view_set_multiple(XdFolderView *folder_view, gboolean multiple) {
 }
 
 void xd_folder_view_reload(XdFolderView *folder_view) {
-    if (folder_view->dir == nullptr)
+    if (folder_view->dir == nullptr || folder_view->results)
         return;
     /* The old items stay until the new ones are in: no blank view, and
      * the scroll position is kept. */

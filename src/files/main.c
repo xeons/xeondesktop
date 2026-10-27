@@ -5,9 +5,15 @@
  * address bar, XP's task pane or the Folders tree on the left (show_side),
  * XdFolderView on the right and a status bar with the thumbnail size
  * slider.
+ *
+ * Search shows its results in a tab's view ("Search Results"): from the
+ * Search bar on the left (XP's Search Companion, 2000's Search pane; the
+ * Search button, F3, Ctrl+F, Ctrl+E) or from 7's search box at the top
+ * right, by the display style.
  */
 #include <glib-unix.h>
 #include <gtk/gtk.h>
+#include <stdarg.h>
 #include <stdlib.h>
 
 #include "../gtkapp/gtkapp.h"
@@ -25,6 +31,8 @@
 #include "netui.h"
 #include "places.h"
 #include "properties.h"
+#include "search.h"
+#include "searchpane.h"
 #include "sendto.h"
 #include "taskpane.h"
 #include "undo.h"
@@ -71,6 +79,14 @@ typedef struct tab {
     GFile *named;
     char *gio_name;
     GCancellable *naming;
+    /* A search shown instead of the folder (still the view's location):
+     * its criteria, the job while it runs, whether it came from 7's box;
+     * and 7's "Search again in:" bar under the results. */
+    gboolean searching;
+    gboolean search_from_box;
+    xd_search_criteria search;
+    xd_search_job *search_job;
+    GtkWidget *again_bar;
 } tab;
 
 struct explorer {
@@ -109,9 +125,26 @@ struct explorer {
     GPtrArray *folders_only;
     GPtrArray *trash_only;
     gboolean syncing; /* updating widgets programmatically */
+    /* Search: XP's or 2000's Search bar (in the Folders bar's place) and
+     * the toolbar's toggle for it, or 7's box at the address bar's end,
+     * its suggestions and the command bar's Save search. */
+    GtkWidget *search_pane;
+    gboolean search_open;
+    GtkWidget *search_button;
+    GtkWidget *search_entry;
+    GtkWidget *search_popover;
+    GtkWidget *save_search_button;
+    GtkWidget *save_search_item; /* File > Save Search... */
 };
 
 static void update_tasks(explorer *browser);
+static void end_search(tab *folder_tab);
+static void leave_search(tab *folder_tab);
+static void run_search(tab *folder_tab, const xd_search_criteria *criteria, gboolean from_box);
+static void open_search(explorer *browser, gboolean toggle);
+static gboolean is_saved_search(GFile *file);
+static gboolean open_saved_search(tab *folder_tab, GFile *file);
+static void apply_highlight_color(tab *folder_tab);
 
 static XdPlace tab_place(tab *folder_tab) {
     return xd_place_of(xd_folder_view_get_location(folder_tab->view));
@@ -136,6 +169,9 @@ static gboolean view_given;               /* --view given: Folder Options' defau
 static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
 static gboolean is_seven_style; /* Aero: Windows 7's menus */
+/* Classic look and Start menu: Windows 2000's (its Search pane). */
+static gboolean is_classic_style;
+static gboolean search_option; /* --search: open with Search */
 static gboolean explore_option;           /* --explore: with the Folders bar, as XP's Explore */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
  * --link-to, --launch, --map-drive, --disconnect-drive, --disk-cleanup: one job for the
@@ -286,7 +322,9 @@ static void update_tab_label(tab *folder_tab) {
     char *parse = nullptr, *base = nullptr;
     const char *named = nullptr;
     folder_names(folder_tab, dir, &parse, &base, &named);
-    const char *name = base != nullptr ? base : parse;
+    const char *name = folder_tab->searching ? "Search Results"
+                       : base != nullptr     ? base
+                                             : parse;
     gtk_label_set_text(GTK_LABEL(folder_tab->label_text), name);
     /* The whole name up to a point, then "..." (a notebook gives a tab
      * only the least its label asks for). */
@@ -312,18 +350,47 @@ static void update_chrome(explorer *browser) {
     folder_names(folder_tab, dir, &parse, &base, &named);
     /* Folder Options: the folder's name alone, unless the full path. */
     const char *shown = options.full_path_address || base == nullptr ? parse : base;
+    /* A search: XP's "Search Results", 7's "Search Results in Documents". */
+    char *searched = nullptr;
+    if (folder_tab->searching)
+        searched = folder_tab->search_from_box && is_seven_style
+                       ? g_strdup_printf("Search Results in %s", base != nullptr ? base : parse)
+                       : g_strdup("Search Results");
+    if (searched != nullptr)
+        shown = searched;
     g_object_set_data_full(G_OBJECT(browser->address), "xd-shown", g_strdup(shown), g_free);
     browser->syncing = TRUE;
     gtk_entry_set_text(GTK_ENTRY(browser->address), shown);
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(browser->address), GTK_ENTRY_ICON_PRIMARY,
-                                      xd_place_icon(dir));
+                                      searched != nullptr ? "system-search" : xd_place_icon(dir));
+    if (browser->search_entry != nullptr && !folder_tab->searching) {
+        char *hint = g_strdup_printf("Search %s", base != nullptr ? base : parse);
+        gtk_entry_set_placeholder_text(GTK_ENTRY(browser->search_entry), hint);
+        g_free(hint);
+    }
+    /* The box shows the tab's search (another tab's, a folder's none),
+     * but never changes under typing. */
+    if (browser->search_entry != nullptr && !gtk_widget_has_focus(browser->search_entry)) {
+        const char *query = folder_tab->searching && folder_tab->search_from_box &&
+                                    folder_tab->search.query != nullptr
+                                ? folder_tab->search.query
+                                : "";
+        if (strcmp(gtk_entry_get_text(GTK_ENTRY(browser->search_entry)), query) != 0)
+            gtk_entry_set_text(GTK_ENTRY(browser->search_entry), query);
+    }
     browser->syncing = FALSE;
     gboolean short_title = !options.full_path_title && base != nullptr &&
                            (g_file_has_parent(dir, nullptr) || named != nullptr);
-    gtk_window_set_title(GTK_WINDOW(browser->window), short_title ? base : parse);
+    gtk_window_set_title(GTK_WINDOW(browser->window),
+                         searched != nullptr ? searched : short_title ? base : parse);
+    g_free(searched);
+    if (browser->save_search_button != nullptr)
+        gtk_widget_set_visible(browser->save_search_button,
+                               is_seven_style && folder_tab->searching);
     g_free(base);
     g_free(parse);
-    gtk_widget_set_sensitive(browser->back_button, folder_tab->back != nullptr);
+    gtk_widget_set_sensitive(browser->back_button,
+                             folder_tab->back != nullptr || folder_tab->searching);
     gtk_widget_set_sensitive(browser->forward_button, folder_tab->forward != nullptr);
     /* A drive's Up is My Computer, as in XP; so is Control Panel's, whose
      * category pages go up to it. */
@@ -658,8 +725,9 @@ static void remember_folder_view(tab *folder_tab) {
     GFile *dir = xd_folder_view_get_location(folder_tab->view);
     /* Control Panel always opens in its view's own look (below); with
      * "Remember each folder's view settings" off nothing is kept. */
-    if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL || !options.remember_views)
-        return;
+    if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL || !options.remember_views ||
+        xd_folder_view_is_results(folder_tab->view))
+        return; /* search results' view is theirs, not the folder's */
     char *uri = g_file_get_uri(dir);
     remember_positions(folder_tab, uri);
     XdViewMode view_mode = xd_folder_view_get_mode(folder_tab->view);
@@ -993,6 +1061,7 @@ static void navigate(tab *folder_tab, GFile *dir, gboolean record) {
 }
 
 static void show_location(tab *folder_tab, GFile *dir, gboolean record) {
+    end_search(folder_tab);
     GFile *current = xd_folder_view_get_location(folder_tab->view);
     if (record && current != nullptr && !g_file_equal(current, dir)) {
         folder_tab->back = g_list_prepend(folder_tab->back, g_object_ref(current));
@@ -1010,6 +1079,11 @@ static void show_location(tab *folder_tab, GFile *dir, gboolean record) {
 }
 
 static void go_back(tab *folder_tab) {
+    /* Back from search results: the folder searched. */
+    if (folder_tab->searching) {
+        leave_search(folder_tab);
+        return;
+    }
     if (folder_tab->back == nullptr)
         return;
     GFile *target = folder_tab->back->data;
@@ -1203,6 +1277,8 @@ static void activate_item(tab *folder_tab, GFile *file, gboolean is_dir) {
         open_elsewhere(browser, file);
         return;
     }
+    if (!is_dir && is_saved_search(file) && open_saved_search(folder_tab, file))
+        return;
     if (is_dir) {
         navigate(folder_tab, file, TRUE);
         return;
@@ -1406,16 +1482,26 @@ static void on_slider(GtkRange *range, gpointer data) {
 static void show_side(explorer *browser) {
     gboolean folders =
         gtk_toggle_tool_button_get_active(GTK_TOGGLE_TOOL_BUTTON(browser->folders_toggle));
+    gboolean search = browser->search_open && browser->search_pane != nullptr && !folders;
+    if (browser->search_pane != nullptr)
+        gtk_widget_set_visible(browser->search_pane, search);
     gtk_widget_set_visible(browser->tree_pane, folders);
-    gtk_widget_set_visible(browser->tasks, !folders && options.common_tasks);
-    gtk_widget_set_visible(browser->side, folders || options.common_tasks);
+    gtk_widget_set_visible(browser->tasks, !folders && !search && options.common_tasks);
+    gtk_widget_set_visible(browser->side, folders || search || options.common_tasks);
     browser->syncing = TRUE;
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(browser->folders_item), folders);
     browser->syncing = FALSE;
 }
 
-static void on_folders_toggle([[maybe_unused]] GtkToggleToolButton *toggle_tool_button,
-                              gpointer data) {
+static void on_folders_toggle(GtkToggleToolButton *toggle_tool_button, gpointer data) {
+    explorer *browser = data;
+    /* Folders and Search are both Explorer bars: one at a time. */
+    if (gtk_toggle_tool_button_get_active(toggle_tool_button) && browser->search_open) {
+        browser->search_open = FALSE;
+        browser->syncing = TRUE;
+        gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(browser->search_button), FALSE);
+        browser->syncing = FALSE;
+    }
     show_side(data);
     update_tasks(data);
 }
@@ -1596,7 +1682,16 @@ static void cb_home([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
     go_home(((explorer *)user_data)->cur);
 }
 static void cb_refresh([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
-    xd_folder_view_reload(((explorer *)user_data)->cur->view);
+    tab *folder_tab = ((explorer *)user_data)->cur;
+    if (folder_tab->searching) {
+        /* Search results: the search again. */
+        xd_search_criteria criteria;
+        xd_search_criteria_copy(&criteria, &folder_tab->search);
+        run_search(folder_tab, &criteria, folder_tab->search_from_box);
+        xd_search_criteria_clear(&criteria);
+        return;
+    }
+    xd_folder_view_reload(folder_tab->view);
 }
 static void cb_select_all([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
     xd_folder_view_select_all(((explorer *)user_data)->cur->view);
@@ -1717,33 +1812,6 @@ static void cb_go([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
     explorer *browser = user_data;
     on_address_activate(GTK_ENTRY(browser->address), browser);
 }
-/* Search (F3): XP's search pane, here the Search window, looking in this
- * folder (My Computer's is every local drive, as XP's "Local Hard
- * Drives"). Places that aren't folders on disk start in its default. */
-static void open_search(explorer *browser) {
-    GFile *dir = current_dir(browser);
-    char *path = nullptr;
-    if (dir != nullptr && xd_place_of(dir) == XD_PLACE_COMPUTER)
-        path = g_strdup("/");
-    else if (dir != nullptr && xd_place_of(dir) == XD_PLACE_FOLDER)
-        path = g_file_get_path(dir);
-    char *prog = g_strdup("xd-search");
-    char *argv[] = {prog, path, nullptr};
-    GError *err = nullptr;
-    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
-                       &err)) {
-        xd_message_box(GTK_WINDOW(browser->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       err->message);
-        g_error_free(err);
-    }
-    g_free(prog);
-    g_free(path);
-}
-
-static void cb_search([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
-    open_search(user_data);
-}
-
 /* Tools > Folder Options: xd-folders, told this folder's view so that
  * Apply to All Folders can use it. */
 static void cb_folder_options([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
@@ -1761,6 +1829,689 @@ static void cb_folder_options([[maybe_unused]] GtkWidget *widget, gpointer user_
     }
     g_free(prog);
     g_free(view);
+}
+
+/* ---- search ------------------------------------------------------------------------ */
+
+/* XD_SEARCH_TRACE=FILE: each result ("found PATH"), each search's end
+ * ("done COUNT") and error ("error MESSAGE") written there, for the UI
+ * tests (as XD_SOUND_TRACE logs sounds). */
+static void trace_search(const char *format, ...) G_GNUC_PRINTF(1, 2);
+static void trace_search(const char *format, ...) {
+    const char *path = g_getenv("XD_SEARCH_TRACE");
+    if (path == nullptr || path[0] == '\0')
+        return;
+    FILE *file = fopen(path, "a");
+    if (file == nullptr)
+        return;
+    va_list args;
+    va_start(args, format);
+    vfprintf(file, format, args);
+    va_end(args);
+    fputc('\n', file);
+    fclose(file);
+}
+
+/* Where a folder is searched: its path; My Computer's is every local
+ * drive (XP's Local Hard Drives); places that aren't folders on disk have
+ * none. Free with g_free. */
+static char *search_path_of(GFile *dir) {
+    if (dir == nullptr)
+        return nullptr;
+    if (xd_place_of(dir) == XD_PLACE_COMPUTER)
+        return g_strdup("/");
+    if (xd_place_of(dir) == XD_PLACE_FOLDER)
+        return g_file_get_path(dir);
+    return nullptr;
+}
+
+/* The colour Folder Options' Search tab chose for matches, or the theme's. */
+static void apply_highlight_color(tab *folder_tab) {
+    GdkRGBA color;
+    gboolean chosen = options.search_highlight[0] != '\0' &&
+                      gdk_rgba_parse(&color, options.search_highlight);
+    xd_folder_view_set_highlight_color(folder_tab->view, chosen ? &color : nullptr);
+}
+
+static void set_address_progress(explorer *browser, double fraction) {
+    gtk_entry_set_progress_fraction(GTK_ENTRY(browser->address), is_seven_style ? fraction : 0.0);
+}
+
+/* Stops the tab's search; its results stay until the tab shows a folder. */
+static void stop_search(tab *folder_tab) {
+    if (folder_tab->search_job == nullptr)
+        return;
+    xd_search_job_cancel(folder_tab->search_job);
+    folder_tab->search_job = nullptr;
+    trace_search("stopped");
+    if (folder_tab->view != nullptr)
+        xd_folder_view_end_results(folder_tab->view);
+    if (folder_tab == folder_tab->e->cur) {
+        set_address_progress(folder_tab->e, 0.0);
+        if (folder_tab->e->search_pane != nullptr)
+            xd_search_pane_show_done(folder_tab->e->search_pane,
+                                     xd_folder_view_get_item_count(folder_tab->view));
+    }
+}
+
+/* The tab leaves its search (it's about to show a folder). */
+static void end_search(tab *folder_tab) {
+    if (folder_tab->search_job != nullptr) {
+        xd_search_job_cancel(folder_tab->search_job);
+        folder_tab->search_job = nullptr;
+    }
+    if (!folder_tab->searching)
+        return;
+    folder_tab->searching = FALSE;
+    xd_search_criteria_clear(&folder_tab->search);
+    if (folder_tab->again_bar != nullptr)
+        gtk_widget_hide(folder_tab->again_bar);
+    if (folder_tab->view != nullptr &&
+        xd_folder_view_get_sort(folder_tab->view) == XD_SORT_FOLDER)
+        xd_folder_view_set_sort(folder_tab->view, XD_SORT_NAME, FALSE);
+    if (folder_tab == folder_tab->e->cur) {
+        set_address_progress(folder_tab->e, 0.0);
+        explorer *browser = folder_tab->e;
+        if (browser->search_entry != nullptr && folder_tab->search_from_box) {
+            browser->syncing = TRUE;
+            gtk_entry_set_text(GTK_ENTRY(browser->search_entry), "");
+            browser->syncing = FALSE;
+        }
+    }
+}
+
+static void on_search_found(GPtrArray *hits, gpointer data) {
+    tab *folder_tab = data;
+    for (guint i = 0; i < hits->len; i++) {
+        const xd_search_hit *hit = g_ptr_array_index(hits, i);
+        char *path = g_file_get_path(hit->file);
+        trace_search("found %s", path != nullptr ? path : "?");
+        g_free(path);
+    }
+    xd_folder_view_add_results(folder_tab->view, hits);
+}
+
+static void on_search_progress(double fraction, const char *folder, gpointer data) {
+    tab *folder_tab = data;
+    if (folder_tab != folder_tab->e->cur)
+        return;
+    set_address_progress(folder_tab->e, fraction);
+    if (folder_tab->e->search_pane != nullptr && !folder_tab->search_from_box)
+        xd_search_pane_set_progress(folder_tab->e->search_pane, folder);
+}
+
+#define RECENT_SEARCHES "search-history"
+enum { RECENT_SEARCHES_MAX = 10 };
+
+/* 7's box keeps what was searched for, most recent first. */
+static void remember_recent_search(const char *text) {
+    if (text == nullptr || text[0] == '\0')
+        return;
+    char **lines = nullptr;
+    size_t count = 0;
+    xd_state_read_lines(RECENT_SEARCHES, &lines, &count, RECENT_SEARCHES_MAX);
+    GPtrArray *kept = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(kept, g_strdup(text));
+    for (size_t i = 0; i < count && kept->len < RECENT_SEARCHES_MAX; i++)
+        if (strcmp(lines[i], text) != 0)
+            g_ptr_array_add(kept, g_strdup(lines[i]));
+    if (!xd_state_write_lines(RECENT_SEARCHES, (char *const *)kept->pdata, kept->len))
+        g_printerr("xd-files: cannot save the recent searches\n");
+    g_ptr_array_unref(kept);
+    xd_free_lines(lines, count);
+}
+
+static void on_search_done(guint found, gpointer data) {
+    tab *folder_tab = data;
+    folder_tab->search_job = nullptr;
+    xd_folder_view_end_results(folder_tab->view);
+    trace_search("done %u", found);
+    if (folder_tab->search_from_box)
+        remember_recent_search(folder_tab->search.query);
+    if (folder_tab != folder_tab->e->cur)
+        return;
+    set_address_progress(folder_tab->e, 0.0);
+    if (folder_tab->e->search_pane != nullptr && !folder_tab->search_from_box)
+        xd_search_pane_show_done(folder_tab->e->search_pane, found);
+    update_status(folder_tab->e);
+}
+
+/* Shows a search's results in the tab, starting the search. From 7's box
+ * (`from_box`), errors show by the box; from the Search bar, in a box. */
+static void run_search(tab *folder_tab, const xd_search_criteria *criteria, gboolean from_box) {
+    explorer *browser = folder_tab->e;
+    GError *error = nullptr;
+    xd_search_query *query = xd_search_query_new(criteria, nullptr, 0, &error);
+    if (browser->search_entry != nullptr && from_box) {
+        gtk_entry_set_icon_from_icon_name(GTK_ENTRY(browser->search_entry),
+                                          GTK_ENTRY_ICON_PRIMARY,
+                                          query == nullptr ? "dialog-error" : "edit-find");
+        gtk_entry_set_icon_tooltip_text(GTK_ENTRY(browser->search_entry), GTK_ENTRY_ICON_PRIMARY,
+                                        query == nullptr ? error->message : nullptr);
+    }
+    if (query == nullptr) {
+        trace_search("error %s", error->message);
+        if (from_box)
+            gtk_label_set_text(GTK_LABEL(browser->status), error->message);
+        else
+            xd_message_box(GTK_WINDOW(browser->window), "Search", XD_MB_ERROR, XD_MB_OK, FALSE,
+                           error->message);
+        g_error_free(error);
+        return;
+    }
+    if (folder_tab->search_job != nullptr) {
+        xd_search_job_cancel(folder_tab->search_job);
+        folder_tab->search_job = nullptr;
+    }
+    xd_search_criteria copy;
+    xd_search_criteria_copy(&copy, criteria);
+    if (folder_tab->searching)
+        xd_search_criteria_clear(&folder_tab->search);
+    else
+        remember_folder_view(folder_tab);
+    folder_tab->search = copy;
+    folder_tab->searching = TRUE;
+    folder_tab->search_from_box = from_box;
+    const char *root = criteria->look_in != nullptr && criteria->look_in[0] != nullptr
+                           ? criteria->look_in[0]
+                           : g_get_home_dir();
+    GFile *location = g_file_new_for_path(root);
+    /* My Computer's search is still My Computer's (its Up, its name). */
+    GFile *shown = xd_folder_view_get_location(folder_tab->view);
+    if (shown != nullptr && xd_place_of(shown) == XD_PLACE_COMPUTER && strcmp(root, "/") == 0)
+        g_set_object(&location, shown);
+    xd_folder_view_begin_results(folder_tab->view, location);
+    g_object_unref(location);
+    set_mode(folder_tab, XD_VIEW_DETAILS);
+    xd_folder_view_set_highlight(folder_tab->view, query);
+    apply_highlight_color(folder_tab);
+    trace_search("start %s", criteria->query != nullptr ? criteria->query : "");
+    xd_search_callbacks callbacks = {on_search_found, on_search_progress, on_search_done,
+                                     folder_tab};
+    folder_tab->search_job = xd_search_job_start(criteria, query, &callbacks);
+    xd_search_query_unref(query);
+    if (folder_tab->again_bar != nullptr)
+        gtk_widget_set_visible(folder_tab->again_bar, from_box && is_seven_style);
+    update_tab_label(folder_tab);
+    if (folder_tab == browser->cur) {
+        update_chrome(browser);
+        update_status(browser);
+        if (browser->search_pane != nullptr && !from_box)
+            xd_search_pane_set_running(browser->search_pane, true);
+    }
+}
+
+/* 7's box: what's typed, searched in the folder shown (and its
+ * subfolders, as Folder Options says). */
+static void fill_box_criteria(explorer *browser, xd_search_criteria *criteria, const char *text) {
+    xd_search_criteria_init(criteria);
+    criteria->query = g_strdup(text);
+    tab *folder_tab = browser->cur;
+    char *root = nullptr;
+    if (folder_tab->searching && folder_tab->search.look_in != nullptr)
+        criteria->look_in = g_strdupv(folder_tab->search.look_in);
+    else if ((root = search_path_of(current_dir(browser))) != nullptr) {
+        criteria->look_in = g_new0(char *, 2);
+        criteria->look_in[0] = root;
+    }
+    criteria->subfolders = options.search_subfolders;
+    criteria->partial = options.search_partial;
+    criteria->system = options.search_system;
+    criteria->archives = options.search_archives && xd_extract_available();
+    criteria->names_and_contents = options.search_contents;
+    criteria->allow_regex = options.search_regex;
+}
+
+/* Back to the folder the search was in. */
+static void leave_search(tab *folder_tab) {
+    if (!folder_tab->searching)
+        return;
+    GFile *dir = g_object_ref(xd_folder_view_get_location(folder_tab->view));
+    end_search(folder_tab);
+    show_location(folder_tab, dir, FALSE);
+    g_object_unref(dir);
+}
+
+static void on_box_changed(GtkSearchEntry *entry, gpointer data) {
+    explorer *browser = data;
+    if (browser->syncing)
+        return;
+    if (browser->search_popover != nullptr)
+        gtk_widget_hide(browser->search_popover);
+    const char *text = gtk_entry_get_text(GTK_ENTRY(entry));
+    char *trimmed = g_strstrip(g_strdup(text));
+    if (trimmed[0] == '\0') {
+        leave_search(browser->cur);
+        gtk_entry_set_icon_from_icon_name(GTK_ENTRY(entry), GTK_ENTRY_ICON_PRIMARY, "edit-find");
+        g_free(trimmed);
+        return;
+    }
+    g_free(trimmed);
+    char *root = search_path_of(current_dir(browser));
+    gboolean searchable = root != nullptr || browser->cur->searching;
+    g_free(root);
+    if (!searchable)
+        return; /* Control Panel, the Recycle Bin...: nothing on disk to search */
+    xd_search_criteria criteria;
+    fill_box_criteria(browser, &criteria, text);
+    run_search(browser->cur, &criteria, TRUE);
+    xd_search_criteria_clear(&criteria);
+}
+
+/* Esc in the box, as its X: the folder back. */
+static void on_box_stop(GtkSearchEntry *entry, [[maybe_unused]] gpointer data) {
+    gtk_entry_set_text(GTK_ENTRY(entry), "");
+}
+
+static void on_box_activate(GtkEntry *entry, [[maybe_unused]] gpointer data) {
+    remember_recent_search(gtk_entry_get_text(entry));
+}
+
+/* A filter from the suggestions joins what's typed. */
+static void insert_filter(explorer *browser, const char *filter) {
+    GtkEntry *entry = GTK_ENTRY(browser->search_entry);
+    const char *text = gtk_entry_get_text(entry);
+    char *joined = text[0] != '\0' && !g_str_has_suffix(text, " ")
+                       ? g_strconcat(text, " ", filter, nullptr)
+                       : g_strconcat(text, filter, nullptr);
+    gtk_entry_set_text(entry, joined);
+    g_free(joined);
+    gtk_widget_grab_focus(browser->search_entry);
+    gtk_editable_set_position(GTK_EDITABLE(entry), -1);
+    if (browser->search_popover != nullptr)
+        gtk_widget_hide(browser->search_popover);
+}
+
+static void on_filter_chosen(GtkButton *button, gpointer data) {
+    insert_filter(data, g_object_get_data(G_OBJECT(button), "xd-filter"));
+}
+
+static void on_recent_chosen(GtkButton *button, gpointer data) {
+    explorer *browser = data;
+    gtk_entry_set_text(GTK_ENTRY(browser->search_entry),
+                       g_object_get_data(G_OBJECT(button), "xd-filter"));
+    gtk_widget_hide(browser->search_popover);
+}
+
+static GtkWidget *filter_button(GtkWidget *box, const char *label, const char *filter,
+                                GCallback callback, explorer *browser) {
+    GtkWidget *button = gtk_button_new_with_label(label);
+    gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+    gtk_widget_set_halign(gtk_bin_get_child(GTK_BIN(button)), GTK_ALIGN_START);
+    g_object_set_data_full(G_OBJECT(button), "xd-filter", g_strdup(filter), g_free);
+    g_signal_connect(button, "clicked", callback, browser);
+    gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
+    return button;
+}
+
+static void on_calendar_day(GtkCalendar *calendar, gpointer data) {
+    guint year = 0, month = 0, day = 0;
+    gtk_calendar_get_date(calendar, &year, &month, &day);
+    GDateTime *date = g_date_time_new_local((int)year, (int)month + 1, (int)day, 0, 0, 0);
+    if (date == nullptr)
+        return;
+    char *text = g_date_time_format(date, "datemodified:%x");
+    insert_filter(data, text);
+    g_free(text);
+    g_date_time_unref(date);
+}
+
+static void fill_suggestions(explorer *browser, const char *page);
+
+static void on_suggestion_page(GtkButton *button, gpointer data) {
+    fill_suggestions(data, g_object_get_data(G_OBJECT(button), "xd-filter"));
+}
+
+/* 7's suggestions under the box: recent searches and "Add a search
+ * filter", whose Date modified: and Size: open their lists. */
+static void fill_suggestions(explorer *browser, const char *page) {
+    GtkWidget *old = gtk_bin_get_child(GTK_BIN(browser->search_popover));
+    if (old != nullptr)
+        gtk_widget_destroy(old);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 6);
+    if (g_strcmp0(page, "date") == 0) {
+        GtkWidget *hint = gtk_label_new("Select a date or date range:");
+        gtk_label_set_xalign(GTK_LABEL(hint), 0);
+        gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 0);
+        GtkWidget *calendar = gtk_calendar_new();
+        g_signal_connect(calendar, "day-selected-double-click", G_CALLBACK(on_calendar_day),
+                         browser);
+        gtk_box_pack_start(GTK_BOX(box), calendar, FALSE, FALSE, 0);
+        static const char *const ranges[][2] = {
+            {"A long time ago", "datemodified:a long time ago"},
+            {"Earlier this year", "datemodified:earlier this year"},
+            {"Earlier this month", "datemodified:earlier this month"},
+            {"Last week", "datemodified:last week"},
+            {"Earlier this week", "datemodified:earlier this week"},
+            {"Yesterday", "datemodified:yesterday"},
+        };
+        for (size_t i = 0; i < G_N_ELEMENTS(ranges); i++)
+            filter_button(box, ranges[i][0], ranges[i][1], G_CALLBACK(on_filter_chosen), browser);
+    } else if (g_strcmp0(page, "size") == 0) {
+        static const char *const sizes[][2] = {
+            {"Empty (0 KB)", "size:empty"},
+            {"Tiny (0 - 10 KB)", "size:tiny"},
+            {"Small (10 - 100 KB)", "size:small"},
+            {"Medium (100 KB - 1 MB)", "size:medium"},
+            {"Large (1 - 16 MB)", "size:large"},
+            {"Huge (16 - 128 MB)", "size:huge"},
+            {"Gigantic (>128 MB)", "size:gigantic"},
+        };
+        for (size_t i = 0; i < G_N_ELEMENTS(sizes); i++)
+            filter_button(box, sizes[i][0], sizes[i][1], G_CALLBACK(on_filter_chosen), browser);
+    } else {
+        char **lines = nullptr;
+        size_t count = 0;
+        xd_state_read_lines(RECENT_SEARCHES, &lines, &count, RECENT_SEARCHES_MAX);
+        for (size_t i = 0; i < count; i++)
+            filter_button(box, lines[i], lines[i], G_CALLBACK(on_recent_chosen), browser);
+        xd_free_lines(lines, count);
+        if (count > 0)
+            gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),
+                               FALSE, FALSE, 2);
+        GtkWidget *add = gtk_label_new("Add a search filter");
+        gtk_label_set_xalign(GTK_LABEL(add), 0);
+        gtk_style_context_add_class(gtk_widget_get_style_context(add), GTK_STYLE_CLASS_DIM_LABEL);
+        gtk_box_pack_start(GTK_BOX(box), add, FALSE, FALSE, 0);
+        GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+        filter_button(row, "Date modified:", "date", G_CALLBACK(on_suggestion_page), browser);
+        filter_button(row, "Size:", "size", G_CALLBACK(on_suggestion_page), browser);
+        gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
+    }
+    gtk_widget_show_all(box);
+    gtk_container_add(GTK_CONTAINER(browser->search_popover), box);
+}
+
+static gboolean on_box_press(GtkWidget *entry, GdkEventButton *event, gpointer data) {
+    explorer *browser = data;
+    if (event->button != GDK_BUTTON_PRIMARY || event->type != GDK_BUTTON_PRESS)
+        return FALSE;
+    if (browser->search_popover == nullptr) {
+        browser->search_popover = gtk_popover_new(entry);
+        gtk_popover_set_position(GTK_POPOVER(browser->search_popover), GTK_POS_BOTTOM);
+        gtk_popover_set_modal(GTK_POPOVER(browser->search_popover), FALSE);
+    }
+    fill_suggestions(browser, nullptr);
+    gtk_popover_popup(GTK_POPOVER(browser->search_popover));
+    return FALSE;
+}
+
+/* "Search again in:" under 7's results. */
+static void search_again(tab *folder_tab, char **roots, gboolean contents) {
+    if (!folder_tab->searching)
+        return;
+    xd_search_criteria criteria;
+    xd_search_criteria_copy(&criteria, &folder_tab->search);
+    if (roots != nullptr) {
+        g_strfreev(criteria.look_in);
+        criteria.look_in = roots;
+    }
+    if (contents)
+        criteria.names_and_contents = true;
+    run_search(folder_tab, &criteria, folder_tab->search_from_box);
+    xd_search_criteria_clear(&criteria);
+}
+
+static void on_again_libraries([[maybe_unused]] GtkButton *button, gpointer data) {
+    /* 7's libraries: Documents, Music, Pictures and Videos. */
+    static const GUserDirectory libraries[] = {G_USER_DIRECTORY_DOCUMENTS, G_USER_DIRECTORY_MUSIC,
+                                               G_USER_DIRECTORY_PICTURES, G_USER_DIRECTORY_VIDEOS};
+    GPtrArray *roots = g_ptr_array_new();
+    for (size_t i = 0; i < G_N_ELEMENTS(libraries); i++) {
+        const char *dir = g_get_user_special_dir(libraries[i]);
+        if (dir != nullptr && g_file_test(dir, G_FILE_TEST_IS_DIR))
+            g_ptr_array_add(roots, g_strdup(dir));
+    }
+    if (roots->len == 0)
+        g_ptr_array_add(roots, g_strdup(g_get_home_dir()));
+    g_ptr_array_add(roots, nullptr);
+    search_again(data, (char **)g_ptr_array_free(roots, FALSE), FALSE);
+}
+
+static void on_again_computer([[maybe_unused]] GtkButton *button, gpointer data) {
+    char **roots = g_new0(char *, 2);
+    roots[0] = g_strdup("/");
+    search_again(data, roots, FALSE);
+}
+
+static void on_again_custom([[maybe_unused]] GtkButton *button, gpointer data) {
+    tab *folder_tab = data;
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        "Choose Search Location", GTK_WINDOW(folder_tab->e->window),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel", GTK_RESPONSE_CANCEL, "OK",
+        GTK_RESPONSE_ACCEPT, nullptr);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        char **roots = g_new0(char *, 2);
+        roots[0] = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (roots[0] != nullptr)
+            search_again(folder_tab, roots, FALSE);
+        else
+            g_free(roots);
+    }
+    gtk_widget_destroy(dialog);
+}
+
+static void on_again_contents([[maybe_unused]] GtkButton *button, gpointer data) {
+    search_again(data, nullptr, TRUE);
+}
+
+static GtkWidget *build_again_bar(tab *folder_tab) {
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_container_set_border_width(GTK_CONTAINER(bar), 2);
+    gtk_box_pack_start(GTK_BOX(bar), gtk_label_new("Search again in:"), FALSE, FALSE, 6);
+    static const struct {
+        const char *label, *icon;
+        void (*callback)(GtkButton *, gpointer);
+    } places[] = {
+        {"Libraries", "folder", on_again_libraries},
+        {"Computer", "computer", on_again_computer},
+        {"Custom...", "folder-open", on_again_custom},
+        {"File Contents", "text-x-generic", on_again_contents},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(places); i++) {
+        GtkWidget *button = gtk_button_new_with_label(places[i].label);
+        gtk_button_set_image(GTK_BUTTON(button),
+                             gtk_image_new_from_icon_name(places[i].icon, GTK_ICON_SIZE_MENU));
+        gtk_button_set_always_show_image(GTK_BUTTON(button), TRUE);
+        gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+        g_signal_connect(button, "clicked", G_CALLBACK(places[i].callback), folder_tab);
+        gtk_box_pack_start(GTK_BOX(bar), button, FALSE, FALSE, 0);
+    }
+    gtk_widget_show_all(bar);
+    gtk_widget_set_no_show_all(bar, TRUE);
+    gtk_widget_hide(bar);
+    return bar;
+}
+
+/* ~/Searches, where 7 keeps saved searches (made when first wanted).
+ * Free with g_free. */
+static char *searches_folder(void) {
+    char *path = g_build_filename(g_get_home_dir(), "Searches", nullptr);
+    g_mkdir_with_parents(path, 0700);
+    return path;
+}
+
+/* File > Save Search (XP), Save search on 7's command bar: the criteria
+ * as a saved search, opened again with xd-files. */
+static void save_search(explorer *browser) {
+    tab *folder_tab = browser->cur;
+    if (!folder_tab->searching)
+        return;
+    GtkWidget *dialog = gtk_file_chooser_dialog_new("Save Search", GTK_WINDOW(browser->window),
+                                                    GTK_FILE_CHOOSER_ACTION_SAVE, "Cancel",
+                                                    GTK_RESPONSE_CANCEL, "_Save",
+                                                    GTK_RESPONSE_ACCEPT, nullptr);
+    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(dialog), TRUE);
+    char *folder = searches_folder();
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dialog), folder);
+    g_free(folder);
+    char *title = xd_search_criteria_title(&folder_tab->search);
+    g_strdelimit(title, "/", '-');
+    char *name = g_strconcat(title, XD_SEARCH_FILE_EXTENSION, nullptr);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), name);
+    g_free(name);
+    g_free(title);
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        if (path != nullptr && !g_str_has_suffix(path, XD_SEARCH_FILE_EXTENSION)) {
+            char *with = g_strconcat(path, XD_SEARCH_FILE_EXTENSION, nullptr);
+            g_free(path);
+            path = with;
+        }
+        GError *error = nullptr;
+        if (path != nullptr && !xd_search_criteria_save(&folder_tab->search, path, &error)) {
+            char *message = g_strdup_printf("Cannot save the search: %s", error->message);
+            xd_message_box(GTK_WINDOW(dialog), "Save Search", XD_MB_ERROR, XD_MB_OK, FALSE,
+                           message);
+            g_free(message);
+            g_error_free(error);
+        }
+        g_free(path);
+    }
+    gtk_widget_destroy(dialog);
+}
+
+static void cb_save_search([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    save_search(user_data);
+}
+
+static gboolean is_saved_search(GFile *file) {
+    char *name = g_file_get_basename(file);
+    gboolean saved = name != nullptr && g_str_has_suffix(name, XD_SEARCH_FILE_EXTENSION);
+    g_free(name);
+    return saved;
+}
+
+static void show_search_pane(explorer *browser, gboolean open);
+
+/* Opens a saved search: its search, run again in this tab. */
+static gboolean open_saved_search(tab *folder_tab, GFile *file) {
+    explorer *browser = folder_tab->e;
+    char *path = g_file_get_path(file);
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    GError *error = nullptr;
+    gboolean loaded = path != nullptr && xd_search_criteria_load(&criteria, path, &error);
+    g_free(path);
+    if (!loaded) {
+        char *message = g_strdup_printf("Cannot open the saved search: %s",
+                                        error != nullptr ? error->message : "not a local file");
+        xd_message_box(GTK_WINDOW(browser->window), "Search", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       message);
+        g_free(message);
+        g_clear_error(&error);
+        return FALSE;
+    }
+    if (criteria.look_in == nullptr || criteria.look_in[0] == nullptr) {
+        g_strfreev(criteria.look_in);
+        criteria.look_in = g_new0(char *, 2);
+        criteria.look_in[0] = g_strdup(g_get_home_dir());
+    }
+    gboolean box = is_seven_style && criteria.query != nullptr && criteria.query[0] != '\0';
+    if (box) {
+        browser->syncing = TRUE;
+        gtk_entry_set_text(GTK_ENTRY(browser->search_entry), criteria.query);
+        browser->syncing = FALSE;
+    } else if (!is_seven_style) {
+        show_search_pane(browser, TRUE);
+        xd_search_pane_set_criteria(browser->search_pane, &criteria);
+    }
+    run_search(folder_tab, &criteria, box);
+    xd_search_criteria_clear(&criteria);
+    return TRUE;
+}
+
+/* ---- the Search bar (XP, 2000) ---- */
+
+static void on_pane_search(const xd_search_criteria *criteria, gpointer data) {
+    explorer *browser = data;
+    run_search(browser->cur, criteria, FALSE);
+}
+
+static void on_pane_stop(gpointer data) {
+    explorer *browser = data;
+    stop_search(browser->cur);
+}
+
+static void on_pane_close(gpointer data) { show_search_pane(data, FALSE); }
+
+static void on_pane_new_search(gpointer data) {
+    explorer *browser = data;
+    leave_search(browser->cur);
+}
+
+static void on_pane_sort(XdSortColumn column, gpointer data) {
+    explorer *browser = data;
+    xd_folder_view_set_sort(browser->cur->view, column, FALSE);
+    xd_folder_view_set_groups(browser->cur->view, TRUE);
+}
+
+static xd_search_pane_style pane_style(void) {
+    return is_classic_style ? XD_SEARCH_PANE_2000 : XD_SEARCH_PANE_XP;
+}
+
+/* Opens or closes the Search bar, in the Folders bar's place (they
+ * exclude each other, as Explorer bars do). */
+static void show_search_pane(explorer *browser, gboolean open) {
+    xd_search_pane_style style = pane_style();
+    if (open && browser->search_pane != nullptr &&
+        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(browser->search_pane), "xd-style")) !=
+            (int)style) {
+        gtk_widget_destroy(browser->search_pane); /* the style changed meanwhile */
+        browser->search_pane = nullptr;
+    }
+    if (open && browser->search_pane == nullptr) {
+        xd_search_pane_callbacks callbacks = {on_pane_search, on_pane_stop, on_pane_close,
+                                              on_pane_new_search, on_pane_sort, browser};
+        browser->search_pane = xd_search_pane_new(style, &callbacks);
+        g_object_set_data(G_OBJECT(browser->search_pane), "xd-style", GINT_TO_POINTER((int)style));
+        gtk_widget_set_size_request(browser->search_pane, 220, -1);
+        gtk_widget_set_no_show_all(browser->search_pane, TRUE);
+        gtk_box_pack_start(GTK_BOX(browser->side), browser->search_pane, TRUE, TRUE, 0);
+    }
+    gboolean was_open = browser->search_open;
+    browser->search_open = open;
+    if (open != was_open)
+        trace_search("search bar %s", open ? "open" : "closed");
+    if (open && !was_open) {
+        char *path = browser->cur->searching ? nullptr : search_path_of(current_dir(browser));
+        if (path != nullptr) {
+            GFile *dir = current_dir(browser);
+            const char *title = xd_place_title(dir);
+            char *name = title != nullptr ? g_strdup(title) : g_file_get_basename(dir);
+            xd_search_pane_set_folder(browser->search_pane, path, name);
+            g_free(name);
+        }
+        g_free(path);
+        if (!browser->cur->searching)
+            xd_search_pane_reset(browser->search_pane);
+    }
+    if (open && gtk_toggle_tool_button_get_active(GTK_TOGGLE_TOOL_BUTTON(browser->folders_toggle)))
+        gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(browser->folders_toggle), FALSE);
+    browser->syncing = TRUE;
+    gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(browser->search_button), open);
+    browser->syncing = FALSE;
+    show_side(browser);
+    update_tasks(browser);
+    if (open)
+        xd_search_pane_focus(browser->search_pane);
+}
+
+/* Search (F3, Ctrl+F, Ctrl+E): XP's and 2000's Search bar, or 7's box. */
+static void open_search(explorer *browser, gboolean toggle) {
+    if (is_seven_style) {
+        gtk_widget_grab_focus(browser->search_entry);
+        return;
+    }
+    show_search_pane(browser, toggle ? !browser->search_open : TRUE);
+}
+
+static void on_search_toggled(GtkToggleToolButton *button, gpointer data) {
+    explorer *browser = data;
+    if (browser->syncing)
+        return;
+    show_search_pane(browser, gtk_toggle_tool_button_get_active(button));
 }
 
 /* ---- network drives and places ------------------------------------------------------ */
@@ -2123,8 +2874,52 @@ static void on_favorite_item(GtkWidget *item, gpointer data) {
     explorer *browser = data;
     const char *uri = g_object_get_data(G_OBJECT(item), "xd-favorite");
     GFile *file = g_file_new_for_uri(uri);
-    navigate(browser->cur, file, TRUE);
+    if (!is_saved_search(file) || !open_saved_search(browser->cur, file))
+        navigate(browser->cur, file, TRUE);
     g_object_unref(file);
+}
+
+static gint compare_names(gconstpointer left, gconstpointer right) {
+    return g_utf8_collate(*(const char *const *)left, *(const char *const *)right);
+}
+
+/* Saved searches (~/Searches), as 7's Favorites list them. */
+static void add_saved_searches(explorer *browser, GtkWidget *menu) {
+    char *searches = g_build_filename(g_get_home_dir(), "Searches", nullptr);
+    GDir *dir = g_dir_open(searches, 0, nullptr);
+    GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
+    for (const char *name = dir != nullptr ? g_dir_read_name(dir) : nullptr; name != nullptr;
+         name = g_dir_read_name(dir))
+        if (g_str_has_suffix(name, XD_SEARCH_FILE_EXTENSION))
+            g_ptr_array_add(names, g_strdup(name));
+    if (dir != nullptr)
+        g_dir_close(dir);
+    g_ptr_array_sort(names, compare_names);
+    for (guint i = 0; i < names->len; i++) {
+        const char *name = g_ptr_array_index(names, i);
+        if (i == 0) {
+            GtkWidget *sep = gtk_separator_menu_item_new();
+            g_object_set_data(G_OBJECT(sep), "xd-favorites-entry", GINT_TO_POINTER(1));
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), sep);
+            gtk_widget_show(sep);
+        }
+        char *label = g_strndup(name, strlen(name) - strlen(XD_SEARCH_FILE_EXTENSION));
+        char *shown = g_filename_display_name(label);
+        GtkWidget *item = gtk_menu_item_new_with_label(shown);
+        g_free(shown);
+        g_free(label);
+        char *path = g_build_filename(searches, name, nullptr);
+        GFile *file = g_file_new_for_path(path);
+        g_object_set_data(G_OBJECT(item), "xd-favorites-entry", GINT_TO_POINTER(1));
+        g_object_set_data_full(G_OBJECT(item), "xd-favorite", g_file_get_uri(file), g_free);
+        g_object_unref(file);
+        g_free(path);
+        g_signal_connect(item, "activate", G_CALLBACK(on_favorite_item), browser);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        gtk_widget_show(item);
+    }
+    g_ptr_array_unref(names);
+    g_free(searches);
 }
 
 /* The menu's favorites, read afresh each time it opens (a file chooser
@@ -2159,6 +2954,7 @@ static void fill_favorites(GtkWidget *menu, gpointer data) {
         gtk_widget_show(item);
     }
     g_ptr_array_unref(favs);
+    add_saved_searches(browser, menu);
 }
 
 /* ---- file operations ------------------------------------------------------------- */
@@ -2795,7 +3591,8 @@ static void add_details(explorer *browser, GFile *here, guint selected) {
 /* The pane's groups for the folder shown and its selection: XP's, less
  * the tasks we have nothing for (publishing to the Web, e-mailing). */
 static void update_tasks(explorer *browser) {
-    if (browser->tasks == nullptr || !gtk_widget_get_visible(browser->tasks))
+    if (browser->tasks == nullptr || !gtk_widget_get_visible(browser->tasks) ||
+        browser->search_open)
         return;
     GFile *here = xd_folder_view_get_location(browser->cur->view);
     if (here == nullptr)
@@ -2941,6 +3738,7 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
     for (guint i = 0; i < browser->trash_only->len; i++)
         gtk_widget_set_visible(g_ptr_array_index(browser->trash_only, i), place == XD_PLACE_TRASH);
     gtk_widget_set_sensitive(browser->rename_item, can_rename(browser));
+    gtk_widget_set_visible(browser->save_search_item, browser->cur->searching);
     /* "Undo Rename", "Undo Copy"..., or a greyed "Undo". */
     const char *undo = xd_undo_label();
     gtk_menu_item_set_label(GTK_MENU_ITEM(browser->undo_item), undo != nullptr ? undo : "_Undo");
@@ -3022,6 +3820,10 @@ static GtkWidget *build_menus(explorer *browser, GtkAccelGroup *accel) {
     show_accel(browser->rename_item, GDK_KEY_F2, NO_MODS);
     menu_item(file, "P_roperties", G_CALLBACK(cb_properties), browser, accel, GDK_KEY_Return,
               GDK_MOD1_MASK);
+    browser->save_search_item =
+        menu_item(file, "Save Searc_h...", G_CALLBACK(cb_save_search), browser, nullptr, 0,
+                  NO_MODS);
+    gtk_widget_set_no_show_all(browser->save_search_item, TRUE);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     /* Windows 11's tabs: Ctrl+W closes the tab (the window with the
      * last, as Ctrl+W did before there were tabs). */
@@ -3068,9 +3870,9 @@ static GtkWidget *build_menus(explorer *browser, GtkAccelGroup *accel) {
     menu_item(edit, "_Invert Selection", G_CALLBACK(cb_invert), browser, nullptr, 0, NO_MODS);
 
     GtkWidget *view = submenu(bar, "_View");
-    /* At the top, as XP's. Its other Explorer bars (Search, Favorites,
-     * Media, History) are elsewhere here: Search is its own window,
-     * Favorites a menu. */
+    /* At the top, as XP's. Its other Explorer bars (Favorites, Media,
+     * History) are elsewhere here: Favorites is a menu. Search is the
+     * toolbar's button (F3). */
     GtkWidget *bars = gtk_menu_new();
     GtkWidget *bars_item = gtk_menu_item_new_with_mnemonic("_Explorer Bar");
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(bars_item), bars);
@@ -3470,6 +4272,7 @@ static void cycle_tabs(explorer *browser, int step) {
 }
 
 static void forget_tab(tab *folder_tab) {
+    end_search(folder_tab);
     free_history(&folder_tab->back);
     free_history(&folder_tab->forward);
     g_clear_object(&folder_tab->renaming);
@@ -3504,7 +4307,7 @@ static void close_tab(tab *folder_tab) {
     folder_tab->page = folder_tab->label = folder_tab->label_icon = folder_tab->label_text =
         folder_tab->close_button = nullptr;
     folder_tab->control_bar = folder_tab->control_link = folder_tab->overlay =
-        folder_tab->rename_entry = nullptr;
+        folder_tab->rename_entry = folder_tab->again_bar = nullptr;
     folder_tab->view = nullptr;
     g_ptr_array_add(browser->closed, folder_tab);
     update_strip(browser);
@@ -3715,6 +4518,8 @@ static void build_tab_page(tab *folder_tab) {
     gtk_widget_show(folder_tab->control_link);
     gtk_box_pack_start(GTK_BOX(folder_tab->page), folder_tab->control_bar, FALSE, FALSE, 2);
     gtk_box_pack_start(GTK_BOX(folder_tab->page), folder_tab->overlay, TRUE, TRUE, 0);
+    folder_tab->again_bar = build_again_bar(folder_tab);
+    gtk_box_pack_start(GTK_BOX(folder_tab->page), folder_tab->again_bar, FALSE, FALSE, 0);
     g_object_set_data(G_OBJECT(folder_tab->page), "xd-tab", folder_tab);
     gtk_widget_show_all(folder_tab->page);
 }
@@ -3724,6 +4529,7 @@ static void apply_tab_options(tab *folder_tab) {
     xd_folder_view_set_show_hidden(folder_tab->view, options.show_hidden);
     xd_folder_view_set_hide_extensions(folder_tab->view, options.hide_extensions);
     xd_folder_view_set_single_click(folder_tab->view, options.single_click);
+    apply_highlight_color(folder_tab);
 }
 
 /* A new tab at the end of the strip (Windows 11's place for one), showing
@@ -3777,8 +4583,14 @@ static gboolean on_key(GtkWidget *widget, GdkEventKey *ev, gpointer data) {
         go_up(browser->cur);
         return TRUE;
     }
+    /* Search: F3 opens or closes the Search bar, Ctrl+F and Ctrl+E open
+     * it (7: they all go to the search box). */
     if (ev->keyval == GDK_KEY_F3 && mods == 0) {
-        open_search(browser);
+        open_search(browser, TRUE);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && (ev->keyval == GDK_KEY_f || ev->keyval == GDK_KEY_e)) {
+        open_search(browser, FALSE);
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_l && (ev->state & GDK_CONTROL_MASK)) {
@@ -3829,6 +4641,11 @@ static void apply_options(explorer *browser) {
     browser->syncing = TRUE;
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(browser->hidden_item), options.show_hidden);
     browser->syncing = FALSE;
+    /* The style may have changed: XP's and 2000's Search button, or 7's box. */
+    gtk_widget_set_visible(browser->search_entry, is_seven_style);
+    gtk_widget_set_visible(browser->search_button, !is_seven_style);
+    if (is_seven_style && browser->search_open)
+        browser->search_open = FALSE;
     show_side(browser); /* Show common tasks in folders, or classic folders */
     update_tasks(browser);
     update_chrome(browser);
@@ -3839,6 +4656,8 @@ static void load_options(void) {
     xd_settings_load(&settings);
     options = settings.folders;
     is_seven_style = settings.style == XD_STYLE_AERO;
+    is_classic_style =
+        settings.style == XD_STYLE_CLASSIC && settings.start_style == XD_START_CLASSIC;
     /* Apply to All Folders' view, for folders without their own. */
     if (!view_given) {
         initial_view = XD_VIEW_ICONS;
@@ -3892,7 +4711,16 @@ static explorer *open_window(GtkApplication *app, GFile *dir, gboolean explore) 
     gtk_tool_item_set_is_important(GTK_TOOL_ITEM(browser->forward_button), FALSE);
     gtk_tool_item_set_is_important(GTK_TOOL_ITEM(browser->up_button), FALSE);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
-    tool_button(toolbar, "system-search", "Search", G_CALLBACK(cb_search), browser);
+    /* XP's Search: the Search bar's toggle (7 has its box instead). */
+    GtkToolItem *search = gtk_toggle_tool_button_new();
+    gtk_tool_button_set_label(GTK_TOOL_BUTTON(search), "Search");
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(search), "system-search");
+    gtk_tool_item_set_is_important(search, TRUE);
+    gtk_tool_item_set_tooltip_text(search, "Search");
+    g_signal_connect(search, "toggled", G_CALLBACK(on_search_toggled), browser);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), search, -1);
+    browser->search_button = GTK_WIDGET(search);
+    gtk_widget_set_no_show_all(browser->search_button, TRUE);
     GtkToolItem *folders = gtk_toggle_tool_button_new();
     gtk_tool_button_set_label(GTK_TOOL_BUTTON(folders), "Folders");
     gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(folders), "folder");
@@ -3909,6 +4737,10 @@ static explorer *open_window(GtkApplication *app, GFile *dir, gboolean explore) 
     gtk_tool_item_set_is_important(views, TRUE);
     g_signal_connect(views, "clicked", G_CALLBACK(popup_views), browser);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), views, -1);
+    /* 7's command bar: Save search, while a search is shown. */
+    browser->save_search_button =
+        tool_button(toolbar, "document-save", "Save search", G_CALLBACK(cb_save_search), browser);
+    gtk_widget_set_no_show_all(browser->save_search_button, TRUE);
     gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
 
     /* Address bar. */
@@ -3925,6 +4757,35 @@ static explorer *open_window(GtkApplication *app, GFile *dir, gboolean explore) 
     gtk_button_set_always_show_image(GTK_BUTTON(go), TRUE);
     g_signal_connect(go, "clicked", G_CALLBACK(cb_go), browser);
     gtk_box_pack_start(GTK_BOX(abar), go, FALSE, FALSE, 0);
+    /* 7's address bar fills in green as a search goes. */
+    GtkCssProvider *progress = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(progress,
+                                    "entry progress { background-color: transparent;"
+                                    " background-image: linear-gradient(to bottom, #e3f6d9,"
+                                    " #b7e5a1); border: none; border-radius: 0;"
+                                    " box-shadow: none; margin: 0; }",
+                                    -1, nullptr);
+    gtk_style_context_add_provider(gtk_widget_get_style_context(browser->address),
+                                   GTK_STYLE_PROVIDER(progress),
+                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(progress);
+    /* 7's search box, at the address bar's end. */
+    browser->search_entry = gtk_search_entry_new();
+    gtk_entry_set_width_chars(GTK_ENTRY(browser->search_entry), 24);
+    gtk_widget_set_tooltip_text(
+        browser->search_entry,
+        "Type part of a name to find it here and in the subfolders. Filters: name:, kind:, "
+        "type: or ext:, datemodified:, datecreated:, dateaccessed:, size:, content:; AND, OR, "
+        "NOT, -word, (...), \"exact phrase\", * and ?, >, <, = and a..b ranges. A /pattern/ "
+        "(or /pattern/i, ignoring case) is a regular expression matched against names; "
+        "content:/pattern/ against what's in the files.");
+    g_signal_connect(browser->search_entry, "search-changed", G_CALLBACK(on_box_changed), browser);
+    g_signal_connect(browser->search_entry, "stop-search", G_CALLBACK(on_box_stop), browser);
+    g_signal_connect(browser->search_entry, "activate", G_CALLBACK(on_box_activate), browser);
+    g_signal_connect(browser->search_entry, "button-press-event", G_CALLBACK(on_box_press),
+                     browser);
+    gtk_widget_set_no_show_all(browser->search_entry, TRUE);
+    gtk_box_pack_start(GTK_BOX(abar), browser->search_entry, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), abar, FALSE, FALSE, 0);
 
     /* Folders tree | contents. */
@@ -4141,6 +5002,15 @@ static void on_activate(GtkApplication *app, [[maybe_unused]] gpointer data) {
     }
     if (properties_only)
         return; /* --properties without files: nothing to show */
+    if (search_option) {
+        /* The Start menu's Search: XP's Explorer with the Search bar,
+         * looking in Local Hard Drives (My Computer). */
+        GFile *computer = xd_place_computer();
+        explorer *browser = open_window(app, computer, FALSE);
+        g_object_unref(computer);
+        open_search(browser, FALSE);
+        return;
+    }
     /* XP's Windows Explorer (explorer.exe on its own) opens with the
      * Folders bar; a folder opened from somewhere has the task pane. */
     GFile *home = g_file_new_for_path(g_get_home_dir());
@@ -4173,8 +5043,19 @@ static void on_open(GtkApplication *app, GFile **files, gint count,
             add_tab(browser, files[i], FALSE);
         return;
     }
-    for (gint i = 0; i < count; i++)
-        open_window(app, files[i], explore_option);
+    for (gint i = 0; i < count; i++) {
+        /* A saved search: the folder it looked in, searched again. */
+        if (is_saved_search(files[i])) {
+            GFile *home = g_file_new_for_path(g_get_home_dir());
+            explorer *browser = open_window(app, home, FALSE);
+            g_object_unref(home);
+            open_saved_search(browser->cur, files[i]);
+            continue;
+        }
+        explorer *browser = open_window(app, files[i], explore_option);
+        if (search_option)
+            open_search(browser, FALSE);
+    }
 }
 
 /* --view=thumbnails|tiles|icons|list|details */
@@ -4185,6 +5066,8 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         properties_only = TRUE;
     if (g_variant_dict_contains(opts, "explore"))
         explore_option = TRUE;
+    if (g_variant_dict_contains(opts, "search"))
+        search_option = TRUE;
     if (g_variant_dict_contains(opts, "trash"))
         job = JOB_TRASH;
     if (g_variant_dict_contains(opts, "delete"))
@@ -4283,6 +5166,10 @@ int main(int argc, char **argv) {
                                   "VIEW");
     g_application_add_main_option(G_APPLICATION(app), "explore", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Open FILE... with the Folders bar", nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "search", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE,
+                                  "Open FOLDER (or My Computer) with Search, as the Start menu's",
+                                  nullptr);
     g_application_add_main_option(G_APPLICATION(app), "properties", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Show the Properties of FILE... and exit",
                                   nullptr);

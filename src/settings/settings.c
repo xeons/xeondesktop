@@ -520,7 +520,13 @@ void xd_settings_defaults(xd_settings *settings) {
                         .auto_location = true},
         /* XP's, except extensions, which stay visible: renaming edits the
          * whole name. */
-        .folders = {.full_path_address = true, .remember_views = true, .common_tasks = true},
+        .folders = {.full_path_address = true,
+                    .remember_views = true,
+                    .common_tasks = true,
+                    .search_subfolders = true,
+                    .search_partial = true,
+                    .search_system = true,
+                    .search_regex = true},
     };
     xd_saver_settings_defaults(&settings->savers);
 }
@@ -1429,6 +1435,25 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
             parse_bool(value, &folder_settings->remember_views);
         else if (KEY("CommonTasks"))
             parse_bool(value, &folder_settings->common_tasks);
+        else if (KEY("SearchSubfolders"))
+            parse_bool(value, &folder_settings->search_subfolders);
+        else if (KEY("SearchPartial"))
+            parse_bool(value, &folder_settings->search_partial);
+        else if (KEY("SearchSystem"))
+            parse_bool(value, &folder_settings->search_system);
+        else if (KEY("SearchArchives"))
+            parse_bool(value, &folder_settings->search_archives);
+        else if (KEY("SearchContents"))
+            parse_bool(value, &folder_settings->search_contents);
+        else if (KEY("SearchRegex"))
+            parse_bool(value, &folder_settings->search_regex);
+        else if (KEY("SearchHighlight")) {
+            bool valid = value.len == 7 && value.ptr[0] == '#';
+            for (size_t i = 1; valid && i < 7; i++)
+                valid = g_ascii_isxdigit(value.ptr[i]);
+            copy_into(folder_settings->search_highlight,
+                      sizeof(folder_settings->search_highlight), valid ? value : XD_STR(""));
+        }
         else if (KEY("DefaultView")) {
             int i = index_of(view_names, XD_ARRAY_LEN(view_names), value);
             if (i >= 0 || value.len == 0)
@@ -1669,6 +1694,13 @@ static GKeyFile *to_keyfile(const xd_settings *settings) {
     g_key_file_set_boolean(kf, "Folders", "RememberViews", folder_settings->remember_views);
     g_key_file_set_boolean(kf, "Folders", "CommonTasks", folder_settings->common_tasks);
     g_key_file_set_string(kf, "Folders", "DefaultView", folder_settings->default_view);
+    g_key_file_set_boolean(kf, "Folders", "SearchSubfolders", folder_settings->search_subfolders);
+    g_key_file_set_boolean(kf, "Folders", "SearchPartial", folder_settings->search_partial);
+    g_key_file_set_boolean(kf, "Folders", "SearchSystem", folder_settings->search_system);
+    g_key_file_set_boolean(kf, "Folders", "SearchArchives", folder_settings->search_archives);
+    g_key_file_set_boolean(kf, "Folders", "SearchContents", folder_settings->search_contents);
+    g_key_file_set_boolean(kf, "Folders", "SearchRegex", folder_settings->search_regex);
+    g_key_file_set_string(kf, "Folders", "SearchHighlight", folder_settings->search_highlight);
     g_key_file_set_integer(kf, "Keyboard", "CursorBlinkMs", settings->keyboard.cursor_blink_ms);
     g_key_file_set_string(kf, "Keyboard", "InputMethod", settings->keyboard.input_method);
     const xd_mouse_settings *mouse = &settings->mouse;

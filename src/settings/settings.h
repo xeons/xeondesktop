@@ -201,6 +201,19 @@ typedef struct xd_folder_settings {
                                classic folders, the view the whole width */
     char default_view[16];  /* "Apply to All Folders": thumbnails, tiles, icons, list or
                                details; "" = the file manager's own default */
+    /* Windows 7's Search tab: the search box looks in subfolders, finds
+     * partial matches (not only whole words), searches system folders,
+     * compressed files and, for bare words, contents too; and (Linux
+     * only) /pattern/ terms. */
+    bool search_subfolders;
+    bool search_partial;
+    bool search_system;
+    bool search_archives;
+    bool search_contents;
+    bool search_regex;
+    /* The colour matched parts of names are drawn in, "#rrggbb"; "" =
+     * the theme's selected-text colours. */
+    char search_highlight[8];
 } xd_folder_settings;
 
 /* [Touchpad]: what a touchpad's driver added to Mouse Properties (the

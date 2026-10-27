@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT
+     xd-files' saved searches (File > Save Search, 7's Save search): a key
+     file of the criteria, opened again by xd-files. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-xeondesktop-search">
+    <comment>Saved Search</comment>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="system-search"/>
+    <glob pattern="*.xdsearch"/>
+  </mime-type>
+</mime-info>

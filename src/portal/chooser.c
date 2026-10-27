@@ -9,6 +9,7 @@
 
 #include "../files/fileops.h"
 #include "../files/folderview.h"
+#include "../files/search.h"
 #include "../files/places.h"
 #include "../files/rename.h"
 #include "../gtkapp/gtkapp.h"
@@ -75,7 +76,9 @@ struct xd_chooser {
     GtkWidget *back_button, *up_button, *new_folder_button;
     chooser_place places[PLACE_COUNT];
     GtkWidget *search;
-    char *search_text; /* casefolded; nullptr: none */
+    /* 7's search box, matched as xd-files' box matches names (search.h);
+     * nullptr: nothing typed. */
+    xd_search_query *search_query;
 
     /* A new folder being named in place. */
     GtkWidget *rename_entry;
@@ -180,10 +183,11 @@ static const xd_chooser_filter *get_current_filter(const xd_chooser *chooser) {
 static gboolean keep_item(const char *name, const char *content_type, gboolean is_directory,
                           gpointer data) {
     const xd_chooser *chooser = data;
-    if (chooser->search_text != nullptr) {
-        char *folded = g_utf8_casefold(name, -1);
-        bool found = strstr(folded, chooser->search_text) != nullptr;
-        g_free(folded);
+    if (chooser->search_query != nullptr) {
+        xd_search_item item = {.name = name, .is_dir = is_directory,
+                               .content_type = content_type};
+        bool found = xd_search_query_matches(chooser->search_query, &item);
+        xd_search_item_clear(&item);
         if (!found)
             return FALSE;
     }
@@ -369,7 +373,7 @@ static void go_to(xd_chooser *chooser, GFile *location, bool remember) {
     }
     if (remember && current != nullptr)
         chooser->back = g_list_prepend(chooser->back, g_object_ref(current));
-    g_clear_pointer(&chooser->search_text, g_free);
+    g_clear_pointer(&chooser->search_query, xd_search_query_unref);
     if (is_recent(location)) {
         GPtrArray *files = get_recent_files();
         xd_folder_view_set_files(chooser->view, location, files);
@@ -415,7 +419,7 @@ static void free_chooser(xd_chooser *chooser) {
     g_clear_object(&chooser->look_in_store);
     for (size_t i = 0; i < PLACE_COUNT; i++)
         g_clear_object(&chooser->places[i].location);
-    g_free(chooser->search_text);
+    xd_search_query_unref(chooser->search_query);
     g_clear_object(&chooser->renaming);
     g_clear_object(&chooser->pending_rename);
     g_free(chooser);
@@ -941,9 +945,15 @@ static void on_search_changed(GtkSearchEntry *entry, gpointer data) {
     if (chooser->updating)
         return;
     const char *text = gtk_entry_get_text(GTK_ENTRY(entry));
-    g_clear_pointer(&chooser->search_text, g_free);
-    if (*text != '\0')
-        chooser->search_text = g_utf8_casefold(text, -1);
+    g_clear_pointer(&chooser->search_query, xd_search_query_unref);
+    if (*text != '\0') {
+        /* Part of a name, wildcards, "phrases", /patterns/ and the name
+         * and kind filters; a pattern that isn't one filters nothing. */
+        xd_search_criteria flags;
+        xd_search_criteria_init(&flags);
+        chooser->search_query = xd_search_query_parse(text, &flags, nullptr, 0, nullptr);
+    }
+    xd_folder_view_set_highlight(chooser->view, chooser->search_query);
     xd_folder_view_refilter(chooser->view);
 }
 

@@ -2912,6 +2912,287 @@ def files_extract(s):
             f"and nothing else ({sorted(os.listdir(box))})")  # fmt: skip
 
 
+def search_tree(s):
+    """A tree to search under Documents/Finds: names, contents, a big
+    file, an old one, a picture and a hidden folder."""
+    root = os.path.join(s.home, "Documents", "Finds")
+    files = {
+        "report.txt": "the quarterly figures",
+        "Report 2025.odt": "draft",
+        "notes.md": "remember the milk",
+        "sub/deeper/report-old.txt": "older figures",
+        ".hidden/secret report.txt": "hidden",
+        "old.txt": "from long ago",
+    }
+    for name, text in files.items():
+        path = os.path.join(root, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+    with open(os.path.join(root, "big.bin"), "wb") as f:
+        f.write(b"\0" * (2 * 1024 * 1024))
+    write_png(os.path.join(root, "sub", "photo.png"), 8, 8, 0x3366CC)
+    when = time.mktime((2020, 6, 1, 12, 0, 0, 0, 0, -1))
+    os.utime(os.path.join(root, "old.txt"), (when, when))
+    return root
+
+
+def search_trace(s):
+    return os.path.join(s.base, "search.log")
+
+
+def read_trace(s):
+    try:
+        with open(search_trace(s)) as f:
+            return f.read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def last_search(s, root):
+    """The last search's results (relative to root, sorted) once it's done,
+    or None while it runs."""
+    lines = read_trace(s)
+    starts = [i for i, line in enumerate(lines) if line.startswith("start ")]
+    if not starts:
+        return None
+    block = lines[starts[-1] + 1:]
+    if not any(line.startswith("done ") for line in block):
+        return None
+    found = [line[len("found "):] for line in block if line.startswith("found ")]
+    return sorted(os.path.relpath(path, root) for path in found)
+
+
+def expect_search(s, root, expected, what):
+    got = s.wait(lambda: last_search(s, root), what + " to finish", timeout=30)
+    s.check(got == sorted(expected), f"{what}: found {got}")
+
+
+def save_search_file(s, name, **keys):
+    """A saved search (the .xdsearch key file) under the scratch home."""
+    path = os.path.join(s.home, name + ".xdsearch")
+    with open(path, "w") as f:
+        f.write("[Search]\nVersion=1\n")
+        for key, value in keys.items():
+            f.write(f"{key}={value}\n")
+    return path
+
+
+def run_saved(s, root, path, expected, what):
+    """Opens a saved search (its window runs it), checks what it found and
+    closes the window."""
+    open(search_trace(s), "w").close()
+    s.launch("xd-files", path, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Search Results", state="activated")
+    expect_search(s, root, expected, what)
+    s.inject("key", "alt+F4")
+    s.wait_window(app_id=FILES, gone=True)
+
+
+@scenario(desktop_ini=LUNA_INI)
+def files_search_companion(s):
+    """XP's Search Companion: F3 opens it, All files and folders finds a
+    name typed in it (part of the name, ignoring case, hidden files left
+    out); saved searches run its other criteria: a wildcard, a regular
+    expression, a word in the file, the size, the dates and hidden files;
+    the Search bar closes again with F3."""
+    root = search_tree(s)
+    open(search_trace(s), "w").close()
+    s.settle("desktop")
+    s.launch("xd-files", root, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Finds", state="activated")
+    s.settle("finds")
+    s.inject("key", "F3")
+    s.wait(lambda: "search bar open" in read_trace(s), "the Search bar to open")
+    s.settle("companion")
+    # "What do you want to search for?": the third, All files and folders.
+    s.inject("key", "Tab", "key", "Tab", "key", "Return", "sleep", 300)
+    s.settle("all files")
+    s.inject("type", "REPORT", "key", "Return")
+    s.wait_window(app_id=FILES, title="Search Results")
+    expect_search(s, root, ["Report 2025.odt", "report.txt", "sub/deeper/report-old.txt"],
+                  "a name typed in the Companion")
+    s.settle("results")
+    s.inject("key", "F3")
+    s.wait(lambda: "search bar closed" in read_trace(s), "F3 to close the Search bar")
+    s.log("ok: F3 opened and closed the Search Companion")
+    s.inject("key", "alt+F4")
+    s.wait_window(app_id=FILES, gone=True)
+    base = {"LookIn": root}
+    run_saved(s, root, save_search_file(s, "wildcard", Name="*.TXT", **base),
+              ["old.txt", "report.txt", "sub/deeper/report-old.txt"], "a wildcard")
+    run_saved(s, root, save_search_file(s, "regex", Name="^rep.*\\\\.txt$", Regex="true", **base),
+              ["report.txt", "sub/deeper/report-old.txt"], "a regular expression")
+    run_saved(s, root, save_search_file(s, "contents", Contents="MILK", **base), ["notes.md"],
+              "a word in the file")
+    run_saved(s, root, save_search_file(s, "size", Size="large", **base), ["big.bin"],
+              "Large (more than 1 MB)")
+    run_saved(s, root, save_search_file(s, "dates", When="dates", From="2019-01-01",
+                                        To="2020-12-31", **base), ["old.txt"],
+              "Specify dates")
+    run_saved(s, root, save_search_file(s, "hidden", Name="secret", Hidden="true", **base),
+              [".hidden/secret report.txt"], "Search hidden files and folders")
+    run_saved(s, root, save_search_file(s, "pictures", Kinds="picture;", **base),
+              ["sub/photo.png"], "Pictures, music, or video")
+
+
+@scenario(desktop_ini=AERO_INI)
+def files_search_box(s):
+    """Windows 7's search box: typing searches the folder and its
+    subfolders (the title "Search Results in Finds"); Advanced Query Syntax
+    filters, a /regular expression/, and Esc back to the folder."""
+    root = search_tree(s)
+    open(search_trace(s), "w").close()
+    s.settle("desktop")
+    s.launch("xd-files", root, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Finds", state="activated")
+    s.settle("finds")
+    s.inject("key", "ctrl+e", "sleep", 200, "type", "report -old")
+    s.wait_window(app_id=FILES, title="Search Results in Finds")
+    expect_search(s, root, ["Report 2025.odt", "report.txt"], "report -old")
+    for text, expected, what in [
+        ("kind:document size:tiny datemodified:2020", ["old.txt"],
+         "kind:, size: and datemodified:"),
+        ("/^rep.*\\.TXT$/i", ["report.txt", "sub/deeper/report-old.txt"], "a /regex/i"),
+        ("content:/fig.res/ OR size:>1MB", ["big.bin", "report.txt", "sub/deeper/report-old.txt"],
+         "content:/regex/ OR size:"),
+    ]:
+        open(search_trace(s), "w").close()
+        s.inject("key", "ctrl+a", "type", text)
+        expect_search(s, root, expected, what)
+    s.settle("results")
+    s.inject("key", "ctrl+a", "type", "/a(/")
+    s.wait(lambda: any(line.startswith("error ") and "a(" in line for line in read_trace(s)),
+           "an invalid pattern's error")
+    s.check(s.window(app_id=FILES) is not None, "an invalid pattern is an error, not a crash")
+    s.inject("key", "Escape")
+    s.wait_window(app_id=FILES, title="Finds")
+    s.log("ok: Esc went back to the folder")
+
+
+@scenario()
+def files_search_stop(s):
+    """Stopping a big search (2000's Search pane): Stop Search ends it, what
+    it found so far stays, and nothing more comes."""
+    big = os.path.join(s.home, "Documents", "Big")
+    for i in range(600):
+        sub = os.path.join(big, f"dir {i:03}")
+        os.makedirs(sub)
+        for j in range(50):
+            with open(os.path.join(sub, f"file {j:02}.txt"), "w") as f:
+                f.write("some words " * 20)
+    open(search_trace(s), "w").close()
+    s.settle("desktop")
+    s.launch("xd-files", "--search", big, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Big", state="activated")
+    s.wait(lambda: "search bar open" in read_trace(s), "the Search pane to open")
+    # Searching the contents makes it slow enough to stop.
+    s.inject("type", "file", "key", "Tab", "type", "nothing like this", "key", "Return")
+    s.wait_window(app_id=FILES, title="Search Results")
+    s.inject("key", "alt+p")
+    s.wait(lambda: "stopped" in read_trace(s), "Stop Search to stop it")
+    count = len(read_trace(s))
+    time.sleep(1.5)
+    lines = read_trace(s)
+    s.check(len(lines) == count and not any(line.startswith("done ") for line in lines),
+            "nothing came after Stop Search")
+
+
+@scenario()
+def files_search_streams(s):
+    """A big tree's results come in as they're found: the first show while
+    the search is still going."""
+    big = os.path.join(s.home, "Documents", "Many")
+    for i in range(200):
+        sub = os.path.join(big, f"dir {i:03}")
+        os.makedirs(sub)
+        for j in range(100):
+            open(os.path.join(sub, f"match {j:02}.txt"), "w").close()
+    path = save_search_file(s, "many", Name="match", LookIn=big)
+    open(search_trace(s), "w").close()
+    s.settle("desktop")
+    s.launch("xd-files", path, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Search Results")
+
+    def partial():
+        lines = read_trace(s)
+        found = sum(line.startswith("found ") for line in lines)
+        return found > 0 and not any(line.startswith("done ") for line in lines)
+
+    s.wait(partial, "results while the search still runs", timeout=60)
+    s.log("ok: the first results came while the search was still going")
+    s.wait(lambda: any(line.startswith("done ") for line in read_trace(s)), "the search to end",
+           timeout=100)
+    s.check("done 20000" in read_trace(s), "all 20,000 found in the end")
+
+
+@scenario(desktop_ini=LUNA_INI)
+def files_save_search(s):
+    """File > Save Search saves the criteria in ~/Searches; opening the
+    saved search runs it again."""
+    root = search_tree(s)
+    open(search_trace(s), "w").close()
+    s.settle("desktop")
+    s.launch("xd-files", root, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Finds", state="activated")
+    s.settle("finds")
+    s.inject("key", "ctrl+f")
+    s.wait(lambda: "search bar open" in read_trace(s), "Ctrl+F to open the Search bar")
+    s.settle("companion")
+    s.inject("key", "Tab", "key", "Tab", "key", "Return", "sleep", 300)
+    s.inject("type", "notes", "key", "Return")
+    expect_search(s, root, ["notes.md"], "notes")
+    s.settle("results")
+    results = s.settle("before saving")
+    s.inject("key", "alt+f", "sleep", 300, "key", "h")
+    # The dialog (a child of the window, so not in xd-windows' list).
+    s.wait(lambda: s.shot("save dialog").differs(results, (0, 0, WIDTH, HEIGHT - 40)) > 0.2,
+           "the Save Search dialog")
+    s.settle("save dialog")
+    s.inject("key", "Return")
+    saved = os.path.join(s.home, "Searches", "Files named notes.xdsearch")
+    s.wait(lambda: os.path.exists(saved), "the saved search in ~/Searches")
+    c = configparser.ConfigParser(interpolation=None)
+    c.optionxform = str
+    c.read(saved)
+    s.check(c["Search"].get("Name") == "notes" and c["Search"].get("LookIn") == root + ";",
+            "it holds the name and Look in")
+    s.inject("key", "alt+F4")
+    s.wait_window(app_id=FILES, gone=True)
+    run_saved(s, root, saved, ["notes.md"], "the saved search opened again")
+
+
+@scenario()
+def files_search_highlight(s):
+    """The matched part of each result's name is highlighted: by default in
+    the theme's selected-text colours (white on Classic's dark blue);
+    Folder Options' Search tab colour (SearchHighlight) changes it in the
+    open window."""
+    root = search_tree(s)
+    path = save_search_file(s, "report", Name="report", LookIn=root)
+    open(search_trace(s), "w").close()
+    empty = s.settle("desktop")
+    s.launch("xd-files", path, env={"XD_SEARCH_TRACE": search_trace(s)})
+    s.wait_window(app_id=FILES, title="Search Results", state="activated")
+    expect_search(s, root, ["Report 2025.odt", "report.txt", "sub/deeper/report-old.txt"],
+                  "report")
+    s.inject("move", WIDTH - 24, HEIGHT - 80)
+    shot = s.settle("highlighted")
+    x, y, w, h = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    # The results' Name column, right of the Search pane, below the header.
+    names = (x + 250, y + 120, 200, 80)
+    hilight = (10, 36, 106)
+    marked = count_like(shot, names, hilight, tolerance=12)
+    s.check(marked > 40, f"the matches are marked in Hilight's colour ({marked} px)")
+    with open(os.path.join(s.config, "desktop.ini"), "w") as f:
+        f.write(CLASSIC_INI + "\n[Folders]\nSearchHighlight=#ff0000\n")
+    s.wait(lambda: count_like(s.shot("red"), names, (255, 0, 0), tolerance=60) > 20,
+           "the chosen colour to show")
+    red = s.settle("red")
+    s.check(count_like(red, names, hilight, tolerance=12) < marked // 4,
+            "the theme's colours gave way to the chosen one")
+
+
 @scenario()
 def folder_options_tabs(s):
     """Folder Options' "Open folders in new tabs instead of new windows":

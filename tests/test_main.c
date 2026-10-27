@@ -4206,6 +4206,27 @@ static void test_folder_options(void) {
           strcmp(parsed.folders.default_view, "details") == 0);
     CHECK(!parsed.folders.common_tasks); /* saved as CommonTasks=false */
     xd_strbuf_free(&text);
+    /* 7's Search tab: subfolders, partial matches, system folders and
+     * /pattern/ on by default; the highlight colour the theme's. */
+    CHECK(parsed.folders.search_subfolders && parsed.folders.search_partial &&
+          parsed.folders.search_system && parsed.folders.search_regex &&
+          !parsed.folders.search_archives && !parsed.folders.search_contents &&
+          parsed.folders.search_highlight[0] == '\0');
+    xd_settings_parse(XD_STR("[Folders]\nSearchSubfolders=false\nSearchPartial=false\n"
+                             "SearchSystem=false\nSearchArchives=true\nSearchContents=true\n"
+                             "SearchRegex=false\nSearchHighlight=#Ff8000\n"),
+                      &original);
+    CHECK(!original.folders.search_subfolders && !original.folders.search_partial &&
+          !original.folders.search_system && original.folders.search_archives &&
+          original.folders.search_contents && !original.folders.search_regex &&
+          strcmp(original.folders.search_highlight, "#Ff8000") == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          strcmp(parsed.folders.search_highlight, "#Ff8000") == 0);
+    xd_strbuf_free(&text);
+    xd_settings_parse(XD_STR("[Folders]\nSearchHighlight=orange\n"), &original);
+    CHECK(original.folders.search_highlight[0] == '\0');
     /* An unknown view keeps the default. */
     xd_settings_parse(XD_STR("[Folders]\nDefaultView=../x\n"), &original);
     CHECK(original.folders.default_view[0] == '\0');

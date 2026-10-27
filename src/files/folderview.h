@@ -15,6 +15,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct xd_search_query xd_search_query; /* search.h */
+
 #define XD_TYPE_FOLDER_VIEW (xd_folder_view_get_type())
 G_DECLARE_FINAL_TYPE(XdFolderView, xd_folder_view, XD, FOLDER_VIEW, GtkDrawingArea)
 
@@ -39,6 +41,7 @@ typedef enum {
     XD_SORT_ACCESSED,
     XD_SORT_ATTRIBUTES,
     XD_SORT_OWNER,
+    XD_SORT_FOLDER, /* In Folder: search results only */
     XD_SORT_COUNT,
 } XdSortColumn;
 
@@ -110,6 +113,27 @@ void xd_folder_view_set_multiple(XdFolderView *view, gboolean multiple);
  * contents, under the location `location` (XP's My Recent Documents in
  * the Open dialogs). Not watched for changes. */
 void xd_folder_view_set_files(XdFolderView *view, GFile *location, GPtrArray *files);
+
+/* Search results under `location` (the folder searched): the view starts
+ * empty, with XP's columns for them (Name, In Folder, Size, Type, Date
+ * Modified), and shows what add_results gives it as it comes, a few times
+ * a second, as a big folder fills in; end_results when the search is
+ * over. Not watched for changes; Refresh is the caller's (searching
+ * again). Hidden results are shown whatever Show Hidden Files says: they
+ * were asked for. set_location or set_files leaves results. */
+void xd_folder_view_begin_results(XdFolderView *view, GFile *location);
+/* `hits`: xd_search_hit* (search.h); the view takes what it needs. */
+void xd_folder_view_add_results(XdFolderView *view, GPtrArray *hits);
+void xd_folder_view_end_results(XdFolderView *view);
+gboolean xd_folder_view_is_results(XdFolderView *view);
+/* The parts of names a search matched are drawn highlighted: in `color`
+ * (bold), or with nullptr the theme's selected-text colours (HilightText
+ * on Hilight), as Windows 7 marks the terms found. On a selected item
+ * they stay readable: the default inverts (Hilight on HilightText), and
+ * a colour too close to the selection's becomes HilightText, underlined.
+ * `query`: an xd_search_query (search.h), or nullptr for none. */
+void xd_folder_view_set_highlight(XdFolderView *view, xd_search_query *query);
+void xd_folder_view_set_highlight_color(XdFolderView *view, const GdkRGBA *color);
 
 void xd_folder_view_select_all(XdFolderView *view);
 void xd_folder_view_invert_selection(XdFolderView *view);

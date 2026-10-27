@@ -697,6 +697,7 @@ folder_lib = static_library(
   'src/files/places.c',
   'src/files/properties.c',
   'src/files/search.c',
+  'src/files/searchpane.c',
   'src/files/searchwalk.c',
   'src/files/sendto.c',
   'src/files/syscleanup.c',
@@ -714,6 +715,10 @@ folder_lib = static_library(
   dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep,
                  secret_dep, flatpak_dep],
 )
+
+# Saved searches (.xdsearch), which xd-files opens.
+install_data('data/mime/xeondesktop-search.xml',
+             install_dir: get_option('datadir') / 'mime' / 'packages')
 
 # xd-control: opens Control Panel (control:/// in xd-files) or an applet.
 executable(

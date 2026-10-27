@@ -7,5 +7,5 @@ Exec=xd-files %U
 Icon=system-file-manager
 Terminal=false
 Categories=System;FileManager;GTK;
-MimeType=inode/directory;
+MimeType=inode/directory;application/x-xeondesktop-search;
 StartupWMClass=org.xeondesktop.Files
