@@ -393,7 +393,9 @@ is Compiz's ring plugin, beside Alt+Tab rather than in its place: the
 windows' mirrors on an ellipse over the darkened monitor, smaller and
 fainter towards the back, turned with Scale's velocity model (in degrees)
 to the one picked, its title drawn with the theme's caption font below.
-Its key's modifiers (but Shift) keep it open; letting go switches.
+Its key's modifiers (but Shift) keep it open; letting go switches. Its
+Previous window key is None by default (Win+Shift+Tab is Shift
+Switcher's); Shift+Tab goes back while it shows.
 
 **Enhanced Zoom Desktop** (`zoom.c`, the view in `zoom_model.c`,
 unit-tested) is Compiz's ezoom. Neither scene graph scales an output's
@@ -458,7 +460,7 @@ effect that draws whole outputs: from its `frame` hook it captures what it
 needs and calls `xd_glfx_draw_output()`, whose `draw` paints the output
 into a buffer shown by an opaque scene node under the lock screen; the
 effect drives its frames with a timer and takes the pointer through the
-input hooks. `xd_glfx_draw_quad()` (a texture on a quad in clip space with
+`input` hook. `xd_glfx_draw_quad()` (a texture on a quad in clip space with
 its w, for perspective) and `xd_glfx_fill_polygon()` draw in 3D; the
 maths stays on the CPU (`viewport_model.c`'s camera: Compiz's 60 degree
 field of view, the screen filling the view at z = 0). `XD_EFFECTS_TIMING=1` logs
@@ -486,8 +488,9 @@ mode by default (Flip too). Its key (Win+Shift+Tab; Compiz's Win+Tab is
 Ring Switcher's) shows this desktop's windows, most recently used first,
 each a scene capture of its own drawn in perspective with a reflection
 (`xd_shift_get_slot()`), over the dimmed desktop; the key again or the
-arrows step, letting go of the binding's modifiers,
-Enter or a click activates the one in front, Escape changes nothing.
+arrows step; letting go of the binding's modifiers
+(`xd_effects_is_binding_held()`), Enter or a click activates the one in
+front, Escape changes nothing.
 
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
