@@ -10,4 +10,5 @@
 #ifdef XD_SCENEFX
 XD_EFFECT_IMPL(wobbly_windows)
 XD_EFFECT_IMPL(magic_lamp)
+XD_EFFECT_IMPL(burn)
 #endif

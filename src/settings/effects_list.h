@@ -8,3 +8,4 @@
  */
 XD_EFFECT(wobbly_windows)
 XD_EFFECT(magic_lamp)
+XD_EFFECT(burn)

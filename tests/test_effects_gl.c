@@ -2,6 +2,7 @@
  * Unit tests for the OpenGL window effects' maths (Magic Lamp, Burn,
  * Explode, Water): included by test_main.c, which has CHECK.
  */
+#include "../src/compositor/effects/burn_model.h"
 #include "../src/compositor/effects/magic_lamp_model.h"
 
 /* Magic Lamp: the window as it is at the start, narrower near the
@@ -69,6 +70,54 @@ static void test_magic_lamp_model(void) {
     CHECK(x <= 30 + 1e-6 && y >= 300 - 1e-6 && y <= 330 + 1e-6);
 }
 
+/* Burn: the front crosses the window from the side it starts on, what's
+ * behind it goes, and sparks rise, slow and die. */
+static void test_burn_model(void) {
+    CHECK(xd_burn_get_front(0) <= 0);
+    CHECK(xd_burn_get_char(0, xd_burn_get_front(0)) == 0); /* nothing burnt yet */
+    CHECK(xd_burn_get_char(1, xd_burn_get_front(1)) > 1 - 1e-9); /* everything gone */
+    /* Burning down: midway the top is gone, the bottom untouched. */
+    double front = xd_burn_get_front(0.5);
+    CHECK(xd_burn_get_char(xd_burn_get_along(XD_BURN_DOWN, 0.5, 0.1), front) == 1);
+    CHECK(xd_burn_get_char(xd_burn_get_along(XD_BURN_DOWN, 0.5, 0.9), front) == 0);
+    double charring = xd_burn_get_char(xd_burn_get_along(XD_BURN_DOWN, 0.5, front - 0.05), front);
+    CHECK(charring > 0 && charring < 1);
+    /* Burning left: it starts at the right edge. */
+    CHECK(xd_burn_get_char(xd_burn_get_along(XD_BURN_LEFT, 0.9, 0.5), front) == 1);
+    CHECK(xd_burn_get_char(xd_burn_get_along(XD_BURN_LEFT, 0.1, 0.5), front) == 0);
+    CHECK(fabs(xd_burn_get_along(XD_BURN_UP, 0.3, 1.0)) < 1e-12);
+    double across = 0, down = 0;
+    xd_burn_get_front_point(XD_BURN_RIGHT, 0.25, 0.75, &across, &down);
+    CHECK(fabs(across - 0.25) < 1e-12 && fabs(down - 0.75) < 1e-12);
+    /* The front moves on as time does. */
+    bool forward = true;
+    for (int step = 1; step <= 10; step++)
+        forward = forward && xd_burn_get_front(step / 10.0) > xd_burn_get_front((step - 1) / 10.0);
+    CHECK(forward);
+
+    xd_burn_particles particles;
+    xd_burn_init_particles(&particles, 2, 42);
+    uint64_t seed = 7;
+    double first = xd_burn_get_random(&seed), second = xd_burn_get_random(&seed);
+    CHECK(first >= 0 && first < 1 && second >= 0 && second < 1 && first != second);
+    xd_burn_particle spark = {.x = 100, .y = 200, .speed_x = 10, .speed_y = 0, .life = 0.5,
+                              .lifetime = 0.5};
+    CHECK(xd_burn_add_particle(&particles, &spark));
+    spark.life = spark.lifetime = 2.0;
+    CHECK(xd_burn_add_particle(&particles, &spark));
+    CHECK(!xd_burn_add_particle(&particles, &spark)); /* full */
+    xd_burn_step_particles(&particles, 0.1, 0.5);
+    CHECK(particles.count == 2);
+    CHECK(particles.items[0].x > 100 && particles.items[0].speed_x < 10);
+    CHECK(particles.items[0].speed_y < 0); /* rising */
+    xd_burn_step_particles(&particles, 0.1, 0.5);
+    CHECK(particles.items[1].y < 200);
+    xd_burn_step_particles(&particles, 0.4, 0.5); /* the first's life is over */
+    CHECK(particles.count == 1 && particles.items[0].lifetime == 2.0);
+    xd_burn_free_particles(&particles);
+}
+
 static void test_effects_gl(void) {
     test_magic_lamp_model();
+    test_burn_model();
 }

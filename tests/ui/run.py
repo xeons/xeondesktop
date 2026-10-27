@@ -1042,6 +1042,26 @@ def magic_lamp_minimize(s):
             f"restored where it was ({back}, was {(x, y, w, h)})")
 
 
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"), fx=True)
+def burn_close(s):
+    """Burn (xd-compositor-fx), slowed to 4 s: a window closed with Alt+F4
+    burns away from the top down, so midway its top is gone (the desktop
+    shows) while its bottom is still there; then it's all gone."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1800)
+    mid = s.shot("midway")
+    top = mid.differs(empty, (x, y, w, 40), step=2)
+    bottom = mid.differs(empty, (x, y + h - 60, w, 50), step=2)
+    s.log(f"midway: {top:.2f} of its top differs from the desktop, {bottom:.2f} of its bottom")
+    s.check(top < 0.05, f"midway its top is gone ({top:.2f})")
+    s.check(bottom > 0.5, f"midway its bottom is still there ({bottom:.2f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window burnt away", timeout=10)
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

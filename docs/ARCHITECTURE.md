@@ -398,6 +398,13 @@ backwards as a live effect (from where a minimize still under way had
 got to). With OpenClose, windows open from their button or the pointer
 and close into it. It's our own curve, not Compiz's (no waves).
 
+**Burn** (`burn.c`, the front and the sparks in `burn_model.c`,
+unit-tested) burns a closing window's picture away: a shader moves a
+front across it (ragged with value noise), charring the band behind it,
+glowing in the fire's colour at its edge and dropping what's burnt;
+sparks born along the front rise, slow and fade, drawn as points that
+add up their glow.
+
 **Testing headless.** `tests/ui/run.py` runs a scenario declared with
 `fx=True` on `xd-compositor-fx` with Mesa's llvmpipe, through EGL on no
 device (`WLR_RENDERER_FORCE_SOFTWARE`, buffers from `/dev/udmabuf`), and
