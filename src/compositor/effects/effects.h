@@ -35,6 +35,37 @@ typedef struct xd_window_event {
     struct wlr_box from; /* MAXIMIZE: its outer box before */
 } xd_window_event;
 
+/* Input offered to the effects that are on (input.c), before the
+ * compositor's own bindings and the programs: keys, buttons and the
+ * vertical wheel while no window is being moved or sized, the pointer's
+ * moves and the modifiers always. */
+typedef enum xd_effect_input_kind : uint8_t {
+    XD_EFFECT_INPUT_KEY,       /* pressed or released */
+    XD_EFFECT_INPUT_BUTTON,    /* pressed or released */
+    XD_EFFECT_INPUT_AXIS,      /* a step of the vertical wheel */
+    XD_EFFECT_INPUT_MOTION,    /* the pointer moved */
+    XD_EFFECT_INPUT_MODIFIERS, /* the modifiers held changed */
+} xd_effect_input_kind;
+
+typedef struct xd_effect_input {
+    xd_effect_input_kind kind;
+    uint32_t modifiers; /* xd_binding_modifier bits held */
+    uint32_t keysym;    /* KEY: lower case */
+    uint32_t button;    /* BUTTON: BTN_LEFT... (linux/input-event-codes.h) */
+    bool pressed;       /* KEY, BUTTON */
+    double delta;       /* AXIS: positive is down (towards the user) */
+    double x, y;        /* the pointer, layout coordinates */
+} xd_effect_input;
+
+/* A KEY or BUTTON option, read once (xd_effects_get_binding) to match
+ * input against. Button4 and Button5 are X11's wheel up and down. */
+typedef struct xd_effect_binding {
+    uint32_t modifiers; /* xd_binding_modifier bits */
+    uint32_t keysym;    /* lower case; 0 for a button or none */
+    uint32_t button;    /* BTN_LEFT...; 0 for a key or none */
+    int wheel;          /* -1 up, 1 down, 0 neither */
+} xd_effect_binding;
+
 /* An effect's code. Every hook is optional. `state` is what enable
  * returned. */
 typedef struct xd_effect_impl {
@@ -59,6 +90,14 @@ typedef struct xd_effect_impl {
      * an option's binding. */
     bool (*key)(xd_server *server, void *state, uint32_t modifiers, xkb_keysym_t keysym);
     bool (*button)(xd_server *server, void *state, uint32_t modifiers, uint32_t button);
+    /* Input (xd_effect_input): true if the effect used it up. Keys,
+     * buttons and wheel steps go no further once one has; every effect
+     * sees each move and modifier change. */
+    bool (*input)(xd_server *server, void *state, const xd_effect_input *input);
+    /* Whether it animates this window event itself, so XP's animation
+     * (animate.c) doesn't: MINIMIZE and UNMINIMIZE. */
+    bool (*animates)(xd_server *server, void *state, const xd_view *view,
+                     xd_window_event_kind kind);
 } xd_effect_impl;
 
 #define XD_EFFECT_IMPL(name) extern const xd_effect_impl xd_effect_impl_##name;
@@ -97,5 +136,26 @@ bool xd_effects_is_button(const char *binding, uint32_t modifiers, uint32_t butt
 bool xd_effects_is_output_filtered(const xd_output *output);
 bool xd_effects_build_output_state(xd_output *output, struct wlr_scene_output *scene_output,
                                    struct wlr_output_state *state);
+/* input.c: offers input to the effects (the modifiers and pointer filled
+ * in here); true if one used it up. */
+bool xd_effects_input(xd_server *server, xd_effect_input *input);
+/* view.c: whether an effect animates the window's minimize or
+ * unminimize, in place of XP's animation. */
+bool xd_effects_animates_window(xd_view *view, xd_window_event_kind kind);
+
+/* Helpers for the effects. */
+/* A KEY or BUTTON option of `effect`; all zeros for none. */
+void xd_effects_get_binding(const xd_effects_settings *settings, size_t effect, const char *key,
+                            xd_effect_binding *binding);
+/* Whether a key or button press (or a wheel step) is that binding:
+ * exactly its modifiers held. */
+bool xd_effects_binding_matches(const xd_effect_binding *binding, const xd_effect_input *input);
+/* Whether a window matches an XD_EFFECT_OPTION_MATCH value. */
+bool xd_effects_match_view(const char *match, const xd_view *view);
+/* A tree above every window and panel and below the lock screen, for an
+ * effect's own pictures; destroy it with wlr_scene_node_destroy. */
+struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server);
+/* Asks every output for another frame (an effect is animating). */
+void xd_effects_schedule_frames(xd_server *server);
 
 #endif

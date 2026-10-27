@@ -408,7 +408,8 @@ void xd_view_focus(xd_view *view) {
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, false);
         /* Up from its button; the window shows when the bar arrives. */
-        if (view->has_button_box && !xd_effects_animates_minimize(server))
+        if (view->has_button_box && !xd_effects_animates_minimize(server) &&
+            !xd_effects_animates_window(view, XD_WINDOW_EVENT_UNMINIMIZE))
             xd_animate_zoom(server, view->button_box, caption_box(view), view);
     }
 
@@ -609,7 +610,8 @@ void xd_view_minimize(xd_view *view) {
     view->minimized = true;
     xd_sound_play_event(XD_SOUND_MINIMIZE);
     wlr_scene_node_set_enabled(&view->tree->node, false);
-    if (view->has_button_box && !xd_effects_animates_minimize(view->server))
+    if (view->has_button_box && !xd_effects_animates_minimize(view->server) &&
+        !xd_effects_animates_window(view, XD_WINDOW_EVENT_MINIMIZE))
         xd_animate_zoom(view->server, caption_box(view), view->button_box, nullptr);
     if (view->ftl != nullptr)
         wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, true);

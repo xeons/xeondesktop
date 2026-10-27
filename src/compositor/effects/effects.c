@@ -14,6 +14,7 @@
 #include <wlr/render/gles2.h>
 #include <wlr/render/pixman.h>
 #include <wlr/util/log.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include "../../core/alloc.h"
 #ifdef XD_SCENEFX
@@ -23,7 +24,7 @@
 static const xd_effect_impl *const impls[] = {
 #define XD_EFFECT_IMPL(name) &xd_effect_impl_##name,
 #include "impl_list.h"
-    nullptr, /* the plain build has none */
+    nullptr, /* so the list is never empty */
 };
 /* Tested, so it counts as used where the list is empty. */
 #ifdef XD_EFFECT_IMPL
@@ -280,6 +281,61 @@ bool xd_effects_button(xd_server *server, uint32_t modifiers, uint32_t button) {
     return false;
 }
 
+/* ---- input ---------------------------------------------------------------------- */
+
+static uint32_t effects_get_modifiers(xd_server *server) {
+    struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
+    if (keyboard == nullptr)
+        return 0;
+    uint32_t held = wlr_keyboard_get_modifiers(keyboard);
+    uint32_t modifiers = 0;
+    if (held & WLR_MODIFIER_SHIFT)
+        modifiers |= XD_BINDING_SHIFT;
+    if (held & WLR_MODIFIER_CTRL)
+        modifiers |= XD_BINDING_CONTROL;
+    if (held & WLR_MODIFIER_ALT)
+        modifiers |= XD_BINDING_ALT;
+    if (held & WLR_MODIFIER_LOGO)
+        modifiers |= XD_BINDING_SUPER;
+    return modifiers;
+}
+
+bool xd_effects_input(xd_server *server, xd_effect_input *input) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    input->modifiers = effects_get_modifiers(server);
+    input->keysym = xkb_keysym_to_lower(input->keysym);
+    input->x = server->cursor->x;
+    input->y = server->cursor->y;
+    /* Moves and modifier changes are everyone's to see. */
+    bool shared = input->kind == XD_EFFECT_INPUT_MOTION || input->kind == XD_EFFECT_INPUT_MODIFIERS;
+    bool used = false;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (!effects->running[i].on || impls[i]->input == nullptr)
+            continue;
+        if (impls[i]->input(server, effects->running[i].state, input)) {
+            used = true;
+            if (!shared)
+                break;
+        }
+    }
+    return used;
+}
+
+bool xd_effects_animates_window(xd_view *view, xd_window_event_kind kind) {
+    xd_server *server = view->server;
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->animates != nullptr &&
+            impls[i]->animates(server, effects->running[i].state, view, kind))
+            return true;
+    }
+    return false;
+}
+
 bool xd_effects_is_key(const char *binding, uint32_t modifiers, xkb_keysym_t keysym) {
     uint32_t wanted = 0;
     char key[64];
@@ -314,6 +370,49 @@ bool xd_effects_is_button(const char *binding, uint32_t modifiers, uint32_t butt
     return false;
 }
 
+void xd_effects_get_binding(const xd_effects_settings *settings, size_t effect, const char *key,
+                            xd_effect_binding *binding) {
+    *binding = (xd_effect_binding){0};
+    char name[64];
+    uint32_t modifiers = 0;
+    if (!xd_effects_parse_binding(xd_effects_get_text(settings, effect, key), &modifiers, name,
+                                  sizeof(name)))
+        return;
+    binding->modifiers = modifiers;
+    /* X11's numbering, as Compiz and the panel have it. */
+    static const uint32_t buttons[] = {0, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, 0, 0, 0, 0, BTN_SIDE,
+                                       BTN_EXTRA};
+    if (strncasecmp(name, "Button", 6) == 0 && name[6] >= '1' && name[6] <= '9' &&
+        name[7] == '\0') {
+        int number = name[6] - '0';
+        if (number == 4 || number == 5)
+            binding->wheel = number == 4 ? -1 : 1;
+        else
+            binding->button = buttons[number];
+        return;
+    }
+    binding->keysym = xkb_keysym_to_lower(xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE));
+}
+
+bool xd_effects_binding_matches(const xd_effect_binding *binding, const xd_effect_input *input) {
+    if (input->modifiers != binding->modifiers)
+        return false;
+    switch (input->kind) {
+    case XD_EFFECT_INPUT_KEY:
+        return input->pressed && binding->keysym != XKB_KEY_NoSymbol &&
+               input->keysym == binding->keysym;
+    case XD_EFFECT_INPUT_BUTTON:
+        return input->pressed && binding->button != 0 && input->button == binding->button;
+    case XD_EFFECT_INPUT_AXIS:
+        return binding->wheel != 0 && (binding->wheel < 0) == (input->delta < 0) &&
+               input->delta != 0;
+    case XD_EFFECT_INPUT_MOTION:
+    case XD_EFFECT_INPUT_MODIFIERS:
+        return false;
+    }
+    return false;
+}
+
 bool xd_effects_is_output_filtered([[maybe_unused]] const xd_output *output) {
 #ifdef XD_SCENEFX
     return xd_glfx_is_output_filtered(output);
@@ -330,4 +429,22 @@ bool xd_effects_build_output_state([[maybe_unused]] xd_output *output,
 #else
     return wlr_scene_output_build_state(scene_output, state, nullptr);
 #endif
+}
+
+bool xd_effects_match_view(const char *match, const xd_view *view) {
+    return xd_effects_match_window(match, xd_view_app_id(view), xd_view_title(view),
+                                   view->dialog);
+}
+
+struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server) {
+    struct wlr_scene_tree *tree = wlr_scene_tree_create(&server->scene->tree);
+    wlr_scene_node_place_below(&tree->node, &server->layer_lock->node);
+    return tree;
+}
+
+void xd_effects_schedule_frames(xd_server *server) {
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (out->wlr_output->enabled)
+            wlr_output_schedule_frame(out->wlr_output);
+    }
 }

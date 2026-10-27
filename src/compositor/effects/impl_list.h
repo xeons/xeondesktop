@@ -14,3 +14,4 @@ XD_EFFECT_IMPL(burn)
 XD_EFFECT_IMPL(explode)
 XD_EFFECT_IMPL(water)
 #endif
+XD_EFFECT_IMPL(scale)

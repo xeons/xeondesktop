@@ -313,8 +313,43 @@ hooks, all optional: `enable` (returns its state), `disable`, `configure`
 (its options, after enable and on every change), `window_event` (map,
 unmap, destroy, focus, maximize/restore/snap with the box before,
 minimize, unminimize, title; sent from `view.c`) and `frame` (before each
-output's frame, Compiz's preparePaint). The plain `xd-compositor` compiles
-none of the OpenGL ones and reports them unavailable.
+output's frame, Compiz's preparePaint), `input` and `animates` (below).
+The plain `xd-compositor` compiles none of the OpenGL ones and reports
+them unavailable.
+
+**Input.** `input.c` offers the effects that are on an `xd_effect_input`
+(`xd_effects_input()`) before its own bindings and the programs see it:
+key presses and releases and buttons while no window is being moved or
+sized, steps of the vertical wheel, and every pointer move and modifier
+change. An effect returns true to use it up: keys, buttons and wheel steps
+then go no further, while moves and modifier changes reach every effect (a
+used-up move doesn't reach the windows). Options of the KEY and BUTTON
+types are read once with `xd_effects_get_binding()` and matched with
+`xd_effects_binding_matches()`: exactly the modifiers held, and Button4
+and Button5 as the wheel's steps up and down, as in Compiz. `animates`
+says an effect animates a window's minimize or unminimize itself, so
+`view.c` skips XP's bar animation (`animate.c`) for it.
+
+**Scene-graph effects** (both builds) draw with scene nodes only: buffers'
+opacity and destination size, rects, positions. Helpers:
+`xd_effects_create_overlay()` (a tree above every window and panel, below
+the lock screen), `xd_effects_schedule_frames()` and
+`xd_effects_match_view()`. A **window mirror** (`mirror.h`) is a window's
+picture somewhere else: a tree of scene buffers showing the buffers of
+the window's frame, surfaces, subsurfaces and popups, copied from its own
+nodes by `xd_mirror_update()` (each frame, re-set only when the window
+committed or a buffer changed), placed and scaled with
+`xd_mirror_place()`. Its scene buffers hold their buffers, so once
+detached (`xd_mirror_detach()`, the window is closing) it keeps the last
+picture. A window hidden behind its mirror gets frame events from
+`xd_mirror_send_frame_done()`, so the mirror stays live.
+
+**Scale** (`scale.c`, the maths in `scale_model.c`, unit-tested) is
+Compiz's window picker: Compiz's slot layout (about √n rows, each window
+in the free slot nearest it) and its velocity model for the glide
+(`speed`, `timestep`). The windows are hidden and their mirrors glide over
+darkened outputs; it has the keyboard and pointer until a window is picked
+(click, Enter) or it's cancelled (Esc, a click on no window, its key).
 
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each

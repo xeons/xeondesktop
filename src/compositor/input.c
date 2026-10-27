@@ -399,6 +399,7 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
     /* Our own layout change on a keyboard not in use: nothing to tell. */
     if (server->kb_group_syncing)
         return;
+    xd_effects_input(server, &(xd_effect_input){.kind = XD_EFFECT_INPUT_MODIFIERS});
     if (server->cycle_view != nullptr &&
         !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_ALT))
         finish_cycle(server);
@@ -832,6 +833,22 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
             server->super_alone = false;
             xd_constraints_release(server);
             xd_start_menu_toggle(server);
+        }
+    }
+
+    /* Desktop Effects' bindings, and an effect holding the keyboard (Scale's
+     * window picker). */
+    if (!from_ime && !inhibited && !server->locked && server->mode == XD_CURSOR_PASSTHROUGH) {
+        bool used = false;
+        for (int i = 0; i < nsyms; i++) {
+            xd_effect_input input = {
+                .kind = XD_EFFECT_INPUT_KEY, .keysym = syms[i], .pressed = pressed};
+            used = xd_effects_input(server, &input) || used;
+        }
+        if (used) {
+            if (unlatch)
+                sticky_update(kb, 0, kb->sticky_locked);
+            return;
         }
     }
 
@@ -1501,6 +1518,11 @@ static bool implicit_grab_motion(xd_server *server, uint32_t time_msec) {
 
 static void process_motion(xd_server *server, uint32_t time_msec) {
     place_drag_icon(server);
+    /* Every effect sees the move; one holding the pointer (Scale's picker,
+     * Annotate's pen) keeps it from the windows. */
+    if (xd_effects_input(server, &(xd_effect_input){.kind = XD_EFFECT_INPUT_MOTION}) &&
+        server->mode == XD_CURSOR_PASSTHROUGH && !server->locked)
+        return;
     switch (server->mode) {
     case XD_CURSOR_MOVE: {
         xd_view *view = server->grab_view;
@@ -1809,6 +1831,15 @@ static void process_button(xd_server *server,
         process_motion(server, pointer_button_event->time_msec);
         return;
     }
+    if (server->mode == XD_CURSOR_PASSTHROUGH) {
+        xd_effect_input input = {
+            .kind = XD_EFFECT_INPUT_BUTTON,
+            .button = pointer_button_event->button,
+            .pressed = pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED,
+        };
+        if (xd_effects_input(server, &input))
+            return;
+    }
     if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->mode != XD_CURSOR_PASSTHROUGH) {
             end_grab(server);
@@ -1875,6 +1906,11 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_axis);
     const struct wlr_pointer_axis_event *pointer_axis_event = data;
     xd_idle_activity(server);
+    if (pointer_axis_event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL &&
+        server->mode == XD_CURSOR_PASSTHROUGH && !server->locked &&
+        xd_effects_input(server, &(xd_effect_input){.kind = XD_EFFECT_INPUT_AXIS,
+                                                    .delta = pointer_axis_event->delta}))
+        return;
     double delta = pointer_axis_event->delta;
     int32_t discrete = pointer_axis_event->delta_discrete;
     /* [Mouse] WheelLines: clients scroll about 3 lines a notch, so scale

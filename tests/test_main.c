@@ -11218,6 +11218,8 @@ static void test_wobbly_model(void) {
 }
 
 #include "test_effects_gl.c"
+/* The scene-graph Desktop Effects' maths. */
+#include "test_effects_scene.c"
 
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
@@ -11332,6 +11334,7 @@ int main(void) {
     test_effects_support();
     test_wobbly_model();
     test_effects_gl();
+    test_effects_scene();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

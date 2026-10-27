@@ -1131,6 +1131,85 @@ def water_ripple(s):
            "the wake settled, no Start menu", timeout=15)
 
 
+# ---- the scene-graph Desktop Effects (both compositors) ---------------------------------
+
+
+def darker(pixel, than, by=30):
+    """Whether every channel of pixel is at least `by` darker than `than`'s
+    (where `than` has that much to lose)."""
+    return all(a <= b - min(by, b // 2) for a, b in zip(pixel, than))
+
+
+def bright_runs(shot, background, y, tolerance=24):
+    """The runs (x0, x1) of row y that differ from the background colour,
+    at least 20 px long: thumbnails over the darkened desktop."""
+    runs, start = [], None
+    for x in range(WIDTH + 1):
+        on = x < WIDTH and max(abs(a - b) for a, b in
+                               zip(shot.pixel(x, y), background)) > tolerance
+        if on and start is None:
+            start = x
+        elif not on and start is not None:
+            if x - start >= 20:
+                runs.append((start, x - 1))
+            start = None
+    return runs
+
+
+def open_two_windows(s):
+    """Control Panel and the Run box, Run in front."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    return s.settle("two-windows")
+
+
+def active_title(s):
+    return next((w["title"] for w in s.windows() if "activated" in w["states"]), None)
+
+
+@scenario(setup=effects_setup("[Scale]\nEnabled=true\n"))
+def scale_pick_window(s):
+    """Scale: Shift+Alt+Up lays the windows out side by side over the
+    darkened desktop, smaller; a click on a thumbnail picks that window,
+    which comes back in front and active; the top right corner starts it
+    too, and Esc puts every window back as it was."""
+    empty = s.settle("desktop")
+    windows = open_two_windows(s)
+    s.inject("key", "shift+alt+Up")
+    grid = s.settle("grid")
+    s.check(darker(grid.pixel(3, 3), empty.pixel(3, 3)),
+            f"the desktop is darkened ({grid.pixel(3, 3)} against {empty.pixel(3, 3)})")
+    runs = bright_runs(grid, grid.pixel(3, (HEIGHT - 40) // 2), (HEIGHT - 40) // 2)
+    s.log(f"thumbnails across the middle: {runs}")
+    s.check(len(runs) == 2, f"two thumbnails side by side ({runs})")
+    s.check(grid.differs(windows, (0, 0, WIDTH, HEIGHT - 40)) > 0.2, "the windows moved")
+    # The one that isn't Run.
+    picked = None
+    for x0, x1 in runs:
+        s.inject("move", (x0 + x1) // 2, (HEIGHT - 40) // 2, "click")
+        s.settle("picked")
+        picked = active_title(s)
+        if picked == "Control Panel":
+            break
+        s.inject("key", "shift+alt+Up")
+        s.settle("grid-again")
+    s.check(picked == "Control Panel", f"a click on its thumbnail picks Control Panel ({picked})")
+    after = s.settle("after")
+    s.check(not darker(after.pixel(3, 3), empty.pixel(3, 3), by=8),
+            "the desktop isn't dark any more")
+    # The corner, then Esc: as it was, Control Panel still in front.
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "move", WIDTH - 1, 0)
+    corner = s.settle("corner")
+    s.check(darker(corner.pixel(3, 3), empty.pixel(3, 3)), "the top right corner starts it")
+    s.inject("key", "Escape")
+    back = s.settle("escaped")
+    s.check(back.differs(after, (0, 0, WIDTH, HEIGHT - 40)) < 0.02,
+            "Esc puts the windows back as they were")
+    s.check(active_title(s) == "Control Panel", "and Control Panel stays active")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
