@@ -148,6 +148,7 @@ settings_lib = static_library(
   # Desktop Effects: the table (one file per effect) and effects.ini.
   'src/settings/effects.c',
   'src/settings/effects/wobbly_windows.c',
+  'src/settings/effects/general_options.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -401,6 +402,8 @@ compositor_src = files(
   'src/compositor/ime.c',
   'src/compositor/present.c',
   'src/compositor/constraints.c',
+  'src/compositor/desktops.c',
+  'src/compositor/desktops_grid.c',
   'src/settings/soundplay.c',
 )
 compositor_src += x11_grab_server_src
@@ -410,6 +413,7 @@ compositor_src += files('src/compositor/gamma.c', 'src/compositor/vcgt.c')
 # Desktop Effects: effects.ini and window events for every effect, in both
 # builds; the OpenGL effects (one file each) in xd-compositor-fx alone.
 compositor_src += files('src/compositor/effects/effects.c')
+compositor_src += files('src/compositor/effects/general.c')
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
   'src/compositor/effects/wobbly.c',
@@ -1469,6 +1473,7 @@ test_exe = executable(
   'src/privacy/permissions.c',
   'src/compositor/vcgt.c',
   'src/compositor/effects/wobbly_model.c',
+  'src/compositor/desktops_grid.c',
   'src/color/colorlib.c',
   'src/keys/keyslib.c',
   'src/keys/sshkeys.c',

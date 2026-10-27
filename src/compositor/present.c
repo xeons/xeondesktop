@@ -49,7 +49,7 @@ void xd_present_init(xd_server *server) {
 static xd_view *front_view(xd_output *out) {
     xd_server *server = out->server;
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
-        if (!view->mapped || view->minimized)
+        if (!view->mapped || view->minimized || !xd_desktops_is_view_shown(view))
             continue;
         struct wlr_box box = xd_view_outer_box(view);
         if (xd_output_at(server, box.x + box.width / 2.0, box.y + box.height / 2.0) == out)

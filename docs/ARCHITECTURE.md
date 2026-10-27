@@ -312,9 +312,32 @@ for OpenGL ones, whose files are `effects_fx_src` in meson.build). Its
 hooks, all optional: `enable` (returns its state), `disable`, `configure`
 (its options, after enable and on every change), `window_event` (map,
 unmap, destroy, focus, maximize/restore/snap with the box before,
-minimize, unminimize; sent from `view.c`) and `frame` (before each
-output's frame, Compiz's preparePaint). The plain `xd-compositor` compiles
-none of the OpenGL ones and reports them unavailable.
+minimize, unminimize; sent from `view.c`), `frame` (before each
+output's frame, Compiz's preparePaint), and input before the desktop's
+own handling (`input.c`): `key` and `button` (true: used up), `modifiers`
+(a switcher ends when they're let go) and `motion` (true: nothing under
+the pointer hears of it). `xd_effects_get_binding()` reads a key or
+mouse binding option, `xd_effects_binding_matches_key()` and `_button()`
+compare input with it. The plain `xd-compositor` compiles none of the
+OpenGL ones and reports them unavailable.
+
+**Virtual desktops** (`desktops.c`, the grid's maths in `desktops_grid.c`,
+unit-tested). General Options (`always_on` in the table: no Enabled=, no
+check box) sets how many desktops there are across and down, 1 x 1 by
+default, and the keys that switch (Ctrl+Alt+arrows) and carry the active
+window along (Ctrl+Alt+Shift+arrows). Each window has a desktop
+(`view->desktop`, its owner's for a dialog) or is on all (`view->sticky`);
+switching disables the other desktops' window trees and destroys their
+foreign-toplevel handles, so the taskbar, its thumbnails, Alt+Tab,
+Cascade and Tile see only this desktop's windows (and remakes the
+handles, in the order the windows opened, coming back). Focusing a window
+elsewhere shows its desktop. The shell hears of the desktops and each
+window's (xd-window-arranger-v1's `desktops` and `window_desktop`), and
+asks to switch (`switch_desktop`, the taskbar's pager) or to move a
+window (`move_window_to_desktop`, `set_window_sticky`: the window menu's
+Move to Another Workspace and Always on Visible Workspace). Effects
+animate a switch through `xd_desktops_add_animator()`: the desktop is
+current already, and the effect shows the move from the old one.
 
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each

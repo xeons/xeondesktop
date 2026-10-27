@@ -10,3 +10,4 @@
 #ifdef XD_SCENEFX
 XD_EFFECT_IMPL(wobbly_windows)
 #endif
+XD_EFFECT_IMPL(general_options)

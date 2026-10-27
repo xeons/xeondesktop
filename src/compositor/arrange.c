@@ -13,6 +13,7 @@
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 
 #include "../core/alloc.h"
+#include "desktops_grid.h"
 #include "server.h"
 #include "xd-window-arranger-v1-protocol.h"
 
@@ -31,7 +32,9 @@ static xd_server *server_of(struct wl_resource *res) {
 }
 
 /* Windows that take part: mapped, not minimized. */
-static bool arrangeable(const xd_view *view) { return view->mapped && !view->minimized; }
+static bool arrangeable(const xd_view *view) {
+    return view->mapped && !view->minimized && xd_desktops_is_view_shown(view);
+}
 
 static void remember(xd_view *view) {
     view->undo_valid = true;
@@ -403,6 +406,57 @@ bool xd_arrange_power_button(xd_server *server, xd_power_event event) {
     return true;
 }
 
+/* ---- virtual desktops (desktops.c) ---- */
+
+void xd_arrange_desktops_changed(xd_server *server) {
+    struct wl_resource *res = server->arranger_resource;
+    if (res == nullptr ||
+        wl_resource_get_version(res) < XD_WINDOW_ARRANGER_V1_DESKTOPS_SINCE_VERSION)
+        return;
+    const xd_desktop_grid *grid = xd_desktops_get_grid(server);
+    xd_window_arranger_v1_send_desktops(res, (uint32_t)grid->columns, (uint32_t)grid->rows,
+                                        (uint32_t)xd_desktops_get_current(server));
+}
+
+void xd_arrange_view_desktop(xd_view *view) {
+    struct wl_resource *res = view->server->arranger_resource;
+    if (res == nullptr || view->ftl == nullptr ||
+        wl_resource_get_version(res) < XD_WINDOW_ARRANGER_V1_WINDOW_DESKTOP_SINCE_VERSION)
+        return;
+    struct wl_client *client = wl_resource_get_client(res);
+    struct wl_resource *resource;
+    wl_resource_for_each(resource, &view->ftl->resources) {
+        if (wl_resource_get_client(resource) == client)
+            xd_window_arranger_v1_send_window_desktop(res, resource, (uint32_t)view->desktop,
+                                                      view->sticky ? 1 : 0);
+    }
+}
+
+static void handle_switch_desktop(struct wl_client *client, struct wl_resource *res,
+                                  uint32_t index) {
+    (void)client;
+    xd_server *server = server_of(res);
+    if (!server->locked && index < (uint32_t)xd_desktops_get_count(server))
+        xd_desktops_switch_to(server, (int)index, nullptr);
+}
+
+static void handle_move_window_to_desktop(struct wl_client *client, struct wl_resource *res,
+                                          struct wl_resource *toplevel, uint32_t index) {
+    (void)client;
+    xd_server *server = server_of(res);
+    xd_view *view = view_for_handle(server, toplevel);
+    if (view != nullptr && index < (uint32_t)xd_desktops_get_count(server))
+        xd_desktops_move_view(view, (int)index);
+}
+
+static void handle_set_window_sticky(struct wl_client *client, struct wl_resource *res,
+                                     struct wl_resource *toplevel, uint32_t sticky) {
+    (void)client;
+    xd_view *view = view_for_handle(server_of(res), toplevel);
+    if (view != nullptr)
+        xd_desktops_set_sticky(view, sticky != 0);
+}
+
 /* Testing only (a headless compositor has no lid): the global is offered
  * to every client then, and the request ignored otherwise. */
 static void handle_test_lid(struct wl_client *client, struct wl_resource *res, uint32_t closed) {
@@ -427,6 +481,9 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .identify = handle_identify,
     .peek_window = handle_peek_window,
     .test_lid = handle_test_lid,
+    .switch_desktop = handle_switch_desktop,
+    .move_window_to_desktop = handle_move_window_to_desktop,
+    .set_window_sticky = handle_set_window_sticky,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -453,6 +510,10 @@ static void bind_arranger(struct wl_client *client, void *data, uint32_t version
         xd_arrange_keyboard_layout(server); /* the language indicator's start */
         if (server->locked && !server->lock_waiting)
             xd_arrange_session_locked(server, true);
+        xd_arrange_desktops_changed(server);
+        XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+            xd_arrange_view_desktop(view);
+        }
     }
 }
 
@@ -492,7 +553,7 @@ void xd_arrange_session_locked(xd_server *server, bool locked) {
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 11,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 12,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

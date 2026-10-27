@@ -27,6 +27,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../core/alloc.h"
+#include "effects/effects.h"
 #include "grabkeys.h"
 #include "server.h"
 
@@ -149,7 +150,8 @@ static void cycle_step(xd_server *server, bool backwards) {
         if (link == &server->views)
             continue;
         xd_view *view = XD_CONTAINER_OF(link, xd_view, link);
-        if (view->mapped) {
+        /* This desktop's windows only. */
+        if (view->mapped && xd_desktops_is_view_shown(view)) {
             server->cycle_view = view;
             /* Preview the selection by raising it without changing focus. */
             if (!view->minimized)
@@ -207,6 +209,9 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     }
     if (server->locked)
         return false; /* the screen locker gets every other key */
+    /* Desktop Effects' bindings (General Options' desktop switching). */
+    if (xd_effects_key(server, mods, sym))
+        return true;
     /* Win+L: Lock Computer. */
     if (logo && !ctrl && !alt && (sym == XKB_KEY_l || sym == XKB_KEY_L)) {
         server->super_alone = false;
@@ -401,6 +406,7 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
     if (server->cycle_view != nullptr &&
         !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_ALT))
         finish_cycle(server);
+    xd_effects_modifiers(server, wlr_keyboard_get_modifiers(kb->wlr_keyboard));
     /* Win+Space's peek ends with the Windows key. */
     if (server->peeking && !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_LOGO))
         xd_view_peek(server, false);
@@ -1497,6 +1503,9 @@ static bool implicit_grab_motion(xd_server *server, uint32_t time_msec) {
 
 static void process_motion(xd_server *server, uint32_t time_msec) {
     place_drag_icon(server);
+    /* An effect showing every desktop, or turning them, has the pointer. */
+    if (!server->locked && xd_effects_motion(server, time_msec))
+        return;
     switch (server->mode) {
     case XD_CURSOR_MOVE: {
         xd_view *view = server->grab_view;
@@ -1791,6 +1800,13 @@ static void process_button(xd_server *server,
                                        pointer_button_event->button, pointer_button_event->state);
         return;
     }
+    /* Desktop Effects' mouse bindings (Rotate Cube's Ctrl+Alt+drag), and
+     * clicks on what an effect shows over the desktop (Expo). */
+    struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
+    if (xd_effects_button(server, pointer_button_event->button,
+                          pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED,
+                          keyboard != nullptr ? wlr_keyboard_get_modifiers(keyboard) : 0))
+        return;
 
     /* A click ends keyboard move/size where the window is. */
     if (keyboard_grab(server)) {

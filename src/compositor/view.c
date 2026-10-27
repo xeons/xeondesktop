@@ -145,7 +145,8 @@ xd_view *xd_view_focused(xd_server *server) {
     if (wl_list_empty(&server->views) || server->desktop_focus != nullptr)
         return nullptr;
     xd_view *front = XD_CONTAINER_OF(server->views.next, xd_view, link);
-    return front->mapped && !front->minimized ? front : nullptr;
+    return front->mapped && !front->minimized && xd_desktops_is_view_shown(front) ? front
+                                                                                   : nullptr;
 }
 
 /* Places the client surfaces inside the frame. The content tree's origin
@@ -397,6 +398,10 @@ static void raise_family(xd_view *view) {
 
 void xd_view_focus(xd_view *view) {
     xd_server *server = view->server;
+    /* A window on another desktop (activated from elsewhere): that
+     * desktop is shown first. */
+    if (view->mapped && !xd_desktops_is_view_shown(view))
+        xd_desktops_switch_to(server, view->desktop, nullptr);
     xd_view *prev = xd_view_focused(server);
     server->desktop_focus = nullptr;
 
@@ -450,7 +455,7 @@ void xd_view_deactivate_front(xd_server *server) {
 /* Focuses the most recently used visible window, or clears focus. */
 void xd_view_focus_next(xd_server *server) {
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
-        if (view->mapped && !view->minimized) {
+        if (view->mapped && !view->minimized && xd_desktops_is_view_shown(view)) {
             xd_view_focus(view);
             return;
         }
@@ -751,6 +756,7 @@ static void ftl_create(xd_view *view) {
     XD_LISTEN(&view->ftl->events.set_rectangle, view, ftl_set_rectangle,
               handle_ftl_set_rectangle);
     xd_capture_view_shown(view);
+    xd_arrange_view_desktop(view);
 }
 
 static void ftl_destroy(xd_view *view) {
@@ -766,6 +772,27 @@ static void ftl_destroy(xd_view *view) {
     wlr_foreign_toplevel_handle_v1_destroy(view->ftl);
     view->ftl = nullptr;
     view->ftl_output = nullptr;
+}
+
+void xd_view_update_taskbar_button(xd_view *view) {
+    bool wanted =
+        view->mapped && parent_of(view) == nullptr && xd_desktops_is_view_shown(view);
+    if (!wanted) {
+        ftl_destroy(view);
+        return;
+    }
+    if (view->ftl != nullptr)
+        return;
+    /* Back from another desktop: as it is now. */
+    ftl_create(view);
+    wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, view->minimized);
+    wlr_foreign_toplevel_handle_v1_set_fullscreen(view->ftl, view->fullscreen);
+    wlr_foreign_toplevel_handle_v1_set_activated(view->ftl, xd_view_focused(view->server) == view);
+    update_ftl_output(view);
+}
+
+xd_view *xd_view_get_owner(const xd_view *view) {
+    return parent_of(view);
 }
 
 static int fit_span(int pos, int len, int lo, int span) {
@@ -929,6 +956,7 @@ void xd_view_on_map(xd_view *view) {
     xd_view_update_decorations(view);
     /* Owned windows (dialogs) get no taskbar button, as in Windows; nor
      * the Open and Close program sounds. */
+    xd_desktops_view_mapped(view);
     if (parent_of(view) == nullptr) {
         ftl_create(view);
         xd_sound_play_event(XD_SOUND_OPEN_PROGRAM);
@@ -1123,10 +1151,7 @@ static void handle_set_parent(struct wl_listener *listener, [[maybe_unused]] voi
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_parent);
     if (!view->mapped)
         return;
-    if (parent_of(view) != nullptr)
-        ftl_destroy(view);
-    else if (view->ftl == nullptr)
-        ftl_create(view);
+    xd_view_update_taskbar_button(view);
 }
 
 static void set_hung(xd_view *view, bool hung);

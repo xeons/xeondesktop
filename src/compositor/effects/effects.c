@@ -6,11 +6,16 @@
  */
 #include "effects.h"
 
+#include <linux/input-event-codes.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <wlr/render/gles2.h>
 #include <wlr/render/pixman.h>
+#include <wlr/types/wlr_keyboard.h>
 #include <wlr/util/log.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include "../../core/alloc.h"
 #ifdef XD_SCENEFX
@@ -223,4 +228,111 @@ bool xd_effects_is_running(const xd_server *server, const char *id) {
             return effects->running[i].on;
     }
     return false;
+}
+
+/* ---- input ------------------------------------------------------------------ */
+
+bool xd_effects_key(xd_server *server, uint32_t modifiers, uint32_t keysym) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->key != nullptr &&
+            impls[i]->key(server, effects->running[i].state, modifiers, keysym))
+            return true;
+    }
+    return false;
+}
+
+void xd_effects_modifiers(xd_server *server, uint32_t modifiers) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->modifiers != nullptr)
+            impls[i]->modifiers(server, effects->running[i].state, modifiers);
+    }
+}
+
+bool xd_effects_button(xd_server *server, uint32_t button, bool pressed, uint32_t modifiers) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->button != nullptr &&
+            impls[i]->button(server, effects->running[i].state, button, pressed, modifiers))
+            return true;
+    }
+    return false;
+}
+
+bool xd_effects_motion(xd_server *server, uint32_t time_msec) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    bool used = false;
+    /* Every effect sees it (an edge flip and a drag may both care). */
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->motion != nullptr)
+            used = impls[i]->motion(server, effects->running[i].state, time_msec) || used;
+    }
+    return used;
+}
+
+/* ---- bindings --------------------------------------------------------------- */
+
+static constexpr uint32_t BINDING_MODIFIERS =
+    WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT | WLR_MODIFIER_LOGO;
+
+/* X's button numbers, as Compiz wrote mouse bindings, to evdev's. */
+static uint32_t effects_get_button_code(const char *name) {
+    static const uint32_t codes[] = {0, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, 0, 0, 0, 0,
+                                     BTN_SIDE, BTN_EXTRA};
+    if (strncmp(name, "Button", 6) != 0)
+        return 0;
+    char *end = nullptr;
+    long number = strtol(name + 6, &end, 10);
+    if (end == name + 6 || *end != '\0' || number < 1 || number >= (long)XD_ARRAY_LEN(codes))
+        return 0;
+    return codes[number];
+}
+
+xd_effect_binding xd_effects_get_binding(const xd_effects_settings *settings, size_t effect,
+                                         const char *key) {
+    xd_effect_binding binding = {.empty = true};
+    uint32_t parsed = 0;
+    char name[64];
+    if (!xd_effects_parse_binding(xd_effects_get_text(settings, effect, key), &parsed, name,
+                                  sizeof(name)))
+        return binding;
+    binding.modifiers = ((parsed & XD_BINDING_SHIFT) ? WLR_MODIFIER_SHIFT : 0) |
+                        ((parsed & XD_BINDING_CONTROL) ? WLR_MODIFIER_CTRL : 0) |
+                        ((parsed & XD_BINDING_ALT) ? WLR_MODIFIER_ALT : 0) |
+                        ((parsed & XD_BINDING_SUPER) ? WLR_MODIFIER_LOGO : 0);
+    binding.button = effects_get_button_code(name);
+    xkb_keysym_t keysym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+    binding.keysym = keysym != XKB_KEY_NoSymbol ? xkb_keysym_to_lower(keysym) : 0;
+    binding.empty = binding.button == 0 && binding.keysym == 0;
+    return binding;
+}
+
+bool xd_effects_binding_matches_key(const xd_effect_binding *binding, uint32_t modifiers,
+                                    uint32_t keysym) {
+    if (binding->empty || binding->keysym == 0 ||
+        (modifiers & BINDING_MODIFIERS) != binding->modifiers)
+        return false;
+    uint32_t lower = xkb_keysym_to_lower(keysym);
+    if (lower == XKB_KEY_ISO_Left_Tab)
+        lower = XKB_KEY_Tab;
+    return lower == binding->keysym;
+}
+
+bool xd_effects_binding_matches_button(const xd_effect_binding *binding, uint32_t modifiers,
+                                       uint32_t button) {
+    return !binding->empty && binding->button != 0 && binding->button == button &&
+           (modifiers & BINDING_MODIFIERS) == binding->modifiers;
+}
+
+bool xd_effects_binding_is_held(const xd_effect_binding *binding, uint32_t modifiers) {
+    return !binding->empty && (modifiers & binding->modifiers) == binding->modifiers;
 }
