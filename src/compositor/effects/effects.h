@@ -50,7 +50,7 @@ typedef enum xd_effect_input_kind : uint8_t {
 typedef struct xd_effect_input {
     xd_effect_input_kind kind;
     uint32_t modifiers; /* xd_binding_modifier bits held */
-    uint32_t keysym;    /* KEY: lower case */
+    uint32_t keysym;    /* KEY: lower case, Shift+Tab as Tab */
     uint32_t button;    /* BUTTON: BTN_LEFT... (linux/input-event-codes.h) */
     bool pressed;       /* KEY, BUTTON */
     double delta;       /* AXIS: positive is down (towards the user) */

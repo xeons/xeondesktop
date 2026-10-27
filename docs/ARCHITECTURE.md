@@ -371,6 +371,13 @@ each frame (an unchanged one costs nothing), which also restores them
 after an OpenGL effect or Aero Peek, whose own are left alone while it
 shows.
 
+**Ring Switcher** (`ring.c`, the ellipse in `ring_model.c`, unit-tested)
+is Compiz's ring plugin, beside Alt+Tab rather than in its place: the
+windows' mirrors on an ellipse over the darkened monitor, smaller and
+fainter towards the back, turned with Scale's velocity model (in degrees)
+to the one picked, its title drawn with the theme's caption font below.
+Its key's modifiers (but Shift) keep it open; letting go switches.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

@@ -306,6 +306,9 @@ bool xd_effects_input(xd_server *server, xd_effect_input *input) {
         return false;
     input->modifiers = effects_get_modifiers(server);
     input->keysym = xkb_keysym_to_lower(input->keysym);
+    /* Shift+Tab is Tab, as bindings name it. */
+    if (input->keysym == XKB_KEY_ISO_Left_Tab)
+        input->keysym = XKB_KEY_Tab;
     input->x = server->cursor->x;
     input->y = server->cursor->y;
     /* Moves and modifier changes are everyone's to see. */

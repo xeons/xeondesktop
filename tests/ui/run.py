@@ -1349,6 +1349,34 @@ def window_opacity_inactive(s):
     s.check(opaque.differs(both, run_box) < 0.02, "and up again, opaque")
 
 
+@scenario(setup=effects_setup("[RingSwitcher]\nEnabled=true\n"))
+def ring_switcher_thumbnails(s):
+    """Ring Switcher: Super+Tab, the Windows key held, shows the windows'
+    thumbnails over the darkened screen, the next window's in front with
+    its title below; letting go of the Windows key switches to it."""
+    empty = s.settle("desktop")
+    s.inject("move", WIDTH - 20, 300)
+    windows = open_two_windows(s)
+    # One xd-inject holds the key throughout (its keyboard goes with it).
+    held = s.launch(s.tool("xd-inject"), "hold", "super", "key", "Tab", "sleep", "4000",
+                    "release", "super")
+    time.sleep(1.0)
+    ring = s.settle("ring", timeout=2.5)
+    s.check(darker(ring.pixel(3, 3), empty.pixel(3, 3)), "the screen is darkened")
+    s.check(ring.differs(windows, (0, 0, WIDTH, HEIGHT - 40)) > 0.2, "the thumbnails show")
+    # The front thumbnail, below the middle, is bright on the dark screen.
+    front = bright_runs(ring, ring.pixel(3, HEIGHT // 2 + 100), HEIGHT // 2 + 100)
+    s.log(f"across the front: {front}")
+    s.check(len(front) >= 1, f"the front thumbnail shows ({front})")
+    s.check(active_title(s) == "Run", "Run is still active meanwhile")
+    held.wait(timeout=20)
+    s.wait(lambda: active_title(s) == "Control Panel", "Control Panel to be switched to")
+    after = s.settle("after")
+    s.check(not darker(after.pixel(3, 3), empty.pixel(3, 3), by=8), "the ring is gone")
+    s.inject("key", "super+Tab")
+    s.wait(lambda: active_title(s) == "Run", "Super+Tab alone to switch back to Run")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

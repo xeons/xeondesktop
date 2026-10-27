@@ -4,6 +4,7 @@
  * CHECK.
  */
 #include "../src/compositor/effects/animations_model.h"
+#include "../src/compositor/effects/ring_model.h"
 #include "../src/compositor/effects/scale_model.h"
 
 static bool rects_overlap(xd_effect_rect left, xd_effect_rect right) {
@@ -144,8 +145,34 @@ static void test_animations_model(void) {
     CHECK(halfway.y > 50 && halfway.y < 740 && halfway.opacity == 1);
 }
 
+/* Ring Switcher: the window picked at the front, at the bottom, largest
+ * and brightest; those behind smaller and dimmer; round the ends. */
+static void test_ring_model(void) {
+    const xd_effect_rect ring = {100, 200, 600, 200}; /* centre 400, 300 */
+    xd_ring_item items[4];
+    xd_ring_layout(4, 1.0, ring, 0.4, 0.5, items);
+    CHECK(fabs(items[1].x - 400) < 1e-9 && fabs(items[1].y - 400) < 1e-9);
+    CHECK(items[1].scale == 1.0 && items[1].brightness == 1.0 && items[1].depth == 1.0);
+    /* The one opposite is at the back, top middle: the smallest. */
+    CHECK(fabs(items[3].x - 400) < 1e-9 && fabs(items[3].y - 200) < 1e-9);
+    CHECK(fabs(items[3].scale - 0.4) < 1e-9 && fabs(items[3].brightness - 0.5) < 1e-9);
+    /* The sides, halfway. */
+    CHECK(fabs(items[2].x - 700) < 1e-9 && fabs(items[0].x - 100) < 1e-9);
+    CHECK(fabs(items[0].depth - 0.5) < 1e-9 && items[0].scale > 0.4 && items[0].scale < 1);
+    /* Half a step on, two share the front. */
+    xd_ring_layout(4, 1.5, ring, 0.4, 0.5, items);
+    CHECK(fabs(items[1].depth - items[2].depth) < 1e-9 && items[1].x < 400 && items[2].x > 400);
+    /* One window: at the front. */
+    xd_ring_layout(1, 0, ring, 0.4, 0.5, items);
+    CHECK(fabs(items[0].y - 400) < 1e-9 && items[0].scale == 1.0);
+    CHECK(xd_ring_step_index(0, -1, 4) == 3 && xd_ring_step_index(3, 1, 4) == 0);
+    CHECK(xd_ring_step_index(1, 9, 4) == 2 && xd_ring_step_index(1, -9, 4) == 0);
+    CHECK(xd_ring_step_index(0, 1, 0) == 0);
+}
+
 static void test_effects_scene(void) {
     test_scale_layout();
     test_scale_motion();
     test_animations_model();
+    test_ring_model();
 }
