@@ -1061,13 +1061,27 @@ static GtkWidget *new_look_in(xd_chooser *chooser) {
     chooser->look_in_store =
         gtk_list_store_new(LOOK_COUNT, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_FILE, G_TYPE_INT);
     GtkWidget *combo = gtk_combo_box_new_with_model(GTK_TREE_MODEL(chooser->look_in_store));
+    /* The indent is an empty cell of its own: as the icon's padding it
+     * went on both sides, pushing deeper folders' names away from their
+     * icons. */
+    GtkCellRenderer *indent = gtk_cell_renderer_text_new();
+    g_object_set(indent, "xpad", 0, "ypad", 0, nullptr);
+    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(combo), indent, FALSE);
+    gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(combo), indent, "width", LOOK_INDENT,
+                                   nullptr);
     GtkCellRenderer *icon = gtk_cell_renderer_pixbuf_new();
+    g_object_set(icon, "xpad", 2, nullptr);
     gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(combo), icon, FALSE);
-    gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(combo), icon, "gicon", LOOK_ICON, "xpad",
-                                   LOOK_INDENT, nullptr);
+    gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(combo), icon, "gicon", LOOK_ICON, nullptr);
     GtkCellRenderer *text = gtk_cell_renderer_text_new();
     gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(combo), text, TRUE);
     gtk_cell_layout_set_attributes(GTK_CELL_LAYOUT(combo), text, "text", LOOK_NAME, nullptr);
+    /* Packed cells are as wide in every row as in the widest (fixed size),
+     * which would give every row the deepest one's indent. */
+    GtkCellArea *area = gtk_cell_layout_get_area(GTK_CELL_LAYOUT(combo));
+    GtkCellRenderer *cells[] = {indent, icon, text};
+    for (size_t i = 0; i < G_N_ELEMENTS(cells); i++)
+        gtk_cell_area_cell_set(area, cells[i], "fixed-size", FALSE, nullptr);
     g_signal_connect(combo, "changed", G_CALLBACK(on_look_in_changed), chooser);
     chooser->look_in = combo;
     return combo;
@@ -1210,8 +1224,9 @@ static GtkWidget *build_dialog(xd_chooser *chooser, const xd_settings *settings,
     GtkWidget *caption = new_caption(look_caption, look_in);
     gtk_widget_set_size_request(caption, 86, -1);
     gtk_box_pack_start(GTK_BOX(look_row), caption, FALSE, FALSE, 0);
+    /* Look in takes the row's slack; the search box keeps to the right. */
     gtk_widget_set_size_request(look_in, 230, -1);
-    gtk_box_pack_start(GTK_BOX(look_row), look_in, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(look_row), look_in, TRUE, TRUE, 0);
     chooser->back_button = new_tool_button("go-previous", "Go To Last Folder Visited",
                                            G_CALLBACK(on_back_clicked), chooser);
     chooser->up_button =
@@ -1225,8 +1240,10 @@ static GtkWidget *build_dialog(xd_chooser *chooser, const xd_settings *settings,
                        0);
     chooser->search = gtk_search_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(chooser->search), 12);
+    gtk_widget_set_size_request(chooser->search, 150, -1);
     g_signal_connect(chooser->search, "search-changed", G_CALLBACK(on_search_changed), chooser);
-    gtk_box_pack_end(GTK_BOX(look_row), chooser->search, TRUE, TRUE, 0);
+    gtk_widget_set_margin_start(chooser->search, 8);
+    gtk_box_pack_end(GTK_BOX(look_row), chooser->search, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(top), look_row, FALSE, FALSE, 0);
 
     GtkWidget *middle = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
