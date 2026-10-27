@@ -45,9 +45,13 @@ polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
 (Network Connections), PackageKit and Flatpak (Add or Remove Programs),
 libcups, SANE and libgphoto2 (printers, scanners, cameras), libsystemd,
 libxcursor (pointer previews), libarchive (Send To > Compressed Folder)
-and NUT's libupsclient (Power Options' UPS tab).
+NUT's libupsclient (Power Options' UPS tab) and xdg-desktop-portal's
+interface files (the Open and Save As dialogs).
 At run time, Xwayland (`xorg-xwayland`) runs X11 applications; without it
-only Wayland ones work.
+only Wayland ones work. xdg-desktop-portal gives Flatpaks, GTK 4 programs,
+Firefox and Chromium our Open and Save As dialogs
+(xdg-desktop-portal-xeondesktop); GTK 3 programs that build GTK's own
+dialog keep it, themed.
 Fonts: Windows' fonts are replaced by the closest freely packaged ones,
 DejaVu Sans Condensed for Tahoma (its width and shapes), Source Sans 3 for
 Trebuchet MS (Luna captions) and Roboto Condensed for Franklin Gothic (XP's

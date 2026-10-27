@@ -377,9 +377,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Manager and input methods by the installed program they ran when
       connecting, refused if made to load other code. UI test
       sandbox_globals (tools/xd-globals).
-- [ ] Window parenting (xdg-foreign, xdg-dialog): portal dialogs aren't
-      tied to the window of the Flatpak program that asked, and dialogs
-      can't be marked modal.
+- [~] Window parenting: xdg-foreign (v1 and v2) ties portal dialogs to
+      the program's window that asked (centred over it, owned, no taskbar
+      button). Not done: xdg-dialog, so dialogs can't be marked modal and
+      the owner isn't blocked.
 - [ ] Icons programs send for their windows (xdg-toplevel-icon), for those
       without a .desktop file.
 - [ ] Minor: DRM leasing (VR headsets), HDR colour management
@@ -1076,13 +1077,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       every real login, which other desktops sharing that key also see.
       Our GTK apps unset GTK_THEME, so programs started from xd-files fall
       back to the GSettings GTK theme.
-- [ ] Our own file dialogs: an xdg-desktop-portal FileChooser backend
-      (xdg-desktop-portal-xeondesktop) with XP's and 7's Open and Save As
-      dialogs, from xd-files' folder view (Places bar, Look in, file
-      types), used by Flatpaks, GTK4, Firefox and Chromium, and Qt with
-      QT_QPA_PLATFORMTHEME=xdgdesktopportal; GTK3 programs with
-      GtkFileChooserNative through GTK_USE_PORTAL=1. Plain
-      GtkFileChooserDialog stays GTK's (themed).
+- [x] Our own file dialogs: an xdg-desktop-portal FileChooser backend
+      (xdg-desktop-portal-xeondesktop), one Open/Save As form in every
+      style: XP's Places bar, Look in, File name and Files of type around
+      xd-files' folder view, with 7's search box and Select Folder. Used
+      by Flatpaks, GTK 4 (GDK_DEBUG=portals), Firefox, Chromium and GTK 3's
+      GtkFileChooserNative (GTK_USE_PORTAL=1), and by our own apps (all
+      but Map Network Drive's smb:// Browse). Tested headless, including a
+      GTK 4 FileDialog through a real xdg-desktop-portal. Not done: plain
+      GtkFileChooserDialog stays GTK's (themed); Qt keeps GTK's dialog
+      (QT_QPA_PLATFORMTHEME=xdgdesktopportal would lose the gtk3 palette).
+      Unsure: "Folder:" in folder pickers, No as the replace prompt's
+      default, the Places bar's place in the Tab order.
 - [ ] GTK4/libadwaita: a generated ~/.config/gtk-4.0/gtk.css from the
       theme package (colours, fonts, buttons, as far as libadwaita lets
       it), written only while ours is in use.
