@@ -11149,14 +11149,14 @@ static void test_effects_support(void) {
 static void test_wobbly_model(void) {
     xd_wobbly_model model;
     xd_wobbly_init(&model, 100, 100, 400, 300, 8.0, 3.0);
-    double x = 0, y = 0;
-    xd_wobbly_evaluate(&model, 0, 0, &x, &y);
-    CHECK(fabs(x - 100) < 1e-9 && fabs(y - 100) < 1e-9);
-    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
-    CHECK(fabs(x - 500) < 1e-9 && fabs(y - 400) < 1e-9);
+    double point_x = 0, point_y = 0;
+    xd_wobbly_evaluate(&model, 0, 0, &point_x, &point_y);
+    CHECK(fabs(point_x - 100) < 1e-9 && fabs(point_y - 100) < 1e-9);
+    xd_wobbly_evaluate(&model, 1, 1, &point_x, &point_y);
+    CHECK(fabs(point_x - 500) < 1e-9 && fabs(point_y - 400) < 1e-9);
     /* At rest the patch is the rectangle itself, evenly. */
-    xd_wobbly_evaluate(&model, 0.25, 0.5, &x, &y);
-    CHECK(fabs(x - 200) < 1e-9 && fabs(y - 250) < 1e-9);
+    xd_wobbly_evaluate(&model, 0.25, 0.5, &point_x, &point_y);
+    CHECK(fabs(point_x - 200) < 1e-9 && fabs(point_y - 250) < 1e-9);
     CHECK(!xd_wobbly_step(&model, 0.016));
 
     /* Grabbed by the title bar and dragged right, a frame at a time. */
@@ -11168,8 +11168,8 @@ static void test_wobbly_model(void) {
         xd_wobbly_set_rest(&model, rest_x, 100, 400, 300);
         CHECK(xd_wobbly_step(&model, 0.016));
     }
-    xd_wobbly_evaluate(&model, 0, 0, &x, &y);
-    CHECK(fabs(x - rest_x) < 1e-9 && fabs(y - 100) < 1e-9); /* held at the pointer */
+    xd_wobbly_evaluate(&model, 0, 0, &point_x, &point_y);
+    CHECK(fabs(point_x - rest_x) < 1e-9 && fabs(point_y - 100) < 1e-9); /* held at the pointer */
     double far_x = 0, far_y = 0;
     xd_wobbly_evaluate(&model, 1, 1, &far_x, &far_y);
     CHECK(far_x < rest_x + 400 - 20); /* the far corner lags behind */
@@ -11187,21 +11187,21 @@ static void test_wobbly_model(void) {
     for (; moving && frames < 300; frames++)
         moving = xd_wobbly_step(&model, 0.016);
     CHECK(!moving && frames > 5);
-    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
-    CHECK(fabs(x - (rest_x + 400)) < 1e-9 && fabs(y - 400) < 1e-9);
+    xd_wobbly_evaluate(&model, 1, 1, &point_x, &point_y);
+    CHECK(fabs(point_x - (rest_x + 400)) < 1e-9 && fabs(point_y - 400) < 1e-9);
 
     /* Maximized: it wobbles from the old shape into the new one. */
     xd_wobbly_set_rest(&model, 0, 0, 1024, 740);
     xd_wobbly_displace(&model, rest_x, 100, 400, 300, 0.15);
-    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
-    CHECK(x < 1024 - 50);
+    xd_wobbly_evaluate(&model, 1, 1, &point_x, &point_y);
+    CHECK(point_x < 1024 - 50);
     moving = xd_wobbly_step(&model, 0.016);
     CHECK(moving);
     for (frames = 0; moving && frames < 300; frames++)
         moving = xd_wobbly_step(&model, 0.016);
     CHECK(!moving && frames > 5);
-    xd_wobbly_evaluate(&model, 1, 1, &x, &y);
-    CHECK(fabs(x - 1024) < 1e-9 && fabs(y - 740) < 1e-9);
+    xd_wobbly_evaluate(&model, 1, 1, &point_x, &point_y);
+    CHECK(fabs(point_x - 1024) < 1e-9 && fabs(point_y - 740) < 1e-9);
 
     /* The stiffest springs, the least friction, a hard shiver and a long
      * stall: it stays finite and near the window. */

@@ -905,15 +905,20 @@ def check_wobbles(s, empty, box):
         steps += ["move", cx + 15 * i, cy]
     steps += ["sleep", 1500, "up"]
     drag = s.launch(s.tool("xd-inject"), *map(str, steps))
-    # A few pictures while it moves: the most bent one counts.
+    # Pictures while it moves (up to ten, till it's bent clearly): the
+    # most bent one counts.
     time.sleep(0.3)
     bent = []
-    for _ in range(4):
+    for _ in range(10):
+        if drag.poll() is not None:
+            break
         shot = s.shot("dragging")
         edges = [left_edge(shot, empty, row) for row in rows]
         s.log(f"left edge mid-drag at rows {rows}: {edges}")
         if None not in edges:
             bent.append(edges)
+            if max(edges) - min(edges) >= 8 and edges[2] < edges[0]:
+                break
     edges = max(bent, key=lambda e: max(e) - min(e), default=[None])
     s.check(None not in edges and max(edges) - min(edges) >= 4,
             f"mid-drag the left edge isn't straight ({edges})")

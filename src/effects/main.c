@@ -891,7 +891,8 @@ static GtkWidget *panel_build_tile(panel *app, effect_tile *tile) {
     gtk_box_pack_start(GTK_BOX(box), button, TRUE, TRUE, 0);
     g_autofree char *tooltip =
         available ? g_strdup(info->description)
-                  : g_strdup_printf("%s\n\n%s", info->description, panel_get_unavailable_reason(app));
+                  : g_strdup_printf("%s\n\n%s", info->description,
+                                    panel_get_unavailable_reason(app));
     gtk_widget_set_tooltip_text(box, tooltip);
     gtk_widget_set_size_request(box, 200, -1);
     return box;
@@ -903,7 +904,8 @@ static size_t *panel_sort_by_name(const xd_effects_settings *settings, size_t co
     for (size_t i = 0; i < count; i++) {
         size_t j = i;
         const char *name = xd_effects_get_info(settings, i)->name;
-        while (j > 0 && g_utf8_collate(xd_effects_get_info(settings, order[j - 1])->name, name) > 0) {
+        while (j > 0 &&
+               g_utf8_collate(xd_effects_get_info(settings, order[j - 1])->name, name) > 0) {
             order[j] = order[j - 1];
             j--;
         }

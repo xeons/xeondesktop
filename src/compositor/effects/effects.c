@@ -29,7 +29,7 @@ static const xd_effect_impl *const impls[] = {
 
 /* A function, not a constant: the plain build's loops over none would
  * be "always false" comparisons. */
-static size_t count_impls(void) {
+static size_t effects_count_impls(void) {
     return XD_ARRAY_LEN(impls) - 1;
 }
 
@@ -49,7 +49,7 @@ struct xd_effects {
     char display[64]; /* the support file's, once published */
 };
 
-static double now_seconds(void) {
+static double effects_get_now(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
@@ -57,9 +57,9 @@ static double now_seconds(void) {
 
 /* Turns effects on and off as the settings say, and tells those on their
  * options. */
-static void apply_settings(xd_effects *effects) {
+static void effects_apply_settings(xd_effects *effects) {
     xd_server *server = effects->server;
-    for (size_t i = 0; i < count_impls(); i++) {
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         const xd_effect_impl *impl = impls[i];
         running_effect *running = &effects->running[i];
         const xd_effect_info *info = xd_effects_get_info(effects->settings, running->index);
@@ -85,19 +85,19 @@ static void apply_settings(xd_effects *effects) {
     }
 }
 
-static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uint32_t mask,
+static int effects_handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uint32_t mask,
                                    void *data) {
     xd_effects *effects = data;
     if (!xd_effects_has_changed(effects->watch_fd))
         return 0;
     xd_effects_load(effects->settings);
-    apply_settings(effects);
+    effects_apply_settings(effects);
     return 0;
 }
 
 #ifndef XD_SCENEFX
 /* Why the plain build can't draw OpenGL effects, in the user's words. */
-static void explain_plain_build(const xd_server *server, xd_effects_support *support) {
+static void effects_explain_plain_build(const xd_server *server, xd_effects_support *support) {
     const char *reason =
         wlr_renderer_is_pixman(server->renderer)
             ? "The desktop is drawn in software on this computer (no graphics card the "
@@ -119,14 +119,14 @@ void xd_effects_init(xd_server *server) {
     effects->settings = xd_effects_create_settings();
     effects->watch_fd = -1;
     server->effects = effects;
-    for (size_t i = 0; i < count_impls(); i++) {
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         bool known = xd_effects_find(effects->settings, impls[i]->id, &effects->running[i].index);
         XD_ASSERT(known); /* every effect has its table entry */
     }
 #ifdef XD_SCENEFX
     effects->support.opengl = xd_glfx_init(server, &effects->support);
 #else
-    explain_plain_build(server, &effects->support);
+    effects_explain_plain_build(server, &effects->support);
 #endif
     wlr_log(WLR_INFO, "effects: OpenGL effects %s (%s)",
             effects->support.opengl ? "available" : "unavailable", effects->support.renderer);
@@ -135,8 +135,8 @@ void xd_effects_init(xd_server *server) {
     effects->watch_fd = xd_effects_watch();
     if (effects->watch_fd >= 0)
         effects->watch = wl_event_loop_add_fd(server->loop, effects->watch_fd, WL_EVENT_READABLE,
-                                              handle_settings_changed, effects);
-    apply_settings(effects);
+                                              effects_handle_settings_changed, effects);
+    effects_apply_settings(effects);
 }
 
 void xd_effects_publish(xd_server *server, const char *display) {
@@ -152,7 +152,7 @@ void xd_effects_finish(xd_server *server) {
     xd_effects *effects = server->effects;
     if (effects == nullptr)
         return;
-    for (size_t i = 0; i < count_impls(); i++) {
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         running_effect *running = &effects->running[i];
         if (running->on && impls[i]->disable != nullptr)
             impls[i]->disable(server, running->state);
@@ -181,7 +181,7 @@ void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
     xd_window_event event = {.kind = kind, .view = view};
     if (from != nullptr)
         event.from = *from;
-    for (size_t i = 0; i < count_impls(); i++) {
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         if (effects->running[i].on && impls[i]->window_event != nullptr)
             impls[i]->window_event(server, effects->running[i].state, &event);
     }
@@ -198,8 +198,8 @@ void xd_effects_output_frame(xd_output *output) {
     xd_effects *effects = server->effects;
     if (effects == nullptr)
         return;
-    double now = now_seconds();
-    for (size_t i = 0; i < count_impls(); i++) {
+    double now = effects_get_now();
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         if (effects->running[i].on && impls[i]->frame != nullptr)
             impls[i]->frame(server, effects->running[i].state, output, now);
     }
@@ -218,7 +218,7 @@ bool xd_effects_is_running(const xd_server *server, const char *id) {
     const xd_effects *effects = server->effects;
     if (effects == nullptr)
         return false;
-    for (size_t i = 0; i < count_impls(); i++) {
+    for (size_t i = 0; i < effects_count_impls(); i++) {
         if (strcmp(impls[i]->id, id) == 0)
             return effects->running[i].on;
     }

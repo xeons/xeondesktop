@@ -35,14 +35,14 @@ typedef struct xd_wobbly_model {
 } xd_wobbly_model;
 
 /* At rest on the rectangle. */
-void xd_wobbly_init(xd_wobbly_model *model, double x, double y, double width, double height,
+void xd_wobbly_init(xd_wobbly_model *model, double left, double top, double width, double height,
                     double spring, double friction);
 /* The window moved or changed size: where the sheet settles. */
-void xd_wobbly_set_rest(xd_wobbly_model *model, double x, double y, double width,
+void xd_wobbly_set_rest(xd_wobbly_model *model, double left, double top, double width,
                         double height);
-/* Holds the mass nearest (x, y) at its place on the window; released,
+/* Holds the mass nearest (pointer_x, pointer_y) at its place on the window; released,
  * the sheet springs back to the window. */
-void xd_wobbly_grab(xd_wobbly_model *model, double x, double y);
+void xd_wobbly_grab(xd_wobbly_model *model, double pointer_x, double pointer_y);
 void xd_wobbly_release(xd_wobbly_model *model);
 /* Each mass gets a push of up to `strength` layout units a step in a
  * random direction (Compiz's "shiver"). */
@@ -55,9 +55,12 @@ void xd_wobbly_displace(xd_wobbly_model *model, double from_x, double from_y, do
 /* Advances by `seconds`; false once it has come to rest (and snapped to
  * the rectangle), which a held sheet never does. */
 bool xd_wobbly_step(xd_wobbly_model *model, double seconds);
-/* Where the window's point (u, v), each 0..1 across it, is drawn. */
-void xd_wobbly_evaluate(const xd_wobbly_model *model, double u, double v, double *x, double *y);
+/* Where the window's point (across, down), each 0..1 from its top left,
+ * is drawn. */
+void xd_wobbly_evaluate(const xd_wobbly_model *model, double across, double down,
+                        double *out_x, double *out_y);
 /* The rest position of mass `index`. */
-void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *x, double *y);
+void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *out_x,
+                              double *out_y);
 
 #endif

@@ -19,13 +19,14 @@ static constexpr double MAX_BACKLOG_SECONDS = 0.2;
 static constexpr double REST_SPEED = 0.02;
 static constexpr double REST_DISTANCE = 0.3;
 
-void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *x, double *y) {
+void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *out_x,
+                              double *out_y) {
     int column = index % XD_WOBBLY_SIDE, row = index / XD_WOBBLY_SIDE;
-    *x = model->rest_x + model->rest_width * column / (XD_WOBBLY_SIDE - 1);
-    *y = model->rest_y + model->rest_height * row / (XD_WOBBLY_SIDE - 1);
+    *out_x = model->rest_x + model->rest_width * column / (XD_WOBBLY_SIDE - 1);
+    *out_y = model->rest_y + model->rest_height * row / (XD_WOBBLY_SIDE - 1);
 }
 
-void xd_wobbly_init(xd_wobbly_model *model, double x, double y, double width, double height,
+void xd_wobbly_init(xd_wobbly_model *model, double left, double top, double width, double height,
                     double spring, double friction) {
     *model = (xd_wobbly_model){
         .spring = spring,
@@ -33,26 +34,27 @@ void xd_wobbly_init(xd_wobbly_model *model, double x, double y, double width, do
         .grabbed = -1,
         .seed = 0x9e3779b9u,
     };
-    xd_wobbly_set_rest(model, x, y, width, height);
+    xd_wobbly_set_rest(model, left, top, width, height);
     for (int i = 0; i < XD_WOBBLY_POINTS; i++)
         xd_wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
 }
 
-void xd_wobbly_set_rest(xd_wobbly_model *model, double x, double y, double width,
+void xd_wobbly_set_rest(xd_wobbly_model *model, double left, double top, double width,
                         double height) {
-    model->rest_x = x;
-    model->rest_y = y;
+    model->rest_x = left;
+    model->rest_y = top;
     model->rest_width = width;
     model->rest_height = height;
 }
 
-void xd_wobbly_grab(xd_wobbly_model *model, double x, double y) {
+void xd_wobbly_grab(xd_wobbly_model *model, double pointer_x, double pointer_y) {
     int nearest = 0;
     double best = HUGE_VAL;
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         double rest_x = 0, rest_y = 0;
         xd_wobbly_get_rest_point(model, i, &rest_x, &rest_y);
-        double distance = (rest_x - x) * (rest_x - x) + (rest_y - y) * (rest_y - y);
+        double distance = (rest_x - pointer_x) * (rest_x - pointer_x) +
+                          (rest_y - pointer_y) * (rest_y - pointer_y);
         if (distance < best) {
             best = distance;
             nearest = i;
@@ -66,15 +68,15 @@ void xd_wobbly_release(xd_wobbly_model *model) {
 }
 
 /* -1..1, from a small LCG: shivers needn't be random, only uneven. */
-static double next_random(xd_wobbly_model *model) {
+static double wobbly_get_random(xd_wobbly_model *model) {
     model->seed = model->seed * 1664525u + 1013904223u;
     return (double)(model->seed >> 8) / (double)(1u << 23) - 1.0;
 }
 
 void xd_wobbly_shiver(xd_wobbly_model *model, double strength) {
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
-        model->points[i].vx += next_random(model) * strength;
-        model->points[i].vy += next_random(model) * strength;
+        model->points[i].vx += wobbly_get_random(model) * strength;
+        model->points[i].vy += wobbly_get_random(model) * strength;
     }
 }
 
@@ -91,7 +93,7 @@ void xd_wobbly_displace(xd_wobbly_model *model, double from_x, double from_y, do
     }
 }
 
-static void step_once(xd_wobbly_model *model) {
+static void wobbly_step_once(xd_wobbly_model *model) {
     double force_x[XD_WOBBLY_POINTS] = {0}, force_y[XD_WOBBLY_POINTS] = {0};
     double rest_x[XD_WOBBLY_POINTS], rest_y[XD_WOBBLY_POINTS];
     for (int i = 0; i < XD_WOBBLY_POINTS; i++)
@@ -100,8 +102,8 @@ static void step_once(xd_wobbly_model *model) {
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         int neighbours[2] = {i % XD_WOBBLY_SIDE + 1 < XD_WOBBLY_SIDE ? i + 1 : -1,
                              i + XD_WOBBLY_SIDE < XD_WOBBLY_POINTS ? i + XD_WOBBLY_SIDE : -1};
-        for (size_t n = 0; n < 2; n++) {
-            int j = neighbours[n];
+        for (size_t k = 0; k < 2; k++) {
+            int j = neighbours[k];
             if (j < 0)
                 continue;
             double dx = (model->points[j].x - model->points[i].x) - (rest_x[j] - rest_x[i]);
@@ -133,7 +135,7 @@ static void step_once(xd_wobbly_model *model) {
     }
 }
 
-static bool is_at_rest(const xd_wobbly_model *model) {
+static bool wobbly_is_at_rest(const xd_wobbly_model *model) {
     if (model->grabbed >= 0)
         return false;
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
@@ -152,7 +154,7 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds) {
         seconds = 0;
     model->leftover = XD_MIN(model->leftover + seconds, MAX_BACKLOG_SECONDS);
     while (model->leftover >= STEP_SECONDS) {
-        step_once(model);
+        wobbly_step_once(model);
         model->leftover -= STEP_SECONDS;
     }
     /* A model gone wild (it can't at the table's ranges) settles at once
@@ -168,7 +170,7 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds) {
             return false;
         }
     }
-    if (!is_at_rest(model))
+    if (!wobbly_is_at_rest(model))
         return true;
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         xd_wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
@@ -177,26 +179,27 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds) {
     return false;
 }
 
-static void bernstein(double t, double out[XD_WOBBLY_SIDE]) {
-    double s = 1.0 - t;
-    out[0] = s * s * s;
-    out[1] = 3.0 * t * s * s;
-    out[2] = 3.0 * t * t * s;
-    out[3] = t * t * t;
+static void wobbly_get_bernstein(double along, double out[XD_WOBBLY_SIDE]) {
+    double rest = 1.0 - along;
+    out[0] = rest * rest * rest;
+    out[1] = 3.0 * along * rest * rest;
+    out[2] = 3.0 * along * along * rest;
+    out[3] = along * along * along;
 }
 
-void xd_wobbly_evaluate(const xd_wobbly_model *model, double u, double v, double *x, double *y) {
-    double across[XD_WOBBLY_SIDE], down[XD_WOBBLY_SIDE];
-    bernstein(XD_CLAMP(u, 0.0, 1.0), across);
-    bernstein(XD_CLAMP(v, 0.0, 1.0), down);
+void xd_wobbly_evaluate(const xd_wobbly_model *model, double across, double down,
+                        double *out_x, double *out_y) {
+    double weights_x[XD_WOBBLY_SIDE], weights_y[XD_WOBBLY_SIDE];
+    wobbly_get_bernstein(XD_CLAMP(across, 0.0, 1.0), weights_x);
+    wobbly_get_bernstein(XD_CLAMP(down, 0.0, 1.0), weights_y);
     double sum_x = 0, sum_y = 0;
     for (int row = 0; row < XD_WOBBLY_SIDE; row++) {
         for (int column = 0; column < XD_WOBBLY_SIDE; column++) {
-            double weight = down[row] * across[column];
+            double weight = weights_y[row] * weights_x[column];
             sum_x += weight * model->points[row * XD_WOBBLY_SIDE + column].x;
             sum_y += weight * model->points[row * XD_WOBBLY_SIDE + column].y;
         }
     }
-    *x = sum_x;
-    *y = sum_y;
+    *out_x = sum_x;
+    *out_y = sum_y;
 }

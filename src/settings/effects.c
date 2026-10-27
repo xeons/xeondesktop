@@ -62,12 +62,12 @@ const char *xd_effects_get_option_group(const xd_effect_option *option) {
     return option->group != nullptr ? option->group : "General";
 }
 
-static bool has_text(xd_effect_option_type type) {
+static bool effects_has_text(xd_effect_option_type type) {
     return type == XD_EFFECT_OPTION_KEY || type == XD_EFFECT_OPTION_BUTTON ||
            type == XD_EFFECT_OPTION_MATCH;
 }
 
-static size_t choice_count(const xd_effect_option *option) {
+static size_t effects_count_choices(const xd_effect_option *option) {
     size_t count = 0;
     while (option->choice_names != nullptr && option->choice_names[count] != nullptr)
         count++;
@@ -76,7 +76,7 @@ static size_t choice_count(const xd_effect_option *option) {
 
 /* ---- values --------------------------------------------------------------------- */
 
-static bool parse_bool(const char *text, bool *out) {
+static bool effects_parse_bool(const char *text, bool *out) {
     static const char *const yes[] = {"true", "1", "yes", "on"};
     static const char *const no[] = {"false", "0", "no", "off"};
     for (size_t i = 0; i < XD_ARRAY_LEN(yes); i++) {
@@ -92,7 +92,7 @@ static bool parse_bool(const char *text, bool *out) {
     return false;
 }
 
-static bool parse_color(const char *text, uint32_t *out) {
+static bool effects_parse_color(const char *text, uint32_t *out) {
     size_t length = strlen(text);
     if (text[0] != '#' || (length != 7 && length != 9))
         return false;
@@ -122,7 +122,7 @@ static const struct {
     {"BottomRight", "Bottom right corner", XD_SCREEN_EDGE_BOTTOM_RIGHT},
 };
 
-static bool parse_edges(const char *text, uint32_t *out) {
+static bool effects_parse_edges(const char *text, uint32_t *out) {
     uint32_t edges = 0;
     g_auto(GStrv) parts = g_strsplit_set(text, ";,", -1);
     for (size_t i = 0; parts[i] != nullptr; i++) {
@@ -190,7 +190,7 @@ bool xd_effects_parse_binding(const char *text, uint32_t *modifiers, char *key, 
 }
 
 /* "Button1".."Button9": the number, or 0. */
-static int button_number(const char *key) {
+static int effects_get_button_number(const char *key) {
     if (g_ascii_strncasecmp(key, "Button", 6) != 0 || key[6] < '1' || key[6] > '9' ||
         key[7] != '\0')
         return 0;
@@ -202,7 +202,7 @@ bool xd_effects_parse_value(const xd_effect_option *option, const char *text,
     g_autofree char *trimmed = g_strstrip(g_strdup(text != nullptr ? text : ""));
     switch (option->type) {
     case XD_EFFECT_OPTION_BOOL:
-        return parse_bool(trimmed, &out->boolean);
+        return effects_parse_bool(trimmed, &out->boolean);
     case XD_EFFECT_OPTION_INT: {
         char *end = nullptr;
         errno = 0;
@@ -222,7 +222,7 @@ bool xd_effects_parse_value(const xd_effect_option *option, const char *text,
         return true;
     }
     case XD_EFFECT_OPTION_COLOR:
-        return parse_color(trimmed, &out->color);
+        return effects_parse_color(trimmed, &out->color);
     case XD_EFFECT_OPTION_CHOICE:
         for (size_t i = 0; option->choice_names != nullptr && option->choice_names[i] != nullptr;
              i++) {
@@ -233,7 +233,7 @@ bool xd_effects_parse_value(const xd_effect_option *option, const char *text,
         }
         return false;
     case XD_EFFECT_OPTION_EDGE:
-        return parse_edges(trimmed, &out->edges);
+        return effects_parse_edges(trimmed, &out->edges);
     case XD_EFFECT_OPTION_KEY:
     case XD_EFFECT_OPTION_BUTTON: {
         if (trimmed[0] != '\0') {
@@ -241,7 +241,7 @@ bool xd_effects_parse_value(const xd_effect_option *option, const char *text,
             char key[64];
             if (!xd_effects_parse_binding(trimmed, &modifiers, key, sizeof(key)))
                 return false;
-            if ((option->type == XD_EFFECT_OPTION_BUTTON) != (button_number(key) > 0))
+            if ((option->type == XD_EFFECT_OPTION_BUTTON) != (effects_get_button_number(key) > 0))
                 return false;
         }
         out->text = g_steal_pointer(&trimmed);
@@ -268,7 +268,7 @@ char *xd_effects_format_value(const xd_effect_option *option, const xd_effect_va
     case XD_EFFECT_OPTION_COLOR:
         return g_strdup_printf("#%08X", value->color);
     case XD_EFFECT_OPTION_CHOICE: {
-        size_t count = choice_count(option);
+        size_t count = effects_count_choices(option);
         size_t index = value->choice >= 0 && (size_t)value->choice < count ? (size_t)value->choice
                                                                             : 0;
         return g_strdup(count > 0 ? option->choice_names[index] : "");
@@ -292,22 +292,22 @@ char *xd_effects_format_value(const xd_effect_option *option, const xd_effect_va
     return g_strdup("");
 }
 
-static void free_value(const xd_effect_option *option, xd_effect_value *value) {
-    if (has_text(option->type)) {
+static void effects_free_value(const xd_effect_option *option, xd_effect_value *value) {
+    if (effects_has_text(option->type)) {
         g_free(value->text);
         value->text = nullptr;
     }
 }
 
 /* The option's default; a table whose default doesn't parse is a bug. */
-static xd_effect_value default_value(const xd_effect_option *option) {
+static xd_effect_value effects_get_default(const xd_effect_option *option) {
     xd_effect_value value = {0};
     bool parsed = xd_effects_parse_value(option, option->default_value, &value);
     XD_ASSERT(parsed);
     return value;
 }
 
-static bool values_equal(const xd_effect_option *option, const xd_effect_value *left,
+static bool effects_are_equal(const xd_effect_option *option, const xd_effect_value *left,
                          const xd_effect_value *right) {
     switch (option->type) {
     case XD_EFFECT_OPTION_BOOL:
@@ -348,7 +348,7 @@ xd_effects_settings *xd_effects_create_settings_for(const xd_effect_info *const 
         const xd_effect_info *info = table[effect];
         settings->values[effect] = XD_NEW_ARRAY(xd_effect_value, XD_MAX(info->option_count, 1));
         for (size_t option = 0; option < info->option_count; option++)
-            settings->values[effect][option] = default_value(&info->options[option]);
+            settings->values[effect][option] = effects_get_default(&info->options[option]);
     }
     return settings;
 }
@@ -363,7 +363,7 @@ void xd_effects_destroy_settings(xd_effects_settings *settings) {
     for (size_t effect = 0; effect < settings->count; effect++) {
         const xd_effect_info *info = settings->table[effect];
         for (size_t option = 0; option < info->option_count; option++)
-            free_value(&info->options[option], &settings->values[effect][option]);
+            effects_free_value(&info->options[option], &settings->values[effect][option]);
         xd_free(settings->values[effect]);
     }
     xd_free(settings->values);
@@ -417,15 +417,15 @@ const xd_effect_value *xd_effects_get_value(const xd_effects_settings *settings,
 }
 
 /* Takes `value` (a text value's string) into the settings. */
-static bool store_value(xd_effects_settings *settings, size_t effect, size_t option,
+static bool effects_store_value(xd_effects_settings *settings, size_t effect, size_t option,
                         xd_effect_value value) {
     const xd_effect_option *info = &settings->table[effect]->options[option];
     xd_effect_value *slot = &settings->values[effect][option];
-    if (values_equal(info, slot, &value)) {
-        free_value(info, &value);
+    if (effects_are_equal(info, slot, &value)) {
+        effects_free_value(info, &value);
         return false;
     }
-    free_value(info, slot);
+    effects_free_value(info, slot);
     *slot = value;
     return true;
 }
@@ -448,20 +448,21 @@ bool xd_effects_set_value(xd_effects_settings *settings, size_t effect, size_t o
         if (!xd_effects_parse_value(info, text, &parsed))
             return false;
     }
-    return store_value(settings, effect, option, parsed);
+    return effects_store_value(settings, effect, option, parsed);
 }
 
 bool xd_effects_is_default(const xd_effects_settings *settings, size_t effect, size_t option) {
     const xd_effect_option *info = &settings->table[effect]->options[option];
-    xd_effect_value fallback = default_value(info);
-    bool same = values_equal(info, &settings->values[effect][option], &fallback);
-    free_value(info, &fallback);
+    xd_effect_value fallback = effects_get_default(info);
+    bool same = effects_are_equal(info, &settings->values[effect][option], &fallback);
+    effects_free_value(info, &fallback);
     return same;
 }
 
 void xd_effects_reset_value(xd_effects_settings *settings, size_t effect, size_t option) {
     XD_ASSERT(effect < settings->count && option < settings->table[effect]->option_count);
-    store_value(settings, effect, option, default_value(&settings->table[effect]->options[option]));
+    const xd_effect_option *info = &settings->table[effect]->options[option];
+    effects_store_value(settings, effect, option, effects_get_default(info));
 }
 
 void xd_effects_reset_all(xd_effects_settings *settings) {
@@ -480,7 +481,7 @@ void xd_effects_set_warn_conflicts(xd_effects_settings *settings, bool warn) {
     settings->warn_conflicts = warn;
 }
 
-static const xd_effect_value *value_by_key(const xd_effects_settings *settings, size_t effect,
+static const xd_effect_value *effects_find_value(const xd_effects_settings *settings, size_t effect,
                                            const char *key, xd_effect_option_type type) {
     size_t option = 0;
     bool found = xd_effects_find_option(xd_effects_get_info(settings, effect), key, &option);
@@ -489,37 +490,37 @@ static const xd_effect_value *value_by_key(const xd_effects_settings *settings, 
 }
 
 bool xd_effects_get_bool(const xd_effects_settings *settings, size_t effect, const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_BOOL)->boolean;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_BOOL)->boolean;
 }
 
 int xd_effects_get_int(const xd_effects_settings *settings, size_t effect, const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_INT)->integer;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_INT)->integer;
 }
 
 double xd_effects_get_double(const xd_effects_settings *settings, size_t effect,
                              const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_DOUBLE)->number;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_DOUBLE)->number;
 }
 
 uint32_t xd_effects_get_color(const xd_effects_settings *settings, size_t effect,
                               const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_COLOR)->color;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_COLOR)->color;
 }
 
 int xd_effects_get_choice(const xd_effects_settings *settings, size_t effect, const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_CHOICE)->choice;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_CHOICE)->choice;
 }
 
 uint32_t xd_effects_get_edges(const xd_effects_settings *settings, size_t effect,
                               const char *key) {
-    return value_by_key(settings, effect, key, XD_EFFECT_OPTION_EDGE)->edges;
+    return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_EDGE)->edges;
 }
 
 const char *xd_effects_get_text(const xd_effects_settings *settings, size_t effect,
                                 const char *key) {
     size_t option = 0;
     bool found = xd_effects_find_option(xd_effects_get_info(settings, effect), key, &option);
-    XD_ASSERT(found && has_text(settings->table[effect]->options[option].type));
+    XD_ASSERT(found && effects_has_text(settings->table[effect]->options[option].type));
     return settings->values[effect][option].text;
 }
 
@@ -546,14 +547,14 @@ void xd_effects_load_file(xd_effects_settings *settings, const char *path) {
             continue;
         g_autofree char *enabled = g_key_file_get_string(file, info->id, "Enabled", nullptr);
         bool on = false;
-        if (enabled != nullptr && parse_bool(g_strstrip(enabled), &on))
+        if (enabled != nullptr && effects_parse_bool(g_strstrip(enabled), &on))
             settings->enabled[effect] = on;
         for (size_t option = 0; option < info->option_count; option++) {
             g_autofree char *text =
                 g_key_file_get_string(file, info->id, info->options[option].key, nullptr);
             xd_effect_value value = {0};
             if (text != nullptr && xd_effects_parse_value(&info->options[option], text, &value))
-                store_value(settings, effect, option, value);
+                effects_store_value(settings, effect, option, value);
         }
     }
     settings->warn_conflicts = true;
@@ -561,7 +562,7 @@ void xd_effects_load_file(xd_effects_settings *settings, const char *path) {
                                                            "WarnConflicts", nullptr)
                                    : nullptr;
     bool warn_conflicts = true;
-    if (warn != nullptr && parse_bool(g_strstrip(warn), &warn_conflicts))
+    if (warn != nullptr && effects_parse_bool(g_strstrip(warn), &warn_conflicts))
         settings->warn_conflicts = warn_conflicts;
 }
 
@@ -617,7 +618,7 @@ bool xd_effects_save(const xd_effects_settings *settings) {
 
 /* ---- conflicts ------------------------------------------------------------------ */
 
-static bool is_binding(xd_effect_option_type type) {
+static bool effects_is_binding(xd_effect_option_type type) {
     return type == XD_EFFECT_OPTION_KEY || type == XD_EFFECT_OPTION_BUTTON ||
            type == XD_EFFECT_OPTION_EDGE;
 }
@@ -642,7 +643,7 @@ size_t xd_effects_find_conflicts(const xd_effects_settings *settings, size_t eff
     size_t found = 0;
     for (size_t option = 0; option < info->option_count; option++) {
         xd_effect_option_type type = info->options[option].type;
-        if (!is_binding(type))
+        if (!effects_is_binding(type))
             continue;
         for (size_t other = 0; other < settings->count; other++) {
             if (other == effect || !settings->enabled[other])
@@ -663,7 +664,7 @@ size_t xd_effects_find_conflicts(const xd_effects_settings *settings, size_t eff
     return found;
 }
 
-static const char *button_label(int number) {
+static const char *effects_get_button_label(int number) {
     switch (number) {
     case 1:
         return "Left button";
@@ -711,8 +712,8 @@ char *xd_effects_describe_value(const xd_effect_option *option, const xd_effect_
         g_string_append(text, "Shift+");
     if (modifiers & XD_BINDING_SUPER)
         g_string_append(text, "Win+");
-    int button = button_number(key);
-    const char *label = button > 0 ? button_label(button) : nullptr;
+    int button = effects_get_button_number(key);
+    const char *label = button > 0 ? effects_get_button_label(button) : nullptr;
     if (label != nullptr)
         g_string_append(text, label);
     else if (button > 0)
@@ -726,7 +727,7 @@ char *xd_effects_describe_value(const xd_effect_option *option, const xd_effect_
 
 /* ---- window matches ------------------------------------------------------------- */
 
-static bool condition_matches(const char *condition, const char *app_id, const char *title,
+static bool effects_match_condition(const char *condition, const char *app_id, const char *title,
                               bool is_dialog) {
     bool negate = false;
     while (*condition == '!' || *condition == ' ') {
@@ -764,7 +765,7 @@ bool xd_effects_match_window(const char *match, const char *app_id, const char *
             if (condition[0] == '\0')
                 continue;
             any_condition = true;
-            all = condition_matches(condition, app_id, title, is_dialog);
+            all = effects_match_condition(condition, app_id, title, is_dialog);
         }
         if (all && any_condition)
             return true;
@@ -814,7 +815,7 @@ bool xd_effects_has_changed(int fd) {
 
 /* ---- the support file ----------------------------------------------------------- */
 
-static char *support_path(const char *display) {
+static char *effects_get_support_path(const char *display) {
     g_autofree char *safe = g_strdup(display != nullptr && display[0] != '\0' ? display : "none");
     g_strcanon(safe, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-", '_');
     g_autofree char *name = g_strdup_printf("effects-%s.ini", safe);
@@ -827,7 +828,7 @@ static char *support_path(const char *display) {
 }
 
 bool xd_effects_write_support(const char *display, const xd_effects_support *support) {
-    g_autofree char *path = support_path(display);
+    g_autofree char *path = effects_get_support_path(display);
     g_autofree char *dir = g_path_get_dirname(path);
     g_mkdir_with_parents(dir, 0700);
     g_autoptr(GKeyFile) file = g_key_file_new();
@@ -844,7 +845,7 @@ bool xd_effects_write_support(const char *display, const xd_effects_support *sup
 
 bool xd_effects_read_support(const char *display, xd_effects_support *support) {
     *support = (xd_effects_support){0};
-    g_autofree char *path = support_path(display);
+    g_autofree char *path = effects_get_support_path(display);
     g_autoptr(GKeyFile) file = g_key_file_new();
     if (!g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, nullptr))
         return false;
@@ -857,6 +858,6 @@ bool xd_effects_read_support(const char *display, xd_effects_support *support) {
 }
 
 void xd_effects_remove_support(const char *display) {
-    g_autofree char *path = support_path(display);
+    g_autofree char *path = effects_get_support_path(display);
     g_unlink(path);
 }
