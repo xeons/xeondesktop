@@ -68,6 +68,7 @@ makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm'
 checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
+  "egl-gbm: NVIDIA's proprietary driver (the compositor draws through GBM)"
   'gst-plugins-good: screen recording (MP4, sound)'
   'gst-plugins-bad: screen recording (h264parse)'
   'gst-plugins-ugly: screen recording (x264; or OpenH264 from gst-plugins-bad)'

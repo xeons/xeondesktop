@@ -123,6 +123,7 @@ Recommends:
  aisleriot,
  pinball,
 Suggests:
+ libnvidia-egl-gbm1,
  oxygen-icon-theme,
  papirus-icon-theme,
  mate-icon-theme,

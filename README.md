@@ -51,7 +51,10 @@ At run time, Xwayland (`xorg-xwayland`) runs X11 applications; without it
 only Wayland ones work. xdg-desktop-portal gives Flatpaks, GTK 4 programs,
 Firefox and Chromium our Open and Save As dialogs
 (xdg-desktop-portal-xeondesktop); GTK 3 programs that build GTK's own
-dialog keep it, themed.
+dialog keep it, themed. With NVIDIA's proprietary driver, the compositor
+needs `egl-gbm` (`libnvidia-egl-gbm1` on Debian) and `nvidia_drm.modeset=1`;
+without them it draws in software, with no Aero glass or Desktop Effects,
+and says which is missing in its log.
 Fonts: Windows' fonts are replaced by the closest freely packaged ones,
 DejaVu Sans Condensed for Tahoma (its width and shapes), Source Sans 3 for
 Trebuchet MS (Luna captions) and Roboto Condensed for Franklin Gothic (XP's

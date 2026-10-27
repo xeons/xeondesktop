@@ -126,6 +126,40 @@ static bool is_virtual_driver(const char *name) {
     return false;
 }
 
+/* NVIDIA's proprietary driver draws for a Wayland compositor only with
+ * kernel modesetting on and its GBM platform for EGL (egl-gbm) installed.
+ * Without either, EGL falls back to Mesa, which can't drive the card, and
+ * the GPU renderer fails with EGL's own messages ("EGL_EXT_image_dma_buf_
+ * import not supported"), which don't say what to do: this does. */
+static void log_nvidia_hints(void) {
+    if (access("/sys/module/nvidia_drm", F_OK) != 0)
+        return;
+    FILE *modeset = fopen("/sys/module/nvidia_drm/parameters/modeset", "r");
+    if (modeset != nullptr) {
+        int value = fgetc(modeset);
+        fclose(modeset);
+        if (value == 'N')
+            wlr_log(WLR_ERROR, "NVIDIA driver with kernel modesetting off: "
+                               "add nvidia_drm.modeset=1 to the kernel command line");
+    }
+    /* egl-gbm installs its platform as 15_nvidia_gbm.json. */
+    static const char *const platform_dirs[] = {"/etc/egl/egl_external_platform.d",
+                                                "/usr/share/egl/egl_external_platform.d"};
+    bool has_gbm_platform = false;
+    for (size_t i = 0; i < XD_ARRAY_LEN(platform_dirs) && !has_gbm_platform; i++) {
+        DIR *dir = opendir(platform_dirs[i]);
+        if (dir == nullptr)
+            continue;
+        struct dirent *dir_entry;
+        while (!has_gbm_platform && (dir_entry = readdir(dir)) != nullptr)
+            has_gbm_platform = strstr(dir_entry->d_name, "nvidia_gbm") != nullptr;
+        closedir(dir);
+    }
+    if (!has_gbm_platform)
+        wlr_log(WLR_ERROR, "NVIDIA driver without its GBM platform for EGL: install egl-gbm "
+                           "(libnvidia-egl-gbm1 on Debian)");
+}
+
 /* The compositor's priority, as KWin and Sway set theirs. A display
  * manager may run at background priority (CachyOS's ananicy-cpp types sddm
  * as a "Launcher": nice 16, idle I/O) and the session inherits it, so a
@@ -235,6 +269,7 @@ static bool server_init(xd_server *server) {
     server->renderer = fx_renderer_create(server->backend);
     if (server->renderer == nullptr) {
         wlr_log(WLR_ERROR, "no GPU renderer for SceneFX");
+        log_nvidia_hints();
         return false;
     }
 #else
@@ -249,6 +284,9 @@ static bool server_init(xd_server *server) {
         /* No usable GPU (e.g. a virtual machine without 3D acceleration):
          * draw in software. wlroots never picks pixman by itself. */
         wlr_log(WLR_INFO, "no GPU renderer; falling back to software rendering (pixman)");
+        /* Handed over from xd-compositor-fx (XD_NO_FX), which said already. */
+        if (getenv("XD_NO_FX") == nullptr)
+            log_nvidia_hints();
         server->renderer = wlr_pixman_renderer_create();
     }
     if (server->renderer == nullptr) {
