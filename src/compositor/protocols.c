@@ -8,13 +8,20 @@
  *   savers, swayidle);
  * - ext-idle-notify and idle-inhibit: idle timers for screen savers, held
  *   off by video players and the like;
- * - xdg-activation: apps bringing their own windows forward.
+ * - xdg-activation: apps bringing their own windows forward;
+ * - xdg-foreign (v1 for GTK 3, v2 for GTK 4 and Qt): a program's window
+ *   handed to another program by name, so that portal dialogs (our Open
+ *   and Save As) open over the window of the program that asked, and
+ *   stay above it as its owned windows.
  */
 #include <wlr/types/wlr_idle_inhibit_v1.h>
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
+#include <wlr/types/wlr_xdg_foreign_registry.h>
+#include <wlr/types/wlr_xdg_foreign_v1.h>
+#include <wlr/types/wlr_xdg_foreign_v2.h>
 #include <wlr/util/log.h>
 
 #include "../core/alloc.h"
@@ -238,4 +245,12 @@ void xd_protocols_init(xd_server *server) {
               handle_request_activate);
     XD_LISTEN(&activation->events.new_token, server, new_activation_token,
               handle_new_activation_token);
+
+    /* wlroots makes the imported window the importer's parent itself;
+     * view.c then places and stacks it as an owned window. */
+    struct wlr_xdg_foreign_registry *foreign = wlr_xdg_foreign_registry_create(server->display);
+    if (foreign != nullptr) {
+        wlr_xdg_foreign_v1_create(server->display, foreign);
+        wlr_xdg_foreign_v2_create(server->display, foreign);
+    }
 }
