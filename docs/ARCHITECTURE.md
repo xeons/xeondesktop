@@ -351,6 +351,16 @@ in the free slot nearest it) and its velocity model for the glide
 darkened outputs; it has the keyboard and pointer until a window is picked
 (click, Enter) or it's cancelled (Esc, a click on no window, its key).
 
+**Animations** (`animations.c`, the curves in `animations_model.c`,
+unit-tested) is Compiz's animation plugin for open, close, minimize and
+unminimize: Fade, Zoom, and Glide 1 and 2 (their 3D tilt drawn as a flat
+squash), each event with its effect, duration and windows. The window's
+mirror is placed just above it in the stacking order and animated; an
+appearing window is hidden till it's over. A closing window's mirror is
+detached at unmap, keeping its last picture. Minimizing zooms to the
+taskbar button the shell reported (`button_box`, as `animate.c` uses), and
+`animates` stops XP's bar for the windows it animates.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

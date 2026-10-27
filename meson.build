@@ -153,6 +153,7 @@ settings_lib = static_library(
   'src/settings/effects/explode.c',
   'src/settings/effects/water.c',
   'src/settings/effects/scale.c',
+  'src/settings/effects/animations.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -419,6 +420,8 @@ compositor_src += files(
   'src/compositor/effects/mirror.c',
   'src/compositor/effects/scale.c',
   'src/compositor/effects/scale_model.c',
+  'src/compositor/effects/animations.c',
+  'src/compositor/effects/animations_model.c',
 )
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
@@ -1488,6 +1491,7 @@ test_exe = executable(
   'src/compositor/vcgt.c',
   'src/compositor/effects/wobbly_model.c',
   'src/compositor/effects/scale_model.c',
+  'src/compositor/effects/animations_model.c',
   'src/color/colorlib.c',
   'src/keys/keyslib.c',
   'src/keys/sshkeys.c',

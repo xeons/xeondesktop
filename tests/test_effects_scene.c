@@ -3,6 +3,7 @@
  * Switcher, Animations, Enhanced Zoom), included by test_main.c for its
  * CHECK.
  */
+#include "../src/compositor/effects/animations_model.h"
 #include "../src/compositor/effects/scale_model.h"
 
 static bool rects_overlap(xd_effect_rect left, xd_effect_rect right) {
@@ -95,7 +96,56 @@ static void test_scale_motion(void) {
     CHECK(motion.x > 100 && motion.x < 700 && isfinite(motion.scale));
 }
 
+/* Animations: each effect starts and ends on the window, and gets there
+ * steadily; Zoom minimizes onto the taskbar button. */
+static void test_animations_model(void) {
+    CHECK(xd_animation_get_presence(true, 0) == 0 && xd_animation_get_presence(true, 1) == 1);
+    CHECK(xd_animation_get_presence(false, 0) == 1 && xd_animation_get_presence(false, 1) == 0);
+    CHECK(xd_animation_get_presence(true, 2) == 1 && xd_animation_get_presence(false, -1) == 1);
+    /* Appearing slows down at the end, going speeds up. */
+    CHECK(xd_animation_get_presence(true, 0.5) > 0.5);
+    CHECK(xd_animation_get_presence(false, 0.5) > 0.5);
+    double previous = 1.0;
+    bool steady = true;
+    for (int i = 1; i <= 20; i++) {
+        double presence = xd_animation_get_presence(false, i / 20.0);
+        steady = steady && presence <= previous;
+        previous = presence;
+    }
+    CHECK(steady);
+
+    const xd_effect_rect window = {100, 50, 400, 300};
+    const xd_effect_rect button = {150, 740, 160, 24};
+    const xd_animation_effect effects[] = {XD_ANIMATION_FADE, XD_ANIMATION_ZOOM,
+                                           XD_ANIMATION_GLIDE_1, XD_ANIMATION_GLIDE_2};
+    for (size_t i = 0; i < XD_ARRAY_LEN(effects); i++) {
+        xd_animation_frame whole = xd_animation_get_frame(effects[i], window, nullptr, 1.0);
+        CHECK(whole.x == 100 && whole.y == 50 && whole.scale_x == 1 && whole.scale_y == 1 &&
+              whole.opacity == 1);
+        xd_animation_frame gone = xd_animation_get_frame(effects[i], window, nullptr, 0.0);
+        CHECK(gone.opacity == 0);
+        xd_animation_frame half = xd_animation_get_frame(effects[i], window, nullptr, 0.5);
+        CHECK(half.opacity > 0 && half.opacity <= 1 && half.scale_x > 0 && half.scale_y > 0);
+    }
+    /* Fade only fades; the glides shrink, more down than across. */
+    xd_animation_frame fade = xd_animation_get_frame(XD_ANIMATION_FADE, window, nullptr, 0.5);
+    CHECK(fade.opacity == 0.5 && fade.scale_x == 1 && fade.x == 100);
+    xd_animation_frame glide = xd_animation_get_frame(XD_ANIMATION_GLIDE_1, window, nullptr, 0.5);
+    CHECK(glide.scale_y < glide.scale_x && glide.scale_x < 1);
+    CHECK(fabs(glide.x + 400 * glide.scale_x / 2 - 300) < 1e-9); /* centred across */
+    /* Zoom: from its middle, or down onto the button. */
+    xd_animation_frame middle = xd_animation_get_frame(XD_ANIMATION_ZOOM, window, nullptr, 0.5);
+    CHECK(fabs(middle.x + 400 * middle.scale_x / 2 - 300) < 1e-9);
+    CHECK(fabs(middle.y + 300 * middle.scale_y / 2 - 200) < 1e-9);
+    xd_animation_frame onto = xd_animation_get_frame(XD_ANIMATION_ZOOM, window, &button, 0.0);
+    CHECK(fabs(onto.x - 150) < 1e-9 && fabs(onto.y - 740) < 1e-9);
+    CHECK(fabs(400 * onto.scale_x - 160) < 1e-9 && fabs(300 * onto.scale_y - 24) < 1e-9);
+    xd_animation_frame halfway = xd_animation_get_frame(XD_ANIMATION_ZOOM, window, &button, 0.5);
+    CHECK(halfway.y > 50 && halfway.y < 740 && halfway.opacity == 1);
+}
+
 static void test_effects_scene(void) {
     test_scale_layout();
     test_scale_motion();
+    test_animations_model();
 }

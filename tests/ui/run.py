@@ -1210,6 +1210,87 @@ def scale_pick_window(s):
     s.check(active_title(s) == "Control Panel", "and Control Panel stays active")
 
 
+def between(pixel, low, high, margin=12):
+    """Whether each channel of pixel is between low's and high's, clear of
+    both by margin where they differ enough."""
+    clear = False
+    for p, a, b in zip(pixel, low, high):
+        lo, hi = min(a, b), max(a, b)
+        if hi - lo >= 3 * margin:
+            if not lo + margin <= p <= hi - margin:
+                return False
+            clear = True
+    return clear
+
+
+@scenario(setup=effects_setup(
+    "[Animations]\nEnabled=true\nCloseEffect=fade\nCloseDuration=4000\n"))
+def animations_close_fade(s):
+    """Animations, Fade on close (slowed to four seconds): a closed
+    window's last picture stays where it was and fades into the desktop,
+    so a moment after Alt+F4 its pixels are a blend of its own and the
+    desktop's; then it's gone."""
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    window = s.settle("window")
+    box = window.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the window shows")
+    # A point inside the window far from the desktop's colour.
+    x0, y0, w, h = box
+    points = [(x, y) for y in range(y0 + 40, y0 + h - 10, 23) for x in range(x0 + 10, x0 + w - 10, 31)
+              if sum(abs(a - b) for a, b in zip(window.pixel(x, y), empty.pixel(x, y))) > 200]
+    s.check(len(points) > 10, f"the window has pixels unlike the desktop ({len(points)})")
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Control Panel", gone=True)
+    blended = 0
+    for i in range(12):
+        shot = s.shot(f"fading-{i}")
+        mixed = sum(between(shot.pixel(x, y), window.pixel(x, y), empty.pixel(x, y))
+                    for x, y in points)
+        s.log(f"{mixed} of {len(points)} points blended")
+        if mixed > len(points) * 0.8:
+            blended += 1
+            if blended >= 2:
+                break
+        time.sleep(0.25)
+    s.check(blended >= 2, "mid-fade the closed window's pixels are blended with the desktop's")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window to have faded away", timeout=10)
+
+
+@scenario(setup=effects_setup("[Animations]\nEnabled=true\nMinimizeDuration=3000\n"
+                              "UnminimizeDuration=1500\n"))
+def animations_minimize_zoom(s):
+    """Animations, Zoom on minimize (slowed down): Win+Down shrinks the
+    window's picture towards its taskbar button, in place of XP's bar;
+    restored from its button, it zooms back and is itself again."""
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    window = s.settle("window")
+    box = window.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("key", "super+Down")
+    s.wait_window(title="Control Panel", state="minimized")
+    time.sleep(1.2)
+    mid = s.shot("zooming")
+    now = mid.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"window {box}, mid-zoom {now}")
+    s.check(now is not None and now[2] < box[2] - 20 and now[3] < box[3] - 20
+            and now[1] > box[1], "mid-way it's smaller and lower, going to its button")
+    s.wait(lambda: s.shot("minimized").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the picture to reach the button", timeout=10)
+    # Its taskbar button, from the taskbar's changes.
+    button = s.shot("taskbar").changed_box(empty, (150, HEIGHT - 36, WIDTH - 300, 32))
+    s.check(button is not None, f"its taskbar button shows ({button})")
+    s.inject("move", button[0] + button[2] // 2, HEIGHT - 20, "click")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("move", WIDTH - 20, 300)  # no taskbar thumbnail
+    back = s.settle("restored")
+    s.check(back.differs(window, (0, 0, WIDTH, HEIGHT - 40)) < 0.02,
+            "restored, the window is itself again")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
