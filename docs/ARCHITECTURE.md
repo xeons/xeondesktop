@@ -373,6 +373,14 @@ slides up and down), zooming out half-way; Rotate Cube's binding
 (Ctrl+Alt+Button1) drags it round and tilts it, and let go it settles on
 the nearest desktop face and switches there without animating again.
 
+**Expo** (`expo.c`): every desktop as a wall (Compiz's expo, flat), each a
+scene capture at about the size it's drawn, zoomed from the current one
+(`xd_expo_get_cell()`). Its key (Win+W) or corner (top left) shows it;
+while it shows, the pointer and clicks are its: a click zooms in to that
+desktop (switched to at once, with the highest animator priority so
+nothing else animates it), a press on a window and a drag carries it (a
+capture of its own, following the pointer) to another desktop.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

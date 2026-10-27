@@ -1182,6 +1182,37 @@ def rotate_cube_drag(s):
     s.check(done.differs(empty, whole, step=8) < 0.02, "it settled on the second desktop")
 
 
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[Expo]\nEnabled=true\n"), fx=True)
+def expo_wall(s):
+    """Expo (xd-compositor-fx): Win+W shows the two desktops side by side,
+    the window small on the first, a dark gap between them; a window
+    dragged from the first desktop to the second goes there; a click on
+    the second desktop shows it, with the window."""
+    require_opengl_effects(s)
+    empty, box = open_control_panel(s)
+    s.inject("key", "super+w")
+    wall = s.settle("wall")
+    gap = wall.pixel(WIDTH // 2, HEIGHT // 2)
+    s.check(max(gap) < 60, f"a dark gap between the desktops ({gap})")
+    s.check(wall.differs(empty, (40, 230, 300, 200), step=4) > 0.3,
+            "the first desktop has the window, small")
+    right = wall.pixel(3 * WIDTH // 4, HEIGHT // 2)
+    s.check(right == empty.pixel(WIDTH // 2, HEIGHT // 2) or max(right) > 60,
+            f"the second desktop shows beside it ({right})")
+    steps = ["move", 200, 330, "down", "sleep", 100]
+    for i in range(1, 11):
+        steps += ["move", 200 + 56 * i, 330]
+    s.inject(*steps, "sleep", 300, "up")
+    s.settle("dropped")
+    s.inject("move", 3 * WIDTH // 4, HEIGHT - 220, "click", "left")
+    s.wait_window(title="Control Panel")
+    there = s.settle("second-desktop")
+    s.check(there.differs(empty, (0, 0, WIDTH, HEIGHT - 40), step=8) > 0.1,
+            "the second desktop shows, with the window dropped on it")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

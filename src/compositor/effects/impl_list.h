@@ -15,4 +15,5 @@ XD_EFFECT_IMPL(desktop_wall)
 #ifdef XD_SCENEFX
 XD_EFFECT_IMPL(desktop_cube)
 XD_EFFECT_IMPL(rotate_cube)
+XD_EFFECT_IMPL(expo)
 #endif
