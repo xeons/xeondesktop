@@ -6,6 +6,7 @@
 
 #include <langinfo.h>
 #include <string.h>
+#include <time.h>
 
 #include "extract.h"
 
@@ -573,40 +574,52 @@ static bool parse_date(const calendar *days, const char *text, int64_t *start, i
     int word = index_of_name(words, G_N_ELEMENTS(words), lower);
     switch (word) {
     case 0:
-        *start = today, *end = day_start(now, 1);
+        *start = today;
+        *end = day_start(now, 1);
         return true;
     case 1:
-        *start = day_start(now, -1), *end = today;
+        *start = day_start(now, -1);
+        *end = today;
         return true;
     case 2:
-        *start = week, *end = day_start(now, 7 - into_week);
+        *start = week;
+        *end = day_start(now, 7 - into_week);
         return true;
     case 3:
-        *start = last_week, *end = week;
+        *start = last_week;
+        *end = week;
         return true;
     case 4:
-        *start = month, *end = month_start(now, 1);
+        *start = month;
+        *end = month_start(now, 1);
         return true;
     case 5:
-        *start = month_start(now, -1), *end = month;
+        *start = month_start(now, -1);
+        *end = month;
         return true;
     case 6:
-        *start = year, *end = year_start(now, 1);
+        *start = year;
+        *end = year_start(now, 1);
         return true;
     case 7:
-        *start = year_start(now, -1), *end = year;
+        *start = year_start(now, -1);
+        *end = year;
         return true;
     case 8: /* 7's calendar: this week before yesterday */
-        *start = week, *end = MAX(week, day_start(now, -1));
+        *start = week;
+        *end = MAX(week, day_start(now, -1));
         return true;
     case 9: /* this month before last week */
-        *start = month, *end = MAX(month, last_week);
+        *start = month;
+        *end = MAX(month, last_week);
         return true;
     case 10: /* this year before that */
-        *start = year, *end = MAX(year, MIN(month, last_week));
+        *start = year;
+        *end = MAX(year, MIN(month, last_week));
         return true;
     case 11:
-        *start = INT64_MIN, *end = year;
+        *start = INT64_MIN;
+        *end = year;
         return true;
     default:
         break;
@@ -619,7 +632,8 @@ static bool parse_date(const calendar *days, const char *text, int64_t *start, i
             return false;
         g_autoptr(GDateTime) first = g_date_time_new_local(number, 1, 1, 0, 0, 0);
         g_autoptr(GDateTime) next = g_date_time_new_local(number + 1, 1, 1, 0, 0, 0);
-        *start = g_date_time_to_unix(first), *end = g_date_time_to_unix(next);
+        *start = g_date_time_to_unix(first);
+        *end = g_date_time_to_unix(next);
         return true;
     }
     /* A day, written as the locale writes dates (GLib's parser), or
@@ -629,9 +643,10 @@ static bool parse_date(const calendar *days, const char *text, int64_t *start, i
     g_date_set_parse(&date, lower);
     if (!g_date_valid(&date))
         return false;
+    struct tm day = {0};
+    g_date_to_struct_tm(&date, &day);
     g_autoptr(GDateTime) midnight =
-        g_date_time_new_local(g_date_get_year(&date), g_date_get_month(&date),
-                              g_date_get_day(&date), 0, 0, 0);
+        g_date_time_new_local(day.tm_year + 1900, day.tm_mon + 1, day.tm_mday, 0, 0, 0);
     if (midnight == nullptr)
         return false;
     *start = g_date_time_to_unix(midnight);
@@ -657,7 +672,8 @@ static bool parse_size(const char *text, int64_t *start, int64_t *end) {
     };
     for (size_t i = 0; i < G_N_ELEMENTS(words); i++) {
         if (g_ascii_strcasecmp(text, words[i].name) == 0) {
-            *start = words[i].low, *end = words[i].high;
+            *start = words[i].low;
+            *end = words[i].high;
             return true;
         }
     }
@@ -701,7 +717,8 @@ typedef enum compare_op : uint8_t {
 
 /* [low, high) for a value's [start, end) and the operator. */
 static void apply_op(node *term, compare_op op, int64_t start, int64_t end) {
-    term->low = INT64_MIN, term->high = INT64_MAX;
+    term->low = INT64_MIN;
+    term->high = INT64_MAX;
     switch (op) {
     case OP_GREATER:
         term->low = end;
@@ -719,7 +736,8 @@ static void apply_op(node *term, compare_op op, int64_t start, int64_t end) {
     case OP_EQUAL:
     case OP_CONTAINS:
     case OP_NOT_EQUAL:
-        term->low = start, term->high = end;
+        term->low = start;
+        term->high = end;
         break;
     }
 }
@@ -1231,7 +1249,8 @@ static bool add_dates(node *all, const xd_search_criteria *criteria, const calen
     if (property != XD_SEARCH_PROP_CREATED && property != XD_SEARCH_PROP_ACCESSED)
         property = XD_SEARCH_PROP_MODIFIED;
     node *term = new_term(property, WHEN_NAMES[criteria->when]);
-    term->low = INT64_MIN, term->high = INT64_MAX;
+    term->low = INT64_MIN;
+    term->high = INT64_MAX;
     switch (criteria->when) {
     case XD_SEARCH_WHEN_WEEK: {
         g_autoptr(GDateTime) since = g_date_time_add_days(days->now, -7);
@@ -1281,10 +1300,12 @@ static void add_size(node *all, const xd_search_criteria *criteria) {
                                                                    : (int64_t)criteria->size_kb;
     switch (criteria->size) {
     case XD_SEARCH_SIZE_SMALL:
-        low = 0, high = 100 * KB;
+        low = 0;
+        high = 100 * KB;
         break;
     case XD_SEARCH_SIZE_MEDIUM:
-        low = 0, high = 1024 * KB;
+        low = 0;
+        high = 1024 * KB;
         break;
     case XD_SEARCH_SIZE_LARGE:
         low = 1024 * KB + 1;
@@ -1293,14 +1314,16 @@ static void add_size(node *all, const xd_search_criteria *criteria) {
         low = given * KB;
         break;
     case XD_SEARCH_SIZE_AT_MOST:
-        low = 0, high = given * KB + 1;
+        low = 0;
+        high = given * KB + 1;
         break;
     case XD_SEARCH_SIZE_ANY:
     case XD_SEARCH_SIZE_COUNT:
         return;
     }
     node *term = new_term(XD_SEARCH_PROP_SIZE, SIZE_NAMES[criteria->size]);
-    term->low = low, term->high = high;
+    term->low = low;
+    term->high = high;
     g_ptr_array_add(all->children, term);
 }
 
@@ -1405,7 +1428,8 @@ static bool match_contents(const node *term, xd_search_item *item) {
     const char *text = nullptr;
     gsize text_length = 0;
     if (length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
-        text = data + 3, text_length = length - 3;
+        text = data + 3;
+        text_length = length - 3;
     } else if (length >= 2 && ((bytes[0] == 0xFF && bytes[1] == 0xFE) ||
                                (bytes[0] == 0xFE && bytes[1] == 0xFF))) {
         converted = g_convert(data + 2, (gssize)(length - 2), "UTF-8",
@@ -1413,7 +1437,8 @@ static bool match_contents(const node *term, xd_search_item *item) {
                               nullptr);
         text = converted;
     } else {
-        text = data, text_length = length;
+        text = data;
+        text_length = length;
     }
     if (text != nullptr && g_utf8_validate_len(text, text_length, nullptr))
         return g_regex_match_full(term->regex, text, (gssize)text_length, 0, 0, nullptr, nullptr);
