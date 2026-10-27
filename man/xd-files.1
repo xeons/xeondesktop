@@ -4,8 +4,12 @@ xd\-files \- the XeonDesktop file manager
 .SH SYNOPSIS
 .SY xd\-files
 .OP \-\-explore
+.OP \-\-search
 .OP \-\-view view
 .RI [ folder ...]
+.YS
+.SY xd\-files
+.IR search .xdsearch
 .YS
 .SY xd\-files
 .B \-\-properties
@@ -164,9 +168,94 @@ a move is, asking about anything in the way, and Edit > Undo takes it
 back.
 Entries that would land outside the folder, device files and
 set-user-ID bits are left out.
+.SS Search
+The Search button,
+.BR F3 ,
+.BR Ctrl+F " and " Ctrl+E
+open Explorer's Search bar on the left, in the Folders tree's place
+.RB ( F3
+and the button close it again).
+In the Windows XP style it is XP's Search Companion: what to search for
+(Pictures, music, or video; Documents; All files and folders; Computers
+or people is greyed, there being no directory to search), then the
+criteria: all or part of the file name (several names apart by commas or
+semicolons; * and ? wildcards; a "quoted" name as it is), a word or
+phrase in the file, Look in, when it was modified (or created, or
+accessed), its size, the type of file, system and hidden files,
+subfolders and case.
+.B Use regular expressions
+(not XP's) makes the name and the phrase regular expressions.
+Afterwards, "Did you find what you wanted?" refines the search, sorts
+the results by category, starts a new one, or closes the bar.
+Change preferences turns AutoComplete of names on or off and chooses the
+standard or advanced start; there is no animated character.
+With the Classic look and Start menu it is Windows 2000's Search pane:
+named, containing text, Look in, Search Now and Stop Search, and Search
+Options (date, type, size, and advanced options).
+.PP
+In the Windows 7 style the search box at the end of the address bar
+searches the folder shown and its subfolders as you type, the address bar
+filling in green as it goes; Esc or the box's X goes back to the folder.
+Clicking it shows the recent searches and "Add a search filter": Date
+modified (a calendar and 7's ranges) and Size.
+Under the results, "Search again in:" searches Libraries (Documents,
+Music, Pictures and Videos), Computer, a folder chosen, or the file
+contents too; Save search on the command bar saves it.
+The box takes Windows 7's Advanced Query Syntax:
+words (all of them, in the name),
+.BR AND ", " OR ", " NOT " (upper case), " \- word ,
+.RB ( ... ),
+"exact phrases", * and ? wildcards, and the properties
+.BR name: ", " kind: " (folder, document, picture, music, video, program,"
+link, email, contact, calendar),
+.BR type: / ext: " (an extension, a MIME type or words of the type's name),"
+.BR datemodified: ", " datecreated: ", " dateaccessed:
+(today, yesterday, this week, last week, this month, last month, this
+year, last year, 7's "earlier this week/month/year" and "a long time
+ago", a year, or a date in the locale's format or as YYYY-MM-DD),
+.B size:
+(empty, tiny, small, medium, large, huge, gigantic, or a number with B,
+KB, MB, GB) and
+.BR content: ,
+with
+.BR > ", " < ", " >= ", " <= ", " = " (exact), " ~ " (contains) and " <>
+and ranges
+.IB a .. b\fR.
+.PP
+Regular expressions (not Windows'): in the box, a term written
+.BI / pattern /
+matches names against a Perl-compatible regular expression (PCRE, case
+sensitive);
+.BI / pattern /i
+ignores case, and \e/ is a slash in the pattern;
+.BI content:/ pattern /
+matches what's in the files.
+Folder Options' Search tab can turn this off.
+A pattern that isn't valid says so (in the box's icon and the status bar,
+or in a message from the Search bar) instead of finding nothing.
+.PP
+The results show in the window as Search Results (Name, In Folder, Size,
+Type, Date Modified), as they are found; the part of each name that
+matched is highlighted, in the theme's selected-text colours unless
+Folder Options' Search tab sets a colour.
+Links are not followed and no folder is searched twice; /proc, /sys,
+/dev and /run are searched only from inside them, other system folders
+(/usr, /etc, /var...) only with Search system folders, hidden files and
+folders only when asked.
+File contents are read up to 32 MiB a file: text in UTF-8, or UTF-16 with
+a byte order mark, as text; anything else, as XP did, as bytes (ASCII
+letters in either case, the phrase also in UTF-16LE).
+With Folder Options' "Include compressed files", the names inside
+archives libarchive reads are searched too (not their contents).
+.PP
+File > Save Search (7: Save search) saves the search in
+.I ~/Searches
+as a
+.I .xdsearch
+file, listed under Favorites; opening one searches again.
 .PP
 The options other than
-.BR \-\-explore " and " \-\-view
+.BR \-\-explore ", " \-\-search " and " \-\-view
 do one thing without opening a folder window, and exit when it is done;
 the desktop's icons use them.
 .SH OPTIONS
@@ -176,6 +265,13 @@ Open the
 .IR folder s
 with the Folders tree showing, as XP's Explore does, rather than the
 task pane.
+.TP
+.B \-\-search
+Open the
+.I folder
+(or My Computer, searching Local Hard Drives) with Search: the Search bar,
+or in the Windows 7 style the focus in the search box.
+The Start menus' Search runs this.
 .TP
 .BI \-\-view= view
 Open in the view
@@ -259,6 +355,13 @@ user name) and the network places; never passwords.
 .TP
 .I $XDG_CACHE_HOME/thumbnails/
 The thumbnail cache.
+.TP
+.I ~/Searches/*.xdsearch
+Saved searches (a key file of the criteria).
+.TP
+.IR $XDG_STATE_HOME/xeondesktop/search\-history ", " search\-names ", " search\-companion.ini
+The search box's recent searches, the Search Companion's AutoComplete
+names and its preferences.
 .SH ENVIRONMENT
 .TP
 .B XD_CLEANUP_TEMP_DIRS
@@ -271,6 +374,10 @@ stand-ins for pacman, apt-get, dnf and journalctl, and an
 .B xd\-cleanmgr\-helper
 to run directly instead of through pkexec (which it ignores when run as
 root).
+.TP
+.B XD_SEARCH_TRACE
+A file each search writes to (for tests): what it found, when it started,
+stopped and ended, and its errors.
 .TP
 .B XD_SMB_CONF
 An smb.conf for
@@ -289,5 +396,4 @@ and
 .SH SEE ALSO
 .BR xd\-folders (1),
 .BR xd\-thumbnailer (1),
-.BR xd\-control (1),
-.BR xd\-search (1)
+.BR xd\-control (1)

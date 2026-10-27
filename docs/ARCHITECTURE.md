@@ -695,6 +695,19 @@ Modelled on Windows XP's Explorer windows:
   Folders tree and status bar, which show the tab in front. A closed tab's
   struct stays until the window closes, so a mount or a network name still
   on its way finds it marked closed.
+- **Search** (`search.c`, `searchwalk.c`, `searchpane.c`): one engine
+  for XP's Search Companion and 2000's Search pane (the Search bar, in the
+  Folders tree's place) and 7's search box. Both make an
+  `xd_search_criteria`; `xd_search_query_new` turns its fields and its
+  Advanced Query Syntax text into one tree of AND/OR/NOT over terms,
+  matched with GRegex (words, wildcards and `/regex/` alike). A worker
+  thread walks Look in with GFileEnumerator (no links followed, folders
+  remembered by device and inode, /proc, /sys, /dev and /run left out)
+  and hands its finds to the main thread a few times a second; the tab's
+  XdFolderView shows them as results (`begin/add/end_results`, the In
+  Folder column) and highlights the matched parts of names
+  (`xd_search_query_name_spans`). Saved searches are key files
+  (`.xdsearch`, `application/x-xeondesktop-search`).
 - Special folders: My Documents, My Computer (every mount from GIO's
   volume monitor, with mount and eject), Recycle Bin (freedesktop trash,
   including other drives' `.Trash-UID`), My Network Places (gvfs), Control
