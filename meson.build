@@ -151,6 +151,7 @@ settings_lib = static_library(
   'src/settings/effects/magic_lamp.c',
   'src/settings/effects/burn.c',
   'src/settings/effects/explode.c',
+  'src/settings/effects/water.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -423,6 +424,8 @@ effects_fx_src = files(
   'src/compositor/effects/burn_model.c',
   'src/compositor/effects/explode.c',
   'src/compositor/effects/explode_model.c',
+  'src/compositor/effects/water.c',
+  'src/compositor/effects/water_model.c',
 )
 lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
 lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []
@@ -1494,6 +1497,7 @@ test_exe = executable(
   'src/compositor/effects/magic_lamp_model.c',
   'src/compositor/effects/burn_model.c',
   'src/compositor/effects/explode_model.c',
+  'src/compositor/effects/water_model.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,

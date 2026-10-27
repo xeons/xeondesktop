@@ -5,6 +5,7 @@
 #include "../src/compositor/effects/burn_model.h"
 #include "../src/compositor/effects/explode_model.h"
 #include "../src/compositor/effects/magic_lamp_model.h"
+#include "../src/compositor/effects/water_model.h"
 
 /* Magic Lamp: the window as it is at the start, narrower near the
  * button than at its top midway, all in the button at the end; and a
@@ -206,8 +207,48 @@ static void test_explode_model(void) {
     xd_explode_free(&explode);
 }
 
+/* Water: a drop's ring spreads out step by step, symmetrically, and dies
+ * down till the water is flat again; still water stays still. */
+static void test_water_model(void) {
+    xd_water water;
+    CHECK(!xd_water_init(&water, 2, 40));
+    CHECK(xd_water_init(&water, 64, 48));
+    CHECK(!xd_water_step(&water)); /* flat */
+    xd_water_add_drop(&water, 32, 24, 3, 1);
+    CHECK(xd_water_get_height(&water, 32, 24) < -0.9f);
+    CHECK(xd_water_get_height(&water, 40, 24) == 0);
+    double across = 0, down = 0;
+    xd_water_get_slope(&water, 33, 24, &across, &down);
+    CHECK(across > 0 && fabs(down) < 1e-6); /* rising away from the dent */
+    for (int step = 0; step < 10; step++)
+        CHECK(xd_water_step(&water));
+    /* The ring has reached cells the drop never touched, the same way
+     * every way. */
+    float east = xd_water_get_height(&water, 40, 24), west = xd_water_get_height(&water, 24, 24);
+    float south = xd_water_get_height(&water, 32, 32), north = xd_water_get_height(&water, 32, 16);
+    CHECK(fabsf(east) > 1e-4f);
+    CHECK(fabsf(east - west) < 1e-5f && fabsf(east - south) < 1e-5f &&
+          fabsf(east - north) < 1e-5f);
+    int steps = 0;
+    while (xd_water_step(&water) && steps < 5000)
+        steps++;
+    CHECK(steps > 20 && steps < 5000);
+    bool flat = true;
+    for (int row = 0; row < water.rows; row++) {
+        for (int column = 0; column < water.columns; column++)
+            flat = flat && xd_water_get_height(&water, column, row) == 0;
+    }
+    CHECK(flat);
+    /* A line of drops: dents all along it. */
+    xd_water_add_line(&water, 10, 10, 30, 10, 2, 0.5);
+    CHECK(xd_water_get_height(&water, 10, 10) < 0 && xd_water_get_height(&water, 20, 10) < 0 &&
+          xd_water_get_height(&water, 30, 10) < 0 && xd_water_get_height(&water, 20, 20) == 0);
+    xd_water_free(&water);
+}
+
 static void test_effects_gl(void) {
     test_magic_lamp_model();
     test_burn_model();
     test_explode_model();
+    test_water_model();
 }

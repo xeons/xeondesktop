@@ -414,6 +414,19 @@ fading. Thickness is faked: a darker copy of each piece, pushed the way
 it's tilted, shows as its edge. A window has one closing effect: the
 first effect turned on to ask for it.
 
+**Water Effect** (`water.c`, the waves in `water_model.c`, unit-tested)
+is an output filter. A height field covers the output layout, a cell
+every 4 layout units or more (at most 400 across, so llvmpipe keeps up),
+stepped 60 times a second by the damped discrete wave equation; each
+frame its slopes and light go to the GPU as a small RGBA texture, and the
+shader shifts each pixel of the screen's picture by its slope (times
+OffsetScale) and lightens or darkens it. Drops come from the Ripple
+binding (Shift+Windows+click, which the click then doesn't reach), rain
+(ToggleRain, Shift+F9, a drop every RainDelay ms), the pointer's wake
+while Ctrl and the Windows key are held, and with TitleWave a line along
+a window's title bar when its title changes. Still water with no rain
+leaves the filter idle.
+
 **Testing headless.** `tests/ui/run.py` runs a scenario declared with
 `fx=True` on `xd-compositor-fx` with Mesa's llvmpipe, through EGL on no
 device (`WLR_RENDERER_FORCE_SOFTWARE`, buffers from `/dev/udmabuf`), and

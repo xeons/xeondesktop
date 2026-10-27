@@ -1084,6 +1084,53 @@ def explode_close(s):
            "the pieces gone", timeout=10)
 
 
+@scenario(setup=effects_setup("[Water]\nEnabled=true\n"), fx=True)
+def water_ripple(s):
+    """Water Effect (xd-compositor-fx): Shift+Windows+click starts a
+    ripple at the pointer, so the desktop's pixels around it (its icons)
+    are displaced, while those far from it aren't; the click reaches
+    nothing else, and the water settles flat again. Shift+F9 makes it
+    rain till pressed again, and with Ctrl and the Windows key held the
+    pointer leaves a wake."""
+    require_opengl_effects(s)
+    s.inject("move", 300, 400)
+    empty = s.settle("desktop")
+    near = (0, 30, 180, 180)
+    far = (600, 300, 300, 300)
+    s.inject("move", 70, 110, "hold", "super", "hold", "shift", "click",
+             "release", "shift", "release", "super", "sleep", 150)
+    rippling = s.shot("rippling")
+    moved = rippling.differs(empty, near, step=2)
+    still = rippling.differs(empty, far, step=2)
+    s.log(f"{moved:.2f} of the pixels near the pointer moved, {still:.2f} far from it")
+    s.check(moved > 0.05, f"the desktop near the pointer is displaced ({moved:.2f})")
+    s.check(still < 0.01, f"far from it nothing moved yet ({still:.2f})")
+    # Flat again and just as it was: the click selected no icon and
+    # opened no Start menu.
+    s.inject("move", 300, 400)
+    s.wait(lambda: s.shot("settled").differs(empty, (0, 0, WIDTH, HEIGHT)) < 0.002,
+           "the water flat again, nothing clicked", timeout=15)
+    # Shift+F9: rain, drops all over the screen till it's pressed again
+    # (faint rings on a plain desktop: they shade it a little).
+    s.inject("key", "shift+F9", "sleep", 1500)
+    raining = s.shot("raining").differs(empty, (0, 0, WIDTH, HEIGHT - 40), step=4, tolerance=2)
+    s.check(raining > 0.005, f"Shift+F9 makes it rain ({raining:.2f} of the screen rippling)")
+    s.inject("key", "shift+F9")
+    s.wait(lambda: s.shot("rain-over").differs(empty, (0, 0, WIDTH, HEIGHT)) < 0.002,
+           "the rain stopped and the water flat again", timeout=15)
+    # Ctrl and the Windows key held, the pointer leaves a wake (and letting
+    # go opens no Start menu).
+    steps = ["move", 300, 400, "hold", "ctrl", "hold", "super", "sleep", 100]
+    for i in range(1, 16):
+        steps += ["move", 300 + 20 * i, 400]
+    steps += ["release", "super", "release", "ctrl", "sleep", 100]
+    s.inject(*map(str, steps))
+    wake = s.shot("wake").differs(empty, (300, 340, 320, 120), step=2, tolerance=2)
+    s.check(wake > 0.05, f"the pointer left a wake ({wake:.2f})")
+    s.wait(lambda: s.shot("wake-over").differs(empty, (0, 0, WIDTH, HEIGHT)) < 0.002,
+           "the wake settled, no Start menu", timeout=15)
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
