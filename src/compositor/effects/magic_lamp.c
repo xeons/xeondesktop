@@ -186,11 +186,22 @@ static void lamp_handle_window_event([[maybe_unused]] xd_server *server, void *d
     lamp_start(state, view, icon, progress, false);
 }
 
+static bool lamp_animates([[maybe_unused]] xd_server *server, void *data, const xd_view *view,
+                          xd_window_event_kind kind) {
+    const lamp_state *state = data;
+    bool opening_or_closing =
+        (kind == XD_WINDOW_EVENT_MAP || kind == XD_WINDOW_EVENT_UNMAP) && state->options.open_close;
+    bool minimizing = kind == XD_WINDOW_EVENT_MINIMIZE || kind == XD_WINDOW_EVENT_UNMINIMIZE;
+    struct wlr_box icon;
+    return (opening_or_closing || minimizing) && lamp_can_animate(state, view) &&
+           lamp_get_icon(state, view, opening_or_closing, &icon);
+}
+
 const xd_effect_impl xd_effect_impl_magic_lamp = {
     .id = "MagicLamp",
     .enable = lamp_enable,
     .disable = lamp_disable,
     .configure = lamp_configure,
     .window_event = lamp_handle_window_event,
-    .animates_minimize = true,
+    .animates = lamp_animates,
 };

@@ -151,7 +151,10 @@ static void animations_handle_window_event([[maybe_unused]] xd_server *server, v
     animation_event kind;
     if (!animation_get_event(event->kind, &kind))
         return;
-    if (!animation_is_wanted(state, kind, view)) {
+    /* An effect before it in the list (Magic Lamp, one of Compiz's
+     * Animation's own choices) has this one. */
+    if (!animation_is_wanted(state, kind, view) ||
+        xd_effects_is_animated_before(&xd_effect_impl_animations, view, event->kind)) {
         /* Whatever it was doing is over. */
         animation_cancel_view(state, view);
         return;

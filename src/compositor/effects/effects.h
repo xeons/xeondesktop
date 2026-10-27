@@ -82,17 +82,17 @@ typedef struct xd_effect_impl {
     /* Before each frame of each output is drawn (Compiz's
      * preparePaintScreen): `now` in seconds, CLOCK_MONOTONIC. */
     void (*frame)(xd_server *server, void *state, xd_output *output, double now);
-    /* It draws minimizing and restoring itself: XP's animation (a bar
-     * flying to the taskbar button) is left out while it's on. */
-    bool animates_minimize;
     /* Input (xd_effect_input), the effects' only way in: true if the
      * effect used it up. Keys, buttons and wheel steps go no further once
      * one has (a button's release then goes nowhere else either, whoever
      * claims it); every effect sees each move and modifier change. Keys
      * and buttons never come while the screen is locked. */
     bool (*input)(xd_server *server, void *state, const xd_effect_input *input);
-    /* Whether it animates this window event itself, so XP's animation
-     * (animate.c) doesn't: MINIMIZE and UNMINIMIZE. */
+    /* Whether it animates this window event itself. For MINIMIZE and
+     * UNMINIMIZE, XP's animation (animate.c, a bar flying to the taskbar
+     * button) is left out then; for any event, effects later in
+     * impl_list.h that ask (xd_effects_is_animated_before) leave the
+     * window to it: Magic Lamp's minimize, not Animations' too. */
     bool (*animates)(xd_server *server, void *state, const xd_view *view,
                      xd_window_event_kind kind);
 } xd_effect_impl;
@@ -113,8 +113,6 @@ void xd_effects_output_frame(xd_output *output);
 void xd_effects_output_frame_done(xd_output *output);
 /* Whether `effect` (the settings' index) is turned on and running. */
 bool xd_effects_is_running(const xd_server *server, const char *id);
-/* view.c: whether an effect on draws minimizing and restoring. */
-bool xd_effects_animates_minimize(const xd_server *server);
 /* output.c: whether an effect draws the output's frames itself (every
  * frame is drawn then), and the frame's state, as
  * wlr_scene_output_build_state makes it. */
@@ -127,6 +125,10 @@ bool xd_effects_input(xd_server *server, xd_effect_input *input);
 /* view.c: whether an effect animates the window's minimize or
  * unminimize, in place of XP's animation. */
 bool xd_effects_animates_window(xd_view *view, xd_window_event_kind kind);
+/* Whether an effect on and listed before `impl` animates the window
+ * event (its `animates`): `impl` then leaves the window alone. */
+bool xd_effects_is_animated_before(const xd_effect_impl *impl, xd_view *view,
+                                   xd_window_event_kind kind);
 
 /* Helpers for the effects. */
 /* A KEY or BUTTON option of `effect`; all zeros for none. */

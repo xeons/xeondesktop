@@ -240,17 +240,6 @@ bool xd_effects_is_running(const xd_server *server, const char *id) {
     return false;
 }
 
-bool xd_effects_animates_minimize(const xd_server *server) {
-    const xd_effects *effects = server->effects;
-    if (effects == nullptr)
-        return false;
-    for (size_t i = 0; i < effects_count_impls(); i++) {
-        if (effects->running[i].on && impls[i]->animates_minimize)
-            return true;
-    }
-    return false;
-}
-
 /* ---- input ---------------------------------------------------------------------- */
 
 static uint32_t effects_get_modifiers(xd_server *server) {
@@ -325,6 +314,20 @@ bool xd_effects_animates_window(xd_view *view, xd_window_event_kind kind) {
     if (effects == nullptr)
         return false;
     for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->animates != nullptr &&
+            impls[i]->animates(server, effects->running[i].state, view, kind))
+            return true;
+    }
+    return false;
+}
+
+bool xd_effects_is_animated_before(const xd_effect_impl *impl, xd_view *view,
+                                   xd_window_event_kind kind) {
+    xd_server *server = view->server;
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    for (size_t i = 0; i < effects_count_impls() && impls[i] != impl; i++) {
         if (effects->running[i].on && impls[i]->animates != nullptr &&
             impls[i]->animates(server, effects->running[i].state, view, kind))
             return true;

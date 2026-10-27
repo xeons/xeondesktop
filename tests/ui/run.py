@@ -1043,6 +1043,30 @@ def magic_lamp_minimize(s):
             f"restored where it was ({back}, was {(x, y, w, h)})")
 
 
+@scenario(setup=effects_setup("[MagicLamp]\nEnabled=true\nDuration=4000\n"
+                              "[Animations]\nEnabled=true\nMinimizeEffect=fade\n"
+                              "MinimizeDuration=4000\n"), fx=True)
+def magic_lamp_over_animations(s):
+    """Magic Lamp and Animations (Fade on minimize) both on, both slowed
+    to 4 s: Magic Lamp alone minimizes the window. Midway its rows near the
+    taskbar are narrower than its top, which a fading copy of the whole
+    window (Animations as well) would fill; then it's gone."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "super+Down", "sleep", 1600)
+    mid = s.shot("midway")
+    top = row_span(mid, empty, y + 30)
+    bottom = row_span(mid, empty, y + h - 10)
+    s.log(f"midway: {top} px wide at its top, {bottom} near the taskbar (was {w})")
+    s.check(top > w * 0.8, f"midway its top is still about as wide ({top} of {w})")
+    s.check(0 < bottom < top * 0.75,
+            f"near the taskbar it's narrower, no fading copy over it ({bottom} < {top})")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window gone into its button", timeout=10)
+
+
 @scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"), fx=True)
 def burn_close(s):
     """Burn (xd-compositor-fx), slowed to 4 s: a window closed with Alt+F4

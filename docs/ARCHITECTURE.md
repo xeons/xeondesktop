@@ -335,9 +335,17 @@ read once with `xd_effects_get_binding()` and matched with
 `xd_binding_modifier` bits), keys in lower case and Shift+Tab as Tab, and
 Button4 and Button5 as the wheel's steps up and down, as in Compiz.
 `xd_effects_is_binding_held()` says whether a binding's modifiers are
-all still held, for switchers that end when they're let go. `animates`
-says an effect animates a window's minimize or unminimize itself, so
-`view.c` skips XP's bar animation (`animate.c`) for it.
+all still held, for switchers that end when they're let go.
+
+**Who animates a window.** `animates(view, kind)` says an effect animates
+that window event itself. For a minimize or unminimize `view.c` then
+skips XP's bar animation (`animate.c`). Effects that animate events
+others may too ask `xd_effects_is_animated_before()`, and leave the
+window to an effect before them in `impl_list.h` that does: with Magic
+Lamp and Animations both on, Magic Lamp (one of the choices of Compiz's
+Animation plugin) minimizes and restores the windows it takes, and opens
+and closes them with OpenClose, and Animations the rest, never both at
+once.
 
 **Scene-graph effects** (both builds) draw with scene nodes only: buffers'
 opacity and destination size, rects, positions. Helpers:
@@ -523,8 +531,8 @@ it stays where the window was stacked when the tree is hidden or freed.
 `effect->view` is the window until it's destroyed (`xd_glfx_drop_view`),
 then nullptr; a live effect begun on a window that has a closing one
 (restored while it's being minimized) ends it. An effect that draws
-minimizing and restoring sets `animates_minimize` in its
-`xd_effect_impl`, and XP's bar animation is left out while it's on.
+minimizing and restoring says so in its `animates` hook, as any effect
+does.
 
 **Output filters** (whole-output effects: Water; a cube or a wall).
 `xd_glfx_add_output_filter(server, impl, data)`: while a filter is active,
