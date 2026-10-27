@@ -21,3 +21,11 @@ XD_EFFECT_IMPL(ring_switcher)
 XD_EFFECT_IMPL(enhanced_zoom)
 XD_EFFECT_IMPL(annotate)
 XD_EFFECT_IMPL(show_mouse)
+XD_EFFECT_IMPL(general_options)
+XD_EFFECT_IMPL(desktop_wall)
+#ifdef XD_SCENEFX
+XD_EFFECT_IMPL(desktop_cube)
+XD_EFFECT_IMPL(rotate_cube)
+XD_EFFECT_IMPL(expo)
+XD_EFFECT_IMPL(shift_switcher)
+#endif

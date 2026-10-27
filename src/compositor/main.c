@@ -295,6 +295,7 @@ static bool server_init(xd_server *server) {
     xd_layers_init(server);
     wl_list_init(&server->zooms);
     xd_view_init(server);
+    xd_desktops_init(server);
     xd_input_init(server);
     xd_constraints_init(server);
     xd_access_init(server);
@@ -351,6 +352,7 @@ static void server_finish(xd_server *server) {
     xd_input_finish(server);
     /* The windows are gone: their effects ended with them. */
     xd_effects_finish(server);
+    xd_desktops_finish(server);
     /* wlroots asserts that nothing still listens to an object it
      * destroys, so detach every server-level listener first. */
     struct wl_listener *listeners[] = {

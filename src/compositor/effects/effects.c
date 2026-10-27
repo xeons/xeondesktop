@@ -8,11 +8,13 @@
 
 #include <linux/input-event-codes.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
 #include <wlr/render/gles2.h>
 #include <wlr/render/pixman.h>
+#include <wlr/types/wlr_keyboard.h>
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -196,6 +198,9 @@ void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
         xd_glfx_forget_view(view);
     if (kind == XD_WINDOW_EVENT_DESTROY)
         xd_glfx_drop_view(view);
+    /* Scene captures (glfx_output.c) keep its frame's pixels no more. */
+    if (kind == XD_WINDOW_EVENT_UNMAP || kind == XD_WINDOW_EVENT_DESTROY)
+        xd_glfx_capture_forget_view(view);
 #endif
 }
 
@@ -414,6 +419,11 @@ bool xd_effects_binding_matches(const xd_effect_binding *binding, const xd_effec
         return false;
     }
     return false;
+}
+
+bool xd_effects_is_binding_held(const xd_effect_binding *binding, const xd_effect_input *input) {
+    bool none = binding->keysym == XKB_KEY_NoSymbol && binding->button == 0 && binding->wheel == 0;
+    return !none && (input->modifiers & binding->modifiers) == binding->modifiers;
 }
 
 bool xd_effects_is_output_filtered([[maybe_unused]] const xd_output *output) {

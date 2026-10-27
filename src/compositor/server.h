@@ -67,6 +67,7 @@ typedef struct xd_tablets xd_tablets;
 typedef struct xd_gestures xd_gestures;
 typedef struct xd_constraints xd_constraints;
 typedef struct xd_effects xd_effects;
+typedef struct xd_desktops xd_desktops;
 
 /* A client on a connection the compositor made for it (trust.c). */
 typedef struct xd_trusted_client {
@@ -242,6 +243,12 @@ typedef struct xd_view {
     bool has_button_box;
     struct wl_listener decoration_mode;
     struct wl_listener decoration_destroy;
+    /* desktops.c: the virtual desktop it's on, whether it shows on every
+     * one ("Always on Visible Workspace"), and when it was opened (its
+     * taskbar button's place when it gets one back). */
+    int desktop;
+    bool sticky;
+    uint64_t open_order;
 } xd_view;
 
 typedef struct xd_keyboard {
@@ -508,6 +515,7 @@ struct xd_server {
     xd_gestures *gestures; /* gestures.c's: touchpad gestures */
     xd_constraints *constraints; /* constraints.c's: pointer lock, shortcut inhibitors */
     xd_effects *effects;   /* effects/effects.c's: Desktop Effects */
+    xd_desktops *desktops; /* desktops.c's: virtual desktops */
 #ifdef XD_SCENEFX
     struct xd_glfx *glfx; /* effects/glfx.c's: the OpenGL effect path */
 #endif
@@ -939,6 +947,52 @@ void xd_capture_view_shown(xd_view *view);
 void xd_capture_view_hidden(xd_view *view);
 void xd_capture_view_changed(xd_view *view);
 void xd_capture_view_committed(xd_view *view);
+
+/* desktops.c: virtual desktops (General Options' Desktop Size). Every
+ * window is on one, or on all (sticky); those of the others are hidden,
+ * and have no taskbar button. With one desktop, the default, nothing
+ * changes. */
+void xd_desktops_init(xd_server *server);
+void xd_desktops_finish(xd_server *server);
+/* columns x rows desktops (clamped), wrapping round the edges or not;
+ * windows on desktops that go move to the last one. */
+void xd_desktops_set_grid(xd_server *server, int columns, int rows, bool wrap);
+int xd_desktops_get_count(const xd_server *server);
+int xd_desktops_get_current(const xd_server *server);
+const struct xd_desktop_grid *xd_desktops_get_grid(const xd_server *server);
+/* Whether the window is on the desktop showing (or on every one). */
+bool xd_desktops_is_view_shown(const xd_view *view);
+/* A window opening: on the current desktop, or its owner's. */
+void xd_desktops_view_mapped(xd_view *view);
+/* Shows `desktop`; `carried` (or nullptr) comes along, as the move keys
+ * carry the focused window. The front window there gets the focus. */
+void xd_desktops_switch_to(xd_server *server, int desktop, xd_view *carried);
+/* The desktop that way (desktops_grid.h's find_neighbour); false if
+ * there's none. */
+bool xd_desktops_switch_by(xd_server *server, int columns, int rows, xd_view *carried);
+/* The window, and its dialogs, onto `desktop` (no longer sticky). */
+void xd_desktops_move_view(xd_view *view, int desktop);
+void xd_desktops_set_sticky(xd_view *view, bool sticky);
+/* Hides the windows of other desktops and shows the current one's, with
+ * their taskbar buttons (after an animation showed others for a while). */
+void xd_desktops_apply(xd_server *server);
+/* Effects that animate a switch (Desktop Wall, Desktop Cube): asked, the
+ * highest priority first, when the desktop showing changes from `from`
+ * to `to` (already current); true if it animates it. */
+typedef bool (*xd_desktops_animate_fn)(xd_server *server, void *data, int from, int to,
+                                       xd_view *carried);
+void xd_desktops_add_animator(xd_server *server, int priority, xd_desktops_animate_fn animate,
+                              void *data);
+void xd_desktops_remove_animator(xd_server *server, xd_desktops_animate_fn animate, void *data);
+/* view.c: the window has a taskbar button if it's mapped, owns itself and
+ * shows on this desktop; made or taken away to match. */
+void xd_view_update_taskbar_button(xd_view *view);
+/* The window that owns it (a dialog's), or nullptr. */
+xd_view *xd_view_get_owner(const xd_view *view);
+/* arrange.c: tells the shell the desktops (xd-window-arranger-v1's
+ * desktops event), and a window's desktop (window_desktop). */
+void xd_arrange_desktops_changed(xd_server *server);
+void xd_arrange_view_desktop(xd_view *view);
 
 /* frame.c */
 void xd_frame_render(xd_view *view, bool force);

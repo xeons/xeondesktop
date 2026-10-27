@@ -56,6 +56,7 @@ typedef struct xd_effect_input {
     double delta;       /* AXIS: positive is down (towards the user) */
     int steps;          /* AXIS: how many of the wheel's notches (at least 1) */
     double x, y;        /* the pointer, layout coordinates */
+    uint32_t time_msec; /* KEY, BUTTON, MOTION: the event's time */
 } xd_effect_input;
 
 /* A KEY or BUTTON option, read once (xd_effects_get_binding) to match
@@ -117,7 +118,6 @@ void xd_effects_output_frame(xd_output *output);
 void xd_effects_output_frame_done(xd_output *output);
 /* Whether `effect` (the settings' index) is turned on and running. */
 bool xd_effects_is_running(const xd_server *server, const char *id);
-
 /* view.c: whether an effect on draws minimizing and restoring. */
 bool xd_effects_animates_minimize(const xd_server *server);
 /* input.c: a key or a button pressed; true if an effect took it.
@@ -151,6 +151,9 @@ void xd_effects_get_binding(const xd_effects_settings *settings, size_t effect, 
 /* Whether a key or button press (or a wheel step) is that binding:
  * exactly its modifiers held. */
 bool xd_effects_binding_matches(const xd_effect_binding *binding, const xd_effect_input *input);
+/* Whether every modifier of the binding is still held (a switcher its
+ * key opened ends when one is let go). */
+bool xd_effects_is_binding_held(const xd_effect_binding *binding, const xd_effect_input *input);
 /* Whether a window matches an XD_EFFECT_OPTION_MATCH value. */
 bool xd_effects_match_view(const char *match, const xd_view *view);
 /* A tree above every window and panel and below the lock screen, for an

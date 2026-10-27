@@ -23,7 +23,7 @@ void xd_switcher_show(xd_server *server) {
     xd_view *views[MAX_ITEMS];
     size_t count = 0, selected = 0;
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
-        if (!view->mapped || count == MAX_ITEMS)
+        if (!view->mapped || !xd_desktops_is_view_shown(view) || count == MAX_ITEMS)
             continue;
         if (view == sel)
             selected = count;

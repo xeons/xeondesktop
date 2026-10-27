@@ -67,6 +67,8 @@
 #include "../src/color/colorlib.h"
 #include "../src/compositor/vcgt.h"
 #include "../src/compositor/effects/wobbly_model.h"
+#include "../src/compositor/desktops_grid.h"
+#include "../src/compositor/effects/viewport_model.h"
 #include "../src/settings/effects.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"
@@ -10849,7 +10851,8 @@ static void test_effects_table(void) {
         const xd_effect_info *info = xd_effects_get_info(settings, effect);
         CHECK(info->id != nullptr && info->name != nullptr && info->description != nullptr &&
               info->icon != nullptr && info->category < XD_EFFECT_CATEGORY_COUNT);
-        CHECK(!xd_effects_is_enabled(settings, effect));
+        /* General Options, settings rather than an effect, is always in use. */
+        CHECK(info->always_on == xd_effects_is_enabled(settings, effect));
         size_t found = 0;
         CHECK(xd_effects_find(settings, info->id, &found) && found == effect);
         for (size_t option = 0; option < info->option_count; option++) {
@@ -11146,6 +11149,8 @@ static void test_effects_support(void) {
 
 /* Wobbly Windows' springs: a dragged window bends and lags, and settles
  * on its rectangle once let go. */
+#include "test_desktops.c"
+
 static void test_wobbly_model(void) {
     xd_wobbly_model model;
     xd_wobbly_init(&model, 100, 100, 400, 300, 8.0, 3.0);
@@ -11335,6 +11340,7 @@ int main(void) {
     test_wobbly_model();
     test_effects_gl();
     test_effects_scene();
+    test_desktops();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

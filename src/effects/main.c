@@ -733,7 +733,8 @@ static void panel_show_page(panel *app, size_t effect) {
     gtk_label_set_text(GTK_LABEL(app->page_description), info->description);
     bool available = panel_is_available(app, effect);
     gtk_widget_set_sensitive(app->page_use, available);
-    gtk_widget_set_visible(app->page_use, true);
+    /* General Options is always in use: nothing to turn on. */
+    gtk_widget_set_visible(app->page_use, !info->always_on);
     gtk_label_set_text(GTK_LABEL(app->page_reason),
                        available ? "" : panel_get_unavailable_reason(app));
     gtk_widget_set_visible(app->page_reason, !available);
@@ -767,7 +768,7 @@ static void panel_show_page(panel *app, size_t effect) {
     panel_refresh_tiles(app);
     gtk_stack_set_visible_child_name(GTK_STACK(app->sidebar_stack), "page");
     gtk_stack_set_visible_child_name(GTK_STACK(app->main_stack), "page");
-    gtk_widget_grab_focus(available ? app->page_use : app->page_notebook);
+    gtk_widget_grab_focus(available && !info->always_on ? app->page_use : app->page_notebook);
 }
 
 static void panel_show_preferences(panel *app) {
@@ -875,6 +876,10 @@ static GtkWidget *panel_build_tile(panel *app, effect_tile *tile) {
     g_autofree char *check_name = g_strdup_printf("Use %s", info->name);
     atk_object_set_name(gtk_widget_get_accessible(tile->check), check_name);
     g_signal_connect(tile->check, "toggled", G_CALLBACK(panel_on_tile_toggled), tile);
+    /* Its place kept, so the names line up, but nothing to tick. */
+    gtk_widget_set_opacity(tile->check, info->always_on ? 0.0 : 1.0);
+    gtk_widget_set_sensitive(tile->check, available && !info->always_on);
+    gtk_widget_set_can_focus(tile->check, !info->always_on);
     GtkWidget *button = gtk_button_new();
     gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
     g_object_set_data(G_OBJECT(button), "effect", GSIZE_TO_POINTER(tile->effect));

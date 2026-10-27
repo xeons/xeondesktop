@@ -800,9 +800,11 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *theme, cairo_t *cai
                                     row_h, rect.w);
         layout_tray(bar, theme, cairo, rect, 1, row_h);
         int top = y + xd_tpx(theme, 2);
-        /* The language indicator sits above the notification area. */
+        /* The language indicator sits above the notification area, and
+         * the desktops' pager above that. */
         xd_rect left = xd_langbar_layout(
             bar, theme, cairo, (xd_rect){rect.x, top, rect.w, bar->tray_rect.y - top}, true, row_h);
+        left = xd_pager_layout(bar, theme, cairo, left, true, row_h);
         layout_tasks(bar, theme, cairo,
                      (xd_rect){rect.x, top, rect.w, left.y + left.h - xd_tpx(theme, 4) - top}, 1,
                      row_h);
@@ -814,6 +816,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *theme, cairo_t *cai
     /* The language indicator sits left of the notification area. */
     xd_rect left = xd_langbar_layout(
         bar, theme, cairo, (xd_rect){x0, rect.y, bar->tray_rect.x - x0, rect.h}, false, row_h);
+    left = xd_pager_layout(bar, theme, cairo, left, false, row_h);
     int x1 = left.x + left.w - xd_tpx(theme, 6);
     layout_tasks(bar, theme, cairo, (xd_rect){x0, rect.y, x1 - x0, rect.h}, rows, row_h);
 }
@@ -935,6 +938,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
     }
     if (rect_contains(bar->lang_rect, x, y))
         return XD_HIT_LANG;
+    if (rect_contains(bar->pager_rect, x, y))
+        return XD_HIT_PAGER;
     if (rect_contains(bar->tray_chevron, x, y))
         return XD_HIT_TRAY_CHEVRON;
     if (rect_contains(bar->tray_rect, x, y))
@@ -1151,6 +1156,8 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
         return xd_str_dup_cstr(XD_STR("Click here to begin"));
     if (hit == XD_HIT_PEEK)
         return xd_str_dup_cstr(XD_STR("Show desktop"));
+    if (hit == XD_HIT_PAGER)
+        return xd_pager_get_tooltip(bar, bar->pointer_x * bar->scale, bar->pointer_y * bar->scale);
     if (hit == XD_HIT_LANG) {
         const char *name = xd_langbar_tooltip(shell);
         return name != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(name)) : nullptr;
@@ -1380,6 +1387,13 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                          : button == BTN_MIDDLE ? XD_TRAY_BUTTON_MIDDLE
                                                 : XD_TRAY_BUTTON_LEFT;
         xd_tray_item_click(bar->shell, item, which, bar, anchor, serial);
+        return;
+    }
+    if (bar->hot == XD_HIT_PAGER) {
+        /* A desktop is switched to on release, as a button is pressed. */
+        if (!pressed)
+            xd_pager_click(bar, button, bar->pointer_x * bar->scale, bar->pointer_y * bar->scale);
+        bar->dirty = true;
         return;
     }
     if (bar->hot == XD_HIT_LANG) {

@@ -163,7 +163,8 @@ static void shake(xd_server *server, xd_view *view) {
     size_t count = (size_t)wl_list_length(&server->views);
     server->shaken = xd_realloc_array(server->shaken, XD_MAX(count, 1), sizeof(*server->shaken));
     XD_LIST_FOR_EACH(other, &server->views, xd_view, link) {
-        if (other != view && other->mapped && !other->minimized && server->shaken_n < count) {
+        if (other != view && other->mapped && !other->minimized &&
+            xd_desktops_is_view_shown(other) && server->shaken_n < count) {
             server->shaken[server->shaken_n++] = other;
         }
     }

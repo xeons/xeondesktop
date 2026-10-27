@@ -73,7 +73,7 @@ static bool desktop_takes(const xd_gestures *gestures, uint32_t fingers) {
  * the list. */
 static void hide_windows(xd_server *server) {
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
-        view->swiped_away = view->mapped && !view->minimized;
+        view->swiped_away = view->mapped && !view->minimized && xd_desktops_is_view_shown(view);
     }
     bool more = true;
     while (more) {

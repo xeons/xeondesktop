@@ -524,7 +524,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 11);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 12);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         xd_primary_bind(shell, reg, name, version);
@@ -1094,6 +1094,8 @@ int main(int argc, char **argv) {
     xd_menu_tree_init(&shell.context_tree);
     xd_menu_tree_init(&shell.docs_tree);
     shell.last_arrange = -1;
+    shell.desktop_columns = 1;
+    shell.desktop_rows = 1;
     xd_start_menu_build(&shell);
     xd_start_menu_watch_programs(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);

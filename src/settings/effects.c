@@ -402,7 +402,7 @@ bool xd_effects_find_option(const xd_effect_info *info, const char *key, size_t 
 
 bool xd_effects_is_enabled(const xd_effects_settings *settings, size_t effect) {
     XD_ASSERT(effect < settings->count);
-    return settings->enabled[effect];
+    return settings->table[effect]->always_on || settings->enabled[effect];
 }
 
 void xd_effects_set_enabled(xd_effects_settings *settings, size_t effect, bool enabled) {
@@ -583,7 +583,8 @@ bool xd_effects_save_file(const xd_effects_settings *settings, const char *path)
             any_set = any_set || !xd_effects_is_default(settings, effect, option);
         if (!any_set && !g_key_file_has_group(file, info->id))
             continue;
-        g_key_file_set_boolean(file, info->id, "Enabled", settings->enabled[effect]);
+        if (!info->always_on)
+            g_key_file_set_boolean(file, info->id, "Enabled", settings->enabled[effect]);
         for (size_t option = 0; option < info->option_count; option++) {
             const char *key = info->options[option].key;
             if (xd_effects_is_default(settings, effect, option)) {
@@ -646,7 +647,7 @@ size_t xd_effects_find_conflicts(const xd_effects_settings *settings, size_t eff
         if (!effects_is_binding(type))
             continue;
         for (size_t other = 0; other < settings->count; other++) {
-            if (other == effect || !settings->enabled[other])
+            if (other == effect || !xd_effects_is_enabled(settings, other))
                 continue;
             const xd_effect_info *other_info = settings->table[other];
             for (size_t other_option = 0; other_option < other_info->option_count;

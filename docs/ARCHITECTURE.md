@@ -403,6 +403,75 @@ place of particles thrown from turning emitters, the emitters alone, a
 ring of glowing dots turning round the pointer, a small cairo picture
 drawn again each frame while it shows.
 
+**Virtual desktops** (`desktops.c`, the grid's maths in `desktops_grid.c`,
+unit-tested). General Options (`always_on` in the table: no Enabled=, no
+check box) sets how many desktops there are across and down, 1 x 1 by
+default, and the keys that switch (Ctrl+Alt+arrows) and carry the active
+window along (Ctrl+Alt+Shift+arrows). Each window has a desktop
+(`view->desktop`, its owner's for a dialog) or is on all (`view->sticky`);
+switching disables the other desktops' window trees and destroys their
+foreign-toplevel handles, so the taskbar, its thumbnails, Alt+Tab,
+Cascade and Tile see only this desktop's windows (and remakes the
+handles, in the order the windows opened, coming back). Focusing a window
+elsewhere shows its desktop. The shell hears of the desktops and each
+window's (xd-window-arranger-v1's `desktops` and `window_desktop`), and
+asks to switch (`switch_desktop`, the taskbar's pager) or to move a
+window (`move_window_to_desktop`, `set_window_sticky`: the window menu's
+Move to Another Workspace and Always on Visible Workspace). Effects
+animate a switch through `xd_desktops_add_animator()`: the desktop is
+current already, and the effect shows the move from the old one.
+
+**Desktop Wall** (`wall.c`, both builds; its maths, with the other
+desktop effects', in `viewport_model.c`, unit-tested) is Compiz's wall
+plugin: a switch moves the scene nodes of the old and new desktops'
+windows by the layout's size, eased, for the slide (the windows stay
+where they are), with a map of the grid drawn with cairo in `layer_drag`.
+Edge flip move (off by default): a window dragged against the layout's
+edge for the delay is carried to the desktop that way, the pointer
+warped to come in from the other side.
+
+**Whole-output OpenGL effects** (`glfx_output.c`, declared in `glfx.h`).
+`xd_glfx_capture_scene()` draws what the scene shows of a box into a
+texture, walking the scene tree itself so a filter can pick windows
+whether they're shown or not (another desktop's, minimized): the desktop
+colour, layer surfaces and those windows, without `layer_drag`, the lock
+screen or the effects' own pictures; while any capture object exists,
+every window's frame keeps its pixels. `xd_glfx_begin_output()` starts an
+effect that draws whole outputs: from its `frame` hook it captures what it
+needs and calls `xd_glfx_draw_output()`, whose `draw` paints the output
+into a buffer shown by an opaque scene node under the lock screen; the
+effect drives its frames with a timer and takes the pointer through the
+input hooks. `xd_glfx_draw_quad()` (a texture on a quad in clip space with
+its w, for perspective) and `xd_glfx_fill_polygon()` draw in 3D; the
+maths stays on the CPU (`viewport_model.c`'s camera: Compiz's 60 degree
+field of view, the screen filling the view at z = 0). `XD_EFFECTS_TIMING=1` logs
+their frame times too (capturing and drawing).
+
+**Desktop Cube** and **Rotate Cube** (`cube.c`): the current row's
+desktops are the faces of a prism (two are two sides of a cube with blank
+sides), each face a scene capture of its desktop, back faces culled (or
+drawn first when the cube is see-through while turning), caps filled. A
+switch across turns it (above Desktop Wall's priority, which still
+slides up and down), zooming out half-way; Rotate Cube's binding
+(Ctrl+Alt+Button1) drags it round and tilts it, and let go it settles on
+the nearest desktop face and switches there without animating again.
+
+**Expo** (`expo.c`): every desktop as a wall (Compiz's expo, flat), each a
+scene capture at about the size it's drawn, zoomed from the current one
+(`xd_expo_get_cell()`). Its key (Win+W) or corner (top left) shows it;
+while it shows, the pointer and clicks are its: a click zooms in to that
+desktop (switched to at once, with the highest animator priority so
+nothing else animates it), a press on a window and a drag carries it (a
+capture of its own, following the pointer) to another desktop.
+
+**Shift Switcher** (`shift.c`, Window Management): Compiz's shift, Cover
+mode by default (Flip too). Its key (Win+Shift+Tab; Compiz's Win+Tab is
+Ring Switcher's) shows this desktop's windows, most recently used first,
+each a scene capture of its own drawn in perspective with a reflection
+(`xd_shift_get_slot()`), over the dimmed desktop; the key again or the
+arrows step, letting go of the binding's modifiers,
+Enter or a click activates the one in front, Escape changes nothing.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

@@ -159,6 +159,12 @@ settings_lib = static_library(
   'src/settings/effects/enhanced_zoom.c',
   'src/settings/effects/annotate.c',
   'src/settings/effects/show_mouse.c',
+  'src/settings/effects/general_options.c',
+  'src/settings/effects/desktop_wall.c',
+  'src/settings/effects/desktop_cube.c',
+  'src/settings/effects/rotate_cube.c',
+  'src/settings/effects/expo.c',
+  'src/settings/effects/shift_switcher.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -412,6 +418,8 @@ compositor_src = files(
   'src/compositor/ime.c',
   'src/compositor/present.c',
   'src/compositor/constraints.c',
+  'src/compositor/desktops.c',
+  'src/compositor/desktops_grid.c',
   'src/settings/soundplay.c',
 )
 compositor_src += x11_grab_server_src
@@ -434,6 +442,9 @@ compositor_src += files(
   'src/compositor/effects/annotate.c',
   'src/compositor/effects/showmouse.c',
   'src/compositor/effects/zoom_model.c',
+  'src/compositor/effects/general.c',
+  'src/compositor/effects/viewport_model.c',
+  'src/compositor/effects/wall.c',
 )
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
@@ -447,6 +458,10 @@ effects_fx_src = files(
   'src/compositor/effects/explode_model.c',
   'src/compositor/effects/water.c',
   'src/compositor/effects/water_model.c',
+  'src/compositor/effects/glfx_output.c',
+  'src/compositor/effects/cube.c',
+  'src/compositor/effects/expo.c',
+  'src/compositor/effects/shift.c',
 )
 lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
 lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []
@@ -1333,6 +1348,7 @@ executable(
   'src/shell/session.c',
   'src/shell/primary.c',
   'src/shell/langbar.c',
+  'src/shell/pager.c',
   'src/shell/sys_updates.c',
   'src/wuaucpl/state.c',
   'src/shell/housekeeping.c',
@@ -1506,6 +1522,8 @@ test_exe = executable(
   'src/compositor/effects/animations_model.c',
   'src/compositor/effects/ring_model.c',
   'src/compositor/effects/zoom_model.c',
+  'src/compositor/desktops_grid.c',
+  'src/compositor/effects/viewport_model.c',
   'src/color/colorlib.c',
   'src/keys/keyslib.c',
   'src/keys/sshkeys.c',

@@ -11,10 +11,11 @@
     Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
     for the window menu's Move and Size, for the language indicator (the
     keyboard layout), for Windows 7's taskbar thumbnails and Aero Peek,
-    and to hear of the lid and the power and sleep buttons.
+    to hear of the lid and the power and sleep buttons, and for the
+    virtual desktops' pager and the window menu's workspace items.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="11">
+  <interface name="xd_window_arranger_v1" version="12">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -226,5 +227,59 @@
       </description>
       <arg name="locked" type="uint"/>
     </event>
+
+    <event name="desktops" since="12">
+      <description summary="the virtual desktops, and which one shows">
+        Sent to the shell when it binds and whenever Desktop Effects'
+        General Options change how many desktops there are, or another
+        one is switched to. They are numbered from 0, row by row from the
+        top left. With one (1 x 1, the default) there are none to speak
+        of: the shell shows no pager and the window menu no workspace
+        items. Only the windows on the current desktop, and those on every
+        desktop, have foreign-toplevel handles, so the taskbar shows just
+        those.
+      </description>
+      <arg name="columns" type="uint"/>
+      <arg name="rows" type="uint"/>
+      <arg name="current" type="uint"/>
+    </event>
+
+    <request name="switch_desktop" since="12">
+      <description summary="show another desktop">
+        The pager: desktop `index` is shown, with the transition the
+        effects turned on give it. Past the last one, ignored.
+      </description>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <event name="window_desktop" since="12">
+      <description summary="the desktop a window is on">
+        Sent for each window as it gets its foreign-toplevel handle, and
+        when it's made sticky or not: the desktop it's on, and whether it
+        shows on every desktop (the window menu's Always on Visible
+        Workspace).
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="desktop" type="uint"/>
+      <arg name="sticky" type="uint"/>
+    </event>
+
+    <request name="move_window_to_desktop" since="12">
+      <description summary="the window menu's Move to Another Workspace">
+        The window (and its dialogs) goes to desktop `index`, which isn't
+        switched to; a sticky window stops being sticky.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <request name="set_window_sticky" since="12">
+      <description summary="the window menu's Always on Visible Workspace">
+        Nonzero: the window shows on every desktop; zero: only on the
+        current one.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="sticky" type="uint"/>
+    </request>
   </interface>
 </protocol>

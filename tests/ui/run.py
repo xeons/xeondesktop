@@ -1476,6 +1476,242 @@ def show_mouse_ring(s):
     s.inject("key", "super+k")
     off = s.settle("off")
     s.check(off.differs(before, (0, 0, WIDTH, HEIGHT - 40)) < 0.01, "Windows+K again hides it")
+# ---- virtual desktops and their effects (General Options, Desktop Wall, Desktop Cube,
+# Rotate Cube, Expo, Shift Switcher) ----------------------------------------------------
+
+TWO_DESKTOPS = "[GeneralOptions]\nHorizontalSize=2\n"
+
+
+def settle_and_open_control_panel(s):
+    """The empty desktop settled, then Control Panel opened: the desktop's
+    shot and the window's box on the screen (x, y, w, h)."""
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    return empty, s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS))
+def virtual_desktops(s):
+    """Two desktops side by side (General Options): Ctrl+Alt+Right shows
+    the second, without the window opened on the first or its taskbar
+    button; Ctrl+Alt+Left brings both back. Ctrl+Alt+Shift+Right carries
+    the window along to the second desktop, so going back to the first
+    leaves it behind. The taskbar's pager switches too."""
+    empty, box = settle_and_open_control_panel(s)
+    s.log(f"window at {box}")
+    shown = s.settle("shown")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    second = s.settle("second-desktop")
+    s.check(second.differs(empty, box, step=4) < 0.02,
+            "on the second desktop the window isn't shown")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", state="activated")
+    back = s.settle("first-desktop")
+    s.check(back.differs(shown, box, step=4) < 0.02, "back on the first, the window shows again")
+
+    s.inject("key", "ctrl+alt+shift+Right")
+    s.wait(lambda: s.window(title="Control Panel") is not None, "the carried window")
+    carried = s.settle("carried")
+    s.check(carried.differs(shown, box, step=4) < 0.02, "the carried window still shows")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+    left = s.settle("left-behind")
+    s.check(left.differs(empty, box, step=4) < 0.02, "it stayed on the second desktop")
+
+    # The pager: buttons 1 and 2 left of the notification area (in the
+    # Classic style, its clock "12:00 PM"); the second shows the window
+    # again.
+    s.inject("move", WIDTH - 100, HEIGHT - 13, "click", "left")
+    s.wait_window(title="Control Panel", state="activated")
+    paged = s.settle("paged")
+    s.check(paged.differs(carried, box, step=4) < 0.02, "the pager's 2 shows it again")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS))
+def virtual_desktops_window_menu(s):
+    """With two desktops the window menu (Alt+Space) has Always on Visible
+    Workspace, which keeps the window on every desktop, and Move to
+    Another Workspace, whose Workspace 2 sends it to the second desktop."""
+    empty, box = settle_and_open_control_panel(s)
+    shown = s.settle("shown")
+    s.inject("key", "alt+space")
+    menu = s.settle("window-menu")
+    s.check(menu.differs(shown, (box[0], box[1] + 20, 260, 260), step=2) > 0.05,
+            "the window menu opened")
+    s.inject("key", "v")
+    s.settle("sticky")
+    s.inject("key", "ctrl+alt+Right")
+    time.sleep(0.5)
+    s.check(s.window(title="Control Panel") is not None,
+            "a window on every desktop keeps its taskbar button on the second")
+    second = s.settle("second-desktop")
+    s.check(second.differs(shown, box, step=4) < 0.02, "and shows there")
+    s.inject("key", "ctrl+alt+Left")
+    s.settle("first-again")
+    # Not sticky any more, then to Workspace 2 (the submenu's second item).
+    s.inject("key", "alt+space", "sleep", 300, "key", "v")
+    s.settle("not-sticky")
+    s.inject("key", "alt+space", "sleep", 300, "key", "a", "sleep", 300)
+    s.settle("submenu")
+    s.inject("key", "Down", "key", "Return")
+    s.wait_window(title="Control Panel", gone=True)
+    moved = s.settle("moved")
+    s.check(moved.differs(empty, box, step=4) < 0.02, "Workspace 2 took it off this desktop")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopWall]\nEnabled=true\nSlideDuration=3\n"))
+def desktop_wall_slide(s):
+    """Desktop Wall: mid-slide to the second desktop the window opened on
+    the first has gone part way out to the left, the desktop showing where
+    its right side was, and the map of the desktops shows in the middle;
+    when the slide is over the window is gone."""
+    empty, box = settle_and_open_control_panel(s)
+    x, y, w, h = box
+    s.inject("key", "ctrl+alt+Right")
+    time.sleep(1.4)
+    mid = s.shot("mid-slide")
+    s.check(mid.differs(empty, (x + 10, y + 60, 120, 200), step=4) > 0.3,
+            "mid-slide the window still shows at the left")
+    s.check(mid.differs(empty, (x + w - 230, y + 60, 200, 200), step=4) < 0.05,
+            "its right side has slid away")
+    s.check(mid.differs(empty, (WIDTH // 2 - 30, HEIGHT // 2 - 15, 60, 30), step=2) > 0.2,
+            "the map of the desktops shows in the middle")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(3)
+    done = s.settle("slid")
+    s.check(done.differs(empty, box, step=4) < 0.02, "the slide over, the second desktop shows")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopWall]\nEnabled=true\nEdgeFlipMove=true\n"
+                              "EdgeFlipDelay=300\n"))
+def desktop_wall_edge_flip(s):
+    """Desktop Wall's edge flip move: a window dragged by its title bar
+    against the right edge of the screen and held there goes to the second
+    desktop with the view, coming in from the left; going back to the
+    first leaves it behind."""
+    empty, box = settle_and_open_control_panel(s)
+    x, y, w, h = box
+    steps = ["move", x + 100, y + 10, "down", "sleep", 100]
+    for i in range(1, 11):
+        steps += ["move", x + 100 + (WIDTH - x - 100) * i // 10, y + 10]
+    steps += ["move", WIDTH - 1, y + 10, "sleep", 1500, "up"]
+    s.inject(*steps)
+    flipped = s.settle("flipped")
+    s.check(flipped.differs(empty, (0, y + 60, 60, 100), step=4) > 0.3,
+            "the window came in at the left of the second desktop")
+    s.check(s.window(title="Control Panel") is not None, "it's on the desktop showing")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopCube]\nEnabled=true\nRotationTime=3\n"),
+          fx=True)
+def desktop_cube_turn(s):
+    """Desktop Cube (xd-compositor-fx): Ctrl+Alt+Right turns the cube of
+    the two desktops; mid-turn the screen is neither desktop flat (both
+    in perspective, zoomed out, the desktop colour round them); then the
+    second desktop shows, without the window."""
+    require_opengl_effects(s)
+    empty, box = settle_and_open_control_panel(s)
+    shown = s.settle("shown")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(1.2)
+    mid = s.shot("mid-turn")
+    whole = (0, 0, WIDTH, HEIGHT)
+    s.check(mid.differs(shown, whole, step=8) > 0.3, "mid-turn it isn't the first desktop flat")
+    s.check(mid.differs(empty, (0, HEIGHT - 30, WIDTH, 30), step=4) > 0.3,
+            "nor the second: the taskbars are turned with their desktops")
+    time.sleep(3)
+    done = s.settle("turned")
+    s.check(done.differs(empty, whole, step=8) < 0.02, "turned, the second desktop shows")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopCube]\nEnabled=true\n"
+                              "[RotateCube]\nEnabled=true\n"), fx=True)
+def rotate_cube_drag(s):
+    """Rotate Cube (xd-compositor-fx): dragging with Ctrl+Alt and the left
+    button turns the cube; held mid-drag the screen is the cube, zoomed
+    out, not the desktop; let go past half-way, it settles on the second
+    desktop."""
+    require_opengl_effects(s)
+    empty, box = settle_and_open_control_panel(s)
+    shown = s.settle("shown")
+    steps = ["hold", "ctrl", "hold", "alt", "move", 900, 300, "down"]
+    for i in range(1, 9):
+        steps += ["move", 900 - 75 * i, 300]
+    drag = s.launch(s.tool("xd-inject"), *map(str, steps + ["sleep", 2500, "up", "release", "alt",
+                                                            "release", "ctrl"]))
+    time.sleep(1.2)
+    mid = s.shot("mid-drag")
+    whole = (0, 0, WIDTH, HEIGHT)
+    s.check(mid.differs(shown, whole, step=8) > 0.3, "mid-drag the cube shows, not the desktop")
+    s.check(mid.differs(shown, (0, 0, WIDTH, 20), step=4) > 0.3,
+            "zoomed out: the desktop colour above the cube")
+    drag.wait(timeout=30)
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(1)
+    done = s.settle("settled")
+    s.check(done.differs(empty, whole, step=8) < 0.02, "it settled on the second desktop")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[Expo]\nEnabled=true\n"), fx=True)
+def expo_wall(s):
+    """Expo (xd-compositor-fx): Win+W shows the two desktops side by side,
+    the window small on the first, a dark gap between them; a window
+    dragged from the first desktop to the second goes there; a click on
+    the second desktop shows it, with the window."""
+    require_opengl_effects(s)
+    empty, box = settle_and_open_control_panel(s)
+    s.inject("key", "super+w")
+    wall = s.settle("wall")
+    gap = wall.pixel(WIDTH // 2, HEIGHT // 2)
+    s.check(max(gap) < 60, f"a dark gap between the desktops ({gap})")
+    s.check(wall.differs(empty, (40, 230, 300, 200), step=4) > 0.3,
+            "the first desktop has the window, small")
+    right = wall.pixel(3 * WIDTH // 4, HEIGHT // 2)
+    s.check(right == empty.pixel(WIDTH // 2, HEIGHT // 2) or max(right) > 60,
+            f"the second desktop shows beside it ({right})")
+    steps = ["move", 200, 330, "down", "sleep", 100]
+    for i in range(1, 11):
+        steps += ["move", 200 + 56 * i, 330]
+    s.inject(*steps, "sleep", 300, "up")
+    s.settle("dropped")
+    s.inject("move", 3 * WIDTH // 4, HEIGHT - 220, "click", "left")
+    s.wait_window(title="Control Panel")
+    there = s.settle("second-desktop")
+    s.check(there.differs(empty, (0, 0, WIDTH, HEIGHT - 40), step=8) > 0.1,
+            "the second desktop shows, with the window dropped on it")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", gone=True)
+
+
+@scenario(setup=effects_setup("[ShiftSwitcher]\nEnabled=true\n"), fx=True)
+def shift_switcher_cover(s):
+    """Shift Switcher (xd-compositor-fx): with two windows open, Win+Shift+Tab
+    held shows them as pictures in a cover flow over the dimmed desktop;
+    let go, the one before (Control Panel) is activated, as Alt+Tab
+    would."""
+    require_opengl_effects(s)
+    empty, box = settle_and_open_control_panel(s)
+    s.launch("xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    both = s.settle("both")
+    held = s.launch(s.tool("xd-inject"), "hold", "super", "hold", "shift", "key", "Tab", "sleep",
+                    "2500", "release", "shift", "release", "super")
+    time.sleep(1.2)
+    cover = s.shot("cover")
+    corner = cover.pixel(WIDTH - 20, HEIGHT // 2)
+    desktop = empty.pixel(WIDTH - 20, HEIGHT // 2)
+    s.check(sum(corner) < sum(desktop) * 0.7, f"the desktop is dimmed ({corner} < {desktop})")
+    s.check(cover.differs(both, (0, 0, WIDTH, HEIGHT), step=8) > 0.3,
+            "the windows show as pictures, not as they were")
+    held.wait(timeout=30)
+    s.wait_window(title="Control Panel", state="activated")
 
 
 @scenario(AERO_INI)

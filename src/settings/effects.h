@@ -85,6 +85,10 @@ typedef struct xd_effect_info {
     /* Drawn with OpenGL ES by xd-compositor-fx (src/compositor/effects);
      * unavailable in the plain build and in software rendering. */
     bool needs_opengl;
+    /* Settings rather than an effect, as CCSM's General Options: always
+     * in use, with no Enabled= of its own (xd_effects_is_enabled says
+     * true) and no check box in Desktop Effects. */
+    bool always_on;
     const xd_effect_option *options;
     size_t option_count;
 } xd_effect_info;

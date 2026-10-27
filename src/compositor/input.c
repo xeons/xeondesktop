@@ -150,7 +150,8 @@ static void cycle_step(xd_server *server, bool backwards) {
         if (link == &server->views)
             continue;
         xd_view *view = XD_CONTAINER_OF(link, xd_view, link);
-        if (view->mapped) {
+        /* This desktop's windows only. */
+        if (view->mapped && xd_desktops_is_view_shown(view)) {
             server->cycle_view = view;
             /* Preview the selection by raising it without changing focus. */
             if (!view->minimized)
@@ -841,8 +842,10 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
     if (!from_ime && !inhibited && !server->locked && server->mode == XD_CURSOR_PASSTHROUGH) {
         bool used = false;
         for (int i = 0; i < nsyms; i++) {
-            xd_effect_input input = {
-                .kind = XD_EFFECT_INPUT_KEY, .keysym = syms[i], .pressed = pressed};
+            xd_effect_input input = {.kind = XD_EFFECT_INPUT_KEY,
+                                     .keysym = syms[i],
+                                     .pressed = pressed,
+                                     .time_msec = event->time_msec};
             used = xd_effects_input(server, &input) || used;
         }
         if (used) {
@@ -1520,7 +1523,8 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     place_drag_icon(server);
     /* Every effect sees the move; one holding the pointer (Scale's picker,
      * Annotate's pen) keeps it from the windows. */
-    if (xd_effects_input(server, &(xd_effect_input){.kind = XD_EFFECT_INPUT_MOTION}) &&
+    xd_effect_input motion = {.kind = XD_EFFECT_INPUT_MOTION, .time_msec = time_msec};
+    if (xd_effects_input(server, &motion) &&
         server->mode == XD_CURSOR_PASSTHROUGH && !server->locked)
         return;
     switch (server->mode) {
@@ -1817,7 +1821,6 @@ static void process_button(xd_server *server,
                                        pointer_button_event->button, pointer_button_event->state);
         return;
     }
-
     /* A click ends keyboard move/size where the window is. */
     if (keyboard_grab(server)) {
         if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
@@ -1836,6 +1839,7 @@ static void process_button(xd_server *server,
             .kind = XD_EFFECT_INPUT_BUTTON,
             .button = pointer_button_event->button,
             .pressed = pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED,
+            .time_msec = pointer_button_event->time_msec,
         };
         if (xd_effects_input(server, &input))
             return;

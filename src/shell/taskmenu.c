@@ -124,6 +124,35 @@ static void act_size(xd_shell *shell, void *toplevel_id) {
     xd_window_arranger_v1_begin_size(shell->arranger);
 }
 
+/* Virtual desktops: the window and the desktop, for the window menu's
+ * Move to Another Workspace. */
+typedef struct desktop_choice {
+    uint64_t toplevel_id;
+    uint32_t desktop;
+} desktop_choice;
+
+static bool has_desktops(const xd_shell *shell) {
+    return shell->arranger != nullptr &&
+           xd_window_arranger_v1_get_version(shell->arranger) >=
+               XD_WINDOW_ARRANGER_V1_SWITCH_DESKTOP_SINCE_VERSION &&
+           shell->desktop_columns * shell->desktop_rows > 1;
+}
+
+static void act_move_to_desktop(xd_shell *shell, void *data) {
+    const desktop_choice *choice = data;
+    xd_toplevel *toplevel = find_toplevel(shell, (void *)(uintptr_t)choice->toplevel_id);
+    if (toplevel != nullptr && has_desktops(shell))
+        xd_window_arranger_v1_move_window_to_desktop(shell->arranger, toplevel->handle,
+                                                     choice->desktop);
+}
+
+static void act_toggle_sticky(xd_shell *shell, void *toplevel_id) {
+    xd_toplevel *toplevel = find_toplevel(shell, toplevel_id);
+    if (toplevel != nullptr && has_desktops(shell))
+        xd_window_arranger_v1_set_window_sticky(shell->arranger, toplevel->handle,
+                                                toplevel->sticky ? 0 : 1);
+}
+
 static void act_close(xd_shell *shell, void *toplevel_id) {
     xd_toplevel *toplevel = find_toplevel(shell, toplevel_id);
     if (toplevel != nullptr)
@@ -397,6 +426,28 @@ static xd_menu_model *window_menu(xd_shell *shell, xd_menu_tree *tree, xd_toplev
     it = add(tree, menu_model, "Ma&ximize", toplevel->maximized ? nullptr : act_maximize,
              toplevel_ref(toplevel));
     it->glyph = XD_MENU_GLYPH_MAXIMIZE;
+    /* Virtual desktops have no Windows original: Metacity's names. */
+    if (has_desktops(shell)) {
+        separator(tree, menu_model);
+        add(tree, menu_model, "Always on &Visible Workspace", act_toggle_sticky,
+            toplevel_ref(toplevel))
+            ->checked = toplevel->sticky;
+        xd_menu_item *move =
+            xd_menu_add_keyed(tree, menu_model, XD_MENU_SUBMENU, "Move to &Another Workspace",
+                              nullptr);
+        move->submenu = xd_menu_model_new(tree);
+        uint32_t count = shell->desktop_columns * shell->desktop_rows;
+        for (uint32_t desktop = 0; desktop < count; desktop++) {
+            desktop_choice *choice = XD_ARENA_NEW(&tree->arena, desktop_choice);
+            *choice = (desktop_choice){toplevel->id, desktop};
+            char label[32];
+            snprintf(label, sizeof(label), "Workspace %u", desktop + 1);
+            xd_menu_item *item = xd_menu_add(tree, move->submenu, XD_MENU_ACTION, label, nullptr);
+            item->action = act_move_to_desktop;
+            item->action_data = choice;
+            item->disabled = !toplevel->sticky && desktop == toplevel->desktop;
+        }
+    }
     separator(tree, menu_model);
     it = add(tree, menu_model, "&Close", act_close, toplevel_ref(toplevel));
     it->glyph = XD_MENU_GLYPH_CLOSE;
@@ -559,6 +610,29 @@ static void handle_session_locked(void *data,
     xd_account_locked_changed(shell);
 }
 
+static void handle_desktops(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *arranger,
+                            uint32_t columns, uint32_t rows, uint32_t current) {
+    xd_shell *shell = data;
+    shell->desktop_columns = XD_MAX(columns, 1u);
+    shell->desktop_rows = XD_MAX(rows, 1u);
+    shell->desktop_current = current;
+    xd_taskbars_mark_dirty(shell);
+}
+
+static void handle_window_desktop(void *data,
+                                  [[maybe_unused]] struct xd_window_arranger_v1 *arranger,
+                                  struct zwlr_foreign_toplevel_handle_v1 *handle, uint32_t desktop,
+                                  uint32_t sticky) {
+    xd_shell *shell = data;
+    xd_toplevel *toplevel;
+    wl_list_for_each(toplevel, &shell->toplevels, link) {
+        if (toplevel->handle == handle) {
+            toplevel->desktop = desktop;
+            toplevel->sticky = sticky != 0;
+        }
+    }
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
     .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
@@ -568,6 +642,8 @@ static const struct xd_window_arranger_v1_listener arranger_listener = {
     .window_menu_keyboard = handle_window_menu_keyboard,
     .power_button = handle_power_button,
     .session_locked = handle_session_locked,
+    .desktops = handle_desktops,
+    .window_desktop = handle_window_desktop,
 };
 
 bool xd_shell_hears_lock(const xd_shell *shell) {
