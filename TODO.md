@@ -1300,8 +1300,7 @@ against mocks or scratch directories; none yet against the real services.
         corner), Animations (Fade, Zoom, Glide 1/2 for open, close,
         minimize), Window Opacity (rules, dim inactive, Alt+wheel), Ring
         Switcher (Super+Tab), Enhanced Zoom (Super+wheel), Annotate
-        (Super+Alt+drag, Super+Alt+K), Show Mouse (Super+K; its look
-        awaits the user's review).
+        (Super+Alt+drag, Super+Alt+K), Show Mouse (Super+K).
       - [x] OpenGL: Wobbly Windows, Magic Lamp, Burn, Explode, Water
         (Super+Shift+click, Shift+F9 rain, Ctrl+Super wake). Magic Lamp,
         Burn and Explode take precedence over Animations.
