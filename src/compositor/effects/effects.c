@@ -6,6 +6,9 @@
  */
 #include "effects.h"
 
+#include <linux/input-event-codes.h>
+#include <stdlib.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 #include <wlr/render/gles2.h>
@@ -190,6 +193,8 @@ void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
     if (kind == XD_WINDOW_EVENT_UNMAP || kind == XD_WINDOW_EVENT_DESTROY ||
         kind == XD_WINDOW_EVENT_MINIMIZE)
         xd_glfx_forget_view(view);
+    if (kind == XD_WINDOW_EVENT_DESTROY)
+        xd_glfx_drop_view(view);
 #endif
 }
 
@@ -223,4 +228,106 @@ bool xd_effects_is_running(const xd_server *server, const char *id) {
             return effects->running[i].on;
     }
     return false;
+}
+
+bool xd_effects_animates_minimize(const xd_server *server) {
+    const xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->animates_minimize)
+            return true;
+    }
+    return false;
+}
+
+uint32_t xd_effects_get_binding_modifiers(uint32_t modifiers) {
+    uint32_t bits = 0;
+    if (modifiers & WLR_MODIFIER_SHIFT)
+        bits |= XD_BINDING_SHIFT;
+    if (modifiers & WLR_MODIFIER_CTRL)
+        bits |= XD_BINDING_CONTROL;
+    if (modifiers & WLR_MODIFIER_ALT)
+        bits |= XD_BINDING_ALT;
+    if (modifiers & WLR_MODIFIER_LOGO)
+        bits |= XD_BINDING_SUPER;
+    return bits;
+}
+
+bool xd_effects_key(xd_server *server, uint32_t modifiers, xkb_keysym_t keysym) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    uint32_t bits = xd_effects_get_binding_modifiers(modifiers);
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->key != nullptr &&
+            impls[i]->key(server, effects->running[i].state, bits, keysym))
+            return true;
+    }
+    return false;
+}
+
+bool xd_effects_button(xd_server *server, uint32_t modifiers, uint32_t button) {
+    xd_effects *effects = server->effects;
+    if (effects == nullptr)
+        return false;
+    uint32_t bits = xd_effects_get_binding_modifiers(modifiers);
+    for (size_t i = 0; i < effects_count_impls(); i++) {
+        if (effects->running[i].on && impls[i]->button != nullptr &&
+            impls[i]->button(server, effects->running[i].state, bits, button))
+            return true;
+    }
+    return false;
+}
+
+bool xd_effects_is_key(const char *binding, uint32_t modifiers, xkb_keysym_t keysym) {
+    uint32_t wanted = 0;
+    char key[64];
+    if (!xd_effects_parse_binding(binding, &wanted, key, sizeof(key)) || wanted != modifiers)
+        return false;
+    /* Shift makes some keys' symbols other ones ("a" is "A"): compared
+     * without case, as GTK's accelerators are. */
+    char name[64];
+    return xkb_keysym_get_name(keysym, name, sizeof(name)) > 0 && strcasecmp(name, key) == 0;
+}
+
+bool xd_effects_is_button(const char *binding, uint32_t modifiers, uint32_t button) {
+    /* X's numbers: 1 to 3 left, middle and right, 8 and 9 back and
+     * forward (4 to 7 are the wheel's). */
+    static const struct {
+        long number;
+        uint32_t button;
+    } buttons[] = {{1, BTN_LEFT}, {2, BTN_MIDDLE}, {3, BTN_RIGHT}, {8, BTN_SIDE}, {9, BTN_EXTRA}};
+    uint32_t wanted = 0;
+    char key[64];
+    if (!xd_effects_parse_binding(binding, &wanted, key, sizeof(key)) || wanted != modifiers ||
+        strncasecmp(key, "Button", 6) != 0)
+        return false;
+    char *end = nullptr;
+    long number = strtol(key + 6, &end, 10);
+    if (end == key + 6 || *end != '\0')
+        return false;
+    for (size_t i = 0; i < XD_ARRAY_LEN(buttons); i++) {
+        if (buttons[i].number == number)
+            return buttons[i].button == button;
+    }
+    return false;
+}
+
+bool xd_effects_is_output_filtered([[maybe_unused]] const xd_output *output) {
+#ifdef XD_SCENEFX
+    return xd_glfx_is_output_filtered(output);
+#else
+    return false;
+#endif
+}
+
+bool xd_effects_build_output_state([[maybe_unused]] xd_output *output,
+                                   struct wlr_scene_output *scene_output,
+                                   struct wlr_output_state *state) {
+#ifdef XD_SCENEFX
+    return xd_glfx_build_output_state(output, scene_output, state);
+#else
+    return wlr_scene_output_build_state(scene_output, state, nullptr);
+#endif
 }

@@ -12,6 +12,7 @@
 #include <wlr/render/swapchain.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/util/log.h>
 
 #include "../../core/alloc.h"
@@ -34,6 +35,9 @@ static constexpr double TIMING_SECONDS = 2.0;
 typedef struct xd_glfx {
     xd_server *server;
     struct wl_list windows; /* xd_window_effect.link */
+    struct wl_list filters; /* xd_output_filter.link */
+    struct wl_list filtered_outputs; /* filtered_output.link */
+    double last_filter_frame;
     xd_glfx_shader shader_2d, shader_external;
     bool shaders_tried;
     double last_frame;
@@ -43,6 +47,9 @@ typedef struct xd_glfx {
     double draw_total, interval_total, interval_max, frame_total;
     int frames;
 } xd_glfx;
+
+static bool glfx_has_active_filters(const xd_glfx *glfx);
+static void glfx_update_filters(xd_glfx *glfx, double now);
 
 /* Rounded down or up to whole units, clamped to what our buffers hold. */
 static int glfx_round_down(double value) {
@@ -475,6 +482,12 @@ static bool glfx_capture_window(xd_window_effect *effect) {
         struct wlr_linux_drm_syncobj_surface_v1_state *sync = nullptr;
         if (scene_surface != nullptr) {
             texture = wlr_surface_get_texture(scene_surface->surface);
+            /* Unmapped by a commit without a buffer, the surface has let
+             * go of its texture; the scene graph still shows the last. */
+            struct wlr_client_buffer *client_buffer =
+                texture == nullptr ? wlr_client_buffer_get(buffer->buffer) : nullptr;
+            if (client_buffer != nullptr)
+                texture = client_buffer->texture;
             /* The program's GPU may still be drawing it: wait for it, as
              * the scene graph does. */
             sync = wlr_linux_drm_syncobj_v1_get_surface_state(scene_surface->surface);
@@ -633,14 +646,15 @@ void xd_glfx_end_window(xd_window_effect *effect) {
     struct wlr_scene_buffer *node = effect->node;
     effect->node = nullptr;
     wlr_scene_node_destroy(&node->node);
-    if (effect->view->mapped)
+    if (!effect->held && effect->view->mapped)
         glfx_show_window(effect);
     glfx_release_capture(effect);
     if (effect->frame_texture != nullptr)
         wlr_texture_destroy(effect->frame_texture);
     if (effect->frame_buffer != nullptr)
         wlr_buffer_unlock(effect->frame_buffer);
-    xd_frame_keep_pixels(effect->view, false);
+    if (!effect->held)
+        xd_frame_keep_pixels(effect->view, false);
     wlr_swapchain_destroy(effect->capture_chain);
     wlr_swapchain_destroy(effect->target_chain);
     xd_free(effect);
@@ -650,17 +664,113 @@ bool xd_glfx_has_window_effects(const xd_server *server) {
     return server->glfx != nullptr && !wl_list_empty(&server->glfx->windows);
 }
 
+/* A live (not closing) effect on the window, or nullptr. */
+static xd_window_effect *glfx_find_live_window(xd_view *view) {
+    xd_glfx *glfx = view->server->glfx;
+    xd_window_effect *effect;
+    wl_list_for_each(effect, &glfx->windows, link) {
+        if (effect->view == view && !effect->held)
+            return effect;
+    }
+    return nullptr;
+}
+
 void xd_glfx_forget_view(xd_view *view) {
+    if (view->server->glfx == nullptr)
+        return;
     xd_window_effect *effect = nullptr;
-    while ((effect = xd_glfx_find_window(view, nullptr)) != nullptr)
+    while ((effect = glfx_find_live_window(view)) != nullptr)
         xd_glfx_end_window(effect);
+}
+
+void xd_glfx_drop_view(xd_view *view) {
+    xd_glfx *glfx = view->server->glfx;
+    if (glfx == nullptr)
+        return;
+    xd_window_effect *effect;
+    wl_list_for_each(effect, &glfx->windows, link) {
+        if (effect->view == view)
+            effect->view = nullptr;
+    }
+}
+
+/* A program closing its window unmaps its surface, and the scene graph,
+ * told first, hides the surface's tree: shown again just for the
+ * picture. */
+typedef struct hidden_trees {
+    struct wlr_scene_node *nodes[32];
+    size_t count;
+} hidden_trees;
+
+static void glfx_show_hidden_trees(struct wlr_scene_tree *tree, hidden_trees *hidden) {
+    if (!tree->node.enabled && hidden->count < XD_ARRAY_LEN(hidden->nodes)) {
+        wlr_scene_node_set_enabled(&tree->node, true);
+        hidden->nodes[hidden->count++] = &tree->node;
+    }
+    struct wlr_scene_node *child;
+    wl_list_for_each(child, &tree->children, link) {
+        if (child->type == WLR_SCENE_NODE_TREE)
+            glfx_show_hidden_trees(wlr_scene_tree_from_node(child), hidden);
+    }
+}
+
+xd_window_effect *xd_glfx_begin_closing_window(xd_view *view, const xd_window_effect_impl *impl,
+                                               void *data) {
+    xd_glfx *glfx = view->server->glfx;
+    if (glfx == nullptr || !view->mapped || view->minimized || !view->tree->node.enabled ||
+        view->tree->node.parent == nullptr)
+        return nullptr;
+    /* One closing effect a window (Burn and Explode both on): the first
+     * to ask. */
+    xd_window_effect *other;
+    wl_list_for_each(other, &glfx->windows, link) {
+        if (other->view == view && other->held)
+            return nullptr;
+    }
+    /* Their nodes are in the window's tree, and would be in its picture. */
+    xd_window_effect *live = nullptr;
+    while ((live = glfx_find_live_window(view)) != nullptr)
+        xd_glfx_end_window(live);
+    xd_window_effect *effect = XD_NEW(xd_window_effect);
+    effect->impl = impl;
+    effect->view = view;
+    effect->data = data;
+    effect->held = true;
+    effect->held_scale = xd_view_scale(view);
+    hidden_trees hidden = {0};
+    if (view->content != nullptr)
+        glfx_show_hidden_trees(view->content, &hidden);
+    xd_frame_keep_pixels(view, true);
+    bool captured = glfx_capture_window(effect);
+    xd_frame_keep_pixels(view, false);
+    for (size_t i = 0; i < hidden.count; i++)
+        wlr_scene_node_set_enabled(hidden.nodes[i], false);
+    /* The picture is drawn: what it was drawn from can go. */
+    if (effect->frame_texture != nullptr)
+        wlr_texture_destroy(effect->frame_texture);
+    if (effect->frame_buffer != nullptr)
+        wlr_buffer_unlock(effect->frame_buffer);
+    effect->frame_texture = nullptr;
+    effect->frame_buffer = nullptr;
+    if (!captured) {
+        wlr_swapchain_destroy(effect->capture_chain);
+        xd_free(effect);
+        return nullptr;
+    }
+    /* Beside the window's tree, so it stays when that is hidden or freed. */
+    effect->node = wlr_scene_buffer_create(view->tree->node.parent, nullptr);
+    wlr_scene_node_place_above(&effect->node->node, &view->tree->node);
+    effect->node->point_accepts_input = glfx_reject_input;
+    wl_list_insert(&glfx->windows, &effect->link);
+    glfx_schedule_frames(view->server);
+    return effect;
 }
 
 /* One frame of one effect (it may end). */
 static void glfx_draw_window_effect(xd_glfx *glfx, xd_window_effect *effect, double now) {
     xd_server *server = glfx->server;
     xd_view *view = effect->view;
-    if (!view->mapped || !glfx_capture_window(effect)) {
+    if (!effect->held && (!view->mapped || !glfx_capture_window(effect))) {
         xd_glfx_end_window(effect);
         return;
     }
@@ -678,7 +788,7 @@ static void glfx_draw_window_effect(xd_glfx *glfx, xd_window_effect *effect, dou
         return;
     }
     struct wlr_fbox fbounds = effect->impl->get_bounds(effect);
-    double scale = xd_view_scale(view);
+    double scale = effect->held ? effect->held_scale : xd_view_scale(view);
     struct wlr_box bounds = {
         .x = glfx_round_down(fbounds.x),
         .y = glfx_round_down(fbounds.y),
@@ -699,7 +809,8 @@ static void glfx_draw_window_effect(xd_glfx *glfx, xd_window_effect *effect, dou
     if (pass == nullptr) {
         if (target != nullptr)
             wlr_buffer_unlock(target);
-        glfx_release_capture(effect);
+        if (!effect->held)
+            glfx_release_capture(effect);
         return; /* another go next frame */
     }
     double started = glfx->timing ? glfx_get_now() : 0;
@@ -715,13 +826,19 @@ static void glfx_draw_window_effect(xd_glfx *glfx, xd_window_effect *effect, dou
     wlr_render_pass_submit(pass);
     if (glfx->timing)
         glfx->draw_total += glfx_get_now() - started;
-    glfx_release_capture(effect);
 
     struct wlr_scene_buffer *node = effect->node;
     wlr_scene_buffer_set_buffer(node, target);
     wlr_buffer_unlock(target); /* the scene holds its own lock */
     wlr_scene_buffer_set_source_box(node, &(struct wlr_fbox){0, 0, width_px, height_px});
     wlr_scene_buffer_set_dest_size(node, bounds.width, bounds.height);
+    if (effect->held) {
+        int parent_x = 0, parent_y = 0;
+        wlr_scene_node_coords(&node->node.parent->node, &parent_x, &parent_y);
+        wlr_scene_node_set_position(&node->node, bounds.x - parent_x, bounds.y - parent_y);
+        return;
+    }
+    glfx_release_capture(effect);
     wlr_scene_node_set_position(&node->node, bounds.x - view->tree->node.x,
                                 bounds.y - view->tree->node.y);
     wlr_scene_node_raise_to_top(&node->node);
@@ -741,11 +858,13 @@ void xd_glfx_frame(xd_server *server, xd_output *output, double now) {
     xd_glfx *glfx = server->glfx;
     if (glfx == nullptr)
         return;
-    glfx_lock_scanout(output, !wl_list_empty(&glfx->windows));
-    if (wl_list_empty(&glfx->windows))
-        return;
     if (glfx->timing)
         glfx->frame_start = glfx_get_now();
+    if (!wl_list_empty(&glfx->filters))
+        glfx_update_filters(glfx, now);
+    glfx_lock_scanout(output, !wl_list_empty(&glfx->windows) || glfx_has_active_filters(glfx));
+    if (wl_list_empty(&glfx->windows))
+        return;
     /* Another output's frame of the same moment: drawn already. */
     if (now - glfx->last_frame < SAME_FRAME_SECONDS)
         return;
@@ -760,7 +879,7 @@ void xd_glfx_frame_done(xd_server *server, [[maybe_unused]] xd_output *output) {
     xd_glfx *glfx = server->glfx;
     if (glfx == nullptr)
         return;
-    if (wl_list_empty(&glfx->windows)) {
+    if (wl_list_empty(&glfx->windows) && !glfx_has_active_filters(glfx)) {
         glfx->last_done = 0;
         return;
     }
@@ -792,10 +911,242 @@ void xd_glfx_frame_done(xd_server *server, [[maybe_unused]] xd_output *output) {
     }
 }
 
+/* ---- output filters --------------------------------------------------------------- */
+
+/* An output's buffers for its filters: the scene graph's picture, and
+ * one between two filters. */
+typedef struct filtered_output {
+    struct wl_list link; /* xd_glfx.filtered_outputs */
+    xd_glfx *glfx;
+    struct wlr_output *wlr_output;
+    struct wlr_swapchain *scene_chain, *between_chain;
+    struct wl_listener destroy;
+} filtered_output;
+
+static void glfx_free_filtered_output(filtered_output *filtered) {
+    wl_list_remove(&filtered->link);
+    wl_list_remove(&filtered->destroy.link);
+    wlr_swapchain_destroy(filtered->scene_chain);
+    wlr_swapchain_destroy(filtered->between_chain);
+    xd_free(filtered);
+}
+
+static void glfx_handle_filtered_output_destroy(struct wl_listener *listener,
+                                                [[maybe_unused]] void *data) {
+    glfx_free_filtered_output(XD_CONTAINER_OF(listener, filtered_output, destroy));
+}
+
+static filtered_output *glfx_get_filtered_output(xd_glfx *glfx, struct wlr_output *wlr_output) {
+    filtered_output *filtered;
+    wl_list_for_each(filtered, &glfx->filtered_outputs, link) {
+        if (filtered->wlr_output == wlr_output)
+            return filtered;
+    }
+    filtered = XD_NEW(filtered_output);
+    filtered->glfx = glfx;
+    filtered->wlr_output = wlr_output;
+    filtered->destroy.notify = glfx_handle_filtered_output_destroy;
+    wl_signal_add(&wlr_output->events.destroy, &filtered->destroy);
+    wl_list_insert(&glfx->filtered_outputs, &filtered->link);
+    return filtered;
+}
+
+/* A swapchain of exactly width x height (the scene graph wants its
+ * output's size). */
+static bool glfx_ensure_exact_chain(xd_server *server, struct wlr_swapchain **chain, int width,
+                                    int height) {
+    if (*chain != nullptr && (*chain)->width == width && (*chain)->height == height)
+        return true;
+    wlr_swapchain_destroy(*chain);
+    *chain = glfx_create_chain(server, width, height);
+    return *chain != nullptr;
+}
+
+static bool glfx_has_active_filters(const xd_glfx *glfx) {
+    const xd_output_filter *filter;
+    wl_list_for_each(filter, &glfx->filters, link) {
+        if (filter->active)
+            return true;
+    }
+    return false;
+}
+
+/* The scene graph's picture of what a filter drew over is stale: it
+ * repaints the whole output (moving it there and back is the public way
+ * to say so). */
+static void glfx_repaint_outputs(xd_server *server) {
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        struct wlr_scene_output *scene_output =
+            wlr_scene_get_scene_output(server->scene, out->wlr_output);
+        if (scene_output == nullptr)
+            continue;
+        int x = scene_output->x, y = scene_output->y;
+        wlr_scene_output_set_position(scene_output, x + 1, y);
+        wlr_scene_output_set_position(scene_output, x, y);
+    }
+}
+
+xd_output_filter *xd_glfx_add_output_filter(xd_server *server, const xd_output_filter_impl *impl,
+                                            void *data) {
+    xd_glfx *glfx = server->glfx;
+    if (glfx == nullptr)
+        return nullptr;
+    xd_output_filter *filter = XD_NEW(xd_output_filter);
+    filter->impl = impl;
+    filter->server = server;
+    filter->data = data;
+    filter->active = true;
+    wl_list_insert(glfx->filters.prev, &filter->link);
+    glfx_schedule_frames(server);
+    return filter;
+}
+
+void xd_glfx_remove_output_filter(xd_output_filter *filter) {
+    bool was_active = filter->active;
+    wl_list_remove(&filter->link);
+    if (filter->impl->done != nullptr)
+        filter->impl->done(filter);
+    if (was_active)
+        glfx_repaint_outputs(filter->server);
+    xd_free(filter);
+}
+
+void xd_glfx_wake_output_filter(xd_output_filter *filter) {
+    if (!filter->active) {
+        filter->active = true;
+        filter->last_time = 0;
+    }
+    glfx_schedule_frames(filter->server);
+}
+
+/* Once per frame moment: each filter says whether it's active. */
+static void glfx_update_filters(xd_glfx *glfx, double now) {
+    if (now - glfx->last_filter_frame < SAME_FRAME_SECONDS)
+        return;
+    glfx->last_filter_frame = now;
+    bool went_idle = false;
+    xd_output_filter *filter;
+    wl_list_for_each(filter, &glfx->filters, link) {
+        if (!filter->active)
+            continue;
+        double seconds = filter->last_time > 0 ? XD_MAX(now - filter->last_time, 0.0) : 0;
+        filter->last_time = now;
+        filter->active = filter->impl->update(filter, seconds);
+        went_idle = went_idle || !filter->active;
+    }
+    if (went_idle)
+        glfx_repaint_outputs(glfx->server);
+}
+
+bool xd_glfx_is_output_filtered(const xd_output *output) {
+    const xd_glfx *glfx = output->server->glfx;
+    return glfx != nullptr && glfx_has_active_filters(glfx) &&
+           output->wlr_output->transform == WL_OUTPUT_TRANSFORM_NORMAL;
+}
+
+/* Runs one filter from `source` into `target`. */
+static bool glfx_run_filter(xd_glfx *glfx, xd_output_filter *filter, xd_output *output,
+                            struct wlr_buffer *source, struct wlr_buffer *target,
+                            struct wlr_box box) {
+    xd_server *server = glfx->server;
+    struct wlr_texture *texture = wlr_texture_from_buffer(server->renderer, source);
+    if (texture == nullptr)
+        return false;
+    struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
+        server->renderer, target, &(struct wlr_buffer_pass_options){0});
+    if (pass == nullptr) {
+        wlr_texture_destroy(texture);
+        return false;
+    }
+    double started = glfx->timing ? glfx_get_now() : 0;
+    glViewport(0, 0, target->width, target->height);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    xd_glfx_draw draw = {.bounds = box, .scale = (double)output->wlr_output->scale, .glfx = glfx};
+    xd_glfx_set_ortho(draw.projection, box);
+    struct fx_texture_attribs attribs = {0};
+    fx_texture_get_attribs(texture, &attribs);
+    xd_glfx_texture scene = {
+        .id = attribs.tex,
+        .target = attribs.target,
+        .width = (int)texture->width,
+        .height = (int)texture->height,
+        .u_scale = 1.0f,
+        .v_scale = 1.0f,
+        .box = {box.x, box.y, box.width, box.height},
+    };
+    filter->impl->draw(filter, output, &scene, &draw);
+    if (glfx->timing)
+        glFinish();
+    bool ok = wlr_render_pass_submit(pass);
+    if (glfx->timing)
+        glfx->draw_total += glfx_get_now() - started;
+    wlr_texture_destroy(texture);
+    return ok;
+}
+
+bool xd_glfx_build_output_state(xd_output *output, struct wlr_scene_output *scene_output,
+                                struct wlr_output_state *state) {
+    xd_glfx *glfx = output->server->glfx;
+    if (!xd_glfx_is_output_filtered(output))
+        return wlr_scene_output_build_state(scene_output, state, nullptr);
+    struct wlr_output *wlr_output = output->wlr_output;
+    xd_server *server = output->server;
+    filtered_output *filtered = glfx_get_filtered_output(glfx, wlr_output);
+    if (!glfx_ensure_exact_chain(server, &filtered->scene_chain, wlr_output->width,
+                                 wlr_output->height))
+        return wlr_scene_output_build_state(scene_output, state, nullptr);
+    /* The scene graph draws into our buffer, with its own damage tracking
+     * for it; what it would commit besides is dropped. */
+    struct wlr_output_state scene_state;
+    wlr_output_state_init(&scene_state);
+    bool built = wlr_scene_output_build_state(
+        scene_output, &scene_state,
+        &(struct wlr_scene_output_state_options){.swapchain = filtered->scene_chain});
+    if (!built || !(scene_state.committed & WLR_OUTPUT_STATE_BUFFER) ||
+        scene_state.buffer == nullptr ||
+        !wlr_output_configure_primary_swapchain(wlr_output, state, &wlr_output->swapchain)) {
+        wlr_output_state_finish(&scene_state);
+        return false;
+    }
+    struct wlr_box box = {0};
+    wlr_output_layout_get_box(server->output_layout, wlr_output, &box);
+    struct wlr_buffer *source = wlr_buffer_lock(scene_state.buffer);
+    wlr_output_state_finish(&scene_state);
+    xd_output_filter *filter, *last = nullptr;
+    wl_list_for_each(filter, &glfx->filters, link) {
+        if (filter->active)
+            last = filter;
+    }
+    bool ok = true;
+    wl_list_for_each(filter, &glfx->filters, link) {
+        if (!ok || !filter->active)
+            continue;
+        struct wlr_swapchain *chain = wlr_output->swapchain;
+        if (filter != last) {
+            ok = glfx_ensure_exact_chain(server, &filtered->between_chain, wlr_output->width,
+                                         wlr_output->height);
+            chain = filtered->between_chain;
+        }
+        struct wlr_buffer *target = ok ? wlr_swapchain_acquire(chain) : nullptr;
+        ok = target != nullptr && glfx_run_filter(glfx, filter, output, source, target, box);
+        wlr_buffer_unlock(source);
+        source = target;
+    }
+    /* No damage given: the whole output. */
+    if (ok && source != nullptr)
+        wlr_output_state_set_buffer(state, source);
+    if (source != nullptr)
+        wlr_buffer_unlock(source);
+    return ok;
+}
+
 bool xd_glfx_init(xd_server *server, xd_effects_support *support) {
     xd_glfx *glfx = XD_NEW(xd_glfx);
     glfx->server = server;
     wl_list_init(&glfx->windows);
+    wl_list_init(&glfx->filters);
+    wl_list_init(&glfx->filtered_outputs);
     glfx->timing = getenv("XD_EFFECTS_TIMING") != nullptr;
     server->glfx = glfx;
     /* The renderer's name, for the log and Desktop Effects: GL needs the
@@ -830,6 +1181,14 @@ void xd_glfx_finish(xd_server *server) {
     xd_window_effect *effect, *next;
     wl_list_for_each_safe(effect, next, &glfx->windows, link) {
         xd_glfx_end_window(effect);
+    }
+    xd_output_filter *filter, *next_filter;
+    wl_list_for_each_safe(filter, next_filter, &glfx->filters, link) {
+        xd_glfx_remove_output_filter(filter);
+    }
+    filtered_output *filtered, *next_filtered;
+    wl_list_for_each_safe(filtered, next_filtered, &glfx->filtered_outputs, link) {
+        glfx_free_filtered_output(filtered);
     }
     /* The shaders go with the renderer's context. */
     server->glfx = nullptr;

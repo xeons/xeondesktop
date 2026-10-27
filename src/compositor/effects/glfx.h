@@ -146,13 +146,28 @@ struct xd_window_effect {
     struct wlr_texture *frame_texture;
     double last_time;
     bool begun;
+    /* xd_glfx_begin_closing_window's: the picture taken then, kept; the
+     * node beside the window's tree, not in it. */
+    bool held;
+    double held_scale;
 };
 
 /* `impl` takes `view` over from the next frame, with `data`. A window
  * has one effect at a time: an effect already on it is ended first. */
 xd_window_effect *xd_glfx_begin_window(xd_view *view, const xd_window_effect_impl *impl,
                                        void *data);
-/* The effect `impl` has on `view`, or nullptr. */
+/* A closing effect (close, minimize: Compiz's animations): `view`, about
+ * to go (UNMAP) or be hidden (MINIMIZE), is drawn once now into the
+ * effect's texture, which it keeps; the effect then runs without the
+ * window, its picture stacked where the window was (just above the
+ * window's tree, in the same layer), till update says it's over. Call it
+ * from the window event: the window's content is still there. Live
+ * effects on the window end first. `effect->view` is the window until it
+ * is destroyed, nullptr after. nullptr if the window isn't shown or
+ * can't be drawn. */
+xd_window_effect *xd_glfx_begin_closing_window(xd_view *view, const xd_window_effect_impl *impl,
+                                               void *data);
+/* The effect `impl` has on `view` (a closing one too), or nullptr. */
 xd_window_effect *xd_glfx_find_window(xd_view *view, const xd_window_effect_impl *impl);
 /* Ends it now (calls done): the window is drawn as itself again. */
 void xd_glfx_end_window(xd_window_effect *effect);
@@ -163,7 +178,57 @@ bool xd_glfx_init(xd_server *server, xd_effects_support *support);
 void xd_glfx_finish(xd_server *server);
 void xd_glfx_frame(xd_server *server, xd_output *output, double now);
 void xd_glfx_frame_done(xd_server *server, xd_output *output);
-/* The window is unmapped or destroyed: its effects end. */
+/* The window is unmapped or destroyed: its effects end (not its closing
+ * ones). */
 void xd_glfx_forget_view(xd_view *view);
+/* The window is destroyed: closing effects let go of it. */
+void xd_glfx_drop_view(xd_view *view);
+
+/* ---- output filters ------------------------------------------------------------- */
+
+/* A whole-output effect (Water; a cube, a wall): each output's frame is
+ * drawn by the scene graph into a buffer of ours (`scene`), and the filter
+ * draws the output's real buffer from it with shaders of its own. Filters
+ * run in the order they were added, each drawing from the one before.
+ * While any filter is active the output's every frame is drawn (and its
+ * scanout is off); one turning idle has the scene repaint the whole
+ * output. Outputs that are rotated or flipped aren't filtered. */
+typedef struct xd_output_filter xd_output_filter;
+
+typedef struct xd_output_filter_impl {
+    const char *name; /* for the log */
+    /* Once per frame (all outputs'), `seconds` since the last: whether it
+     * changes the picture now. False: idle, drawn as usual, and no frames
+     * for it till xd_glfx_wake_output_filter. */
+    bool (*update)(xd_output_filter *filter, double seconds);
+    /* Draws the whole output from `scene` (`scene->box` is the output's
+     * box in layout units, sampled 0..1 across it). `draw->bounds` is the
+     * output's box and `draw->projection` maps layout units to it. */
+    void (*draw)(xd_output_filter *filter, xd_output *output, const xd_glfx_texture *scene,
+                 const xd_glfx_draw *draw);
+    /* Removed: free `data` here. Optional. */
+    void (*done)(xd_output_filter *filter);
+} xd_output_filter_impl;
+
+struct xd_output_filter {
+    const xd_output_filter_impl *impl;
+    xd_server *server;
+    void *data; /* the effect's */
+    /* The framework's. */
+    struct wl_list link; /* xd_glfx.filters */
+    bool active;
+    double last_time;
+};
+
+xd_output_filter *xd_glfx_add_output_filter(xd_server *server, const xd_output_filter_impl *impl,
+                                            void *data);
+void xd_glfx_remove_output_filter(xd_output_filter *filter);
+/* Its update runs again from the next frame. */
+void xd_glfx_wake_output_filter(xd_output_filter *filter);
+/* effects.c's, for output.c: whether a filter draws the output's frames,
+ * and the frame's state (the scene graph's, filtered). */
+bool xd_glfx_is_output_filtered(const xd_output *output);
+bool xd_glfx_build_output_state(xd_output *output, struct wlr_scene_output *scene_output,
+                                struct wlr_output_state *state);
 
 #endif

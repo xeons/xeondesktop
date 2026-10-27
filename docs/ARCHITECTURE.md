@@ -312,7 +312,7 @@ for OpenGL ones, whose files are `effects_fx_src` in meson.build). Its
 hooks, all optional: `enable` (returns its state), `disable`, `configure`
 (its options, after enable and on every change), `window_event` (map,
 unmap, destroy, focus, maximize/restore/snap with the box before,
-minimize, unminimize; sent from `view.c`) and `frame` (before each
+minimize, unminimize, title; sent from `view.c`) and `frame` (before each
 output's frame, Compiz's preparePaint). The plain `xd-compositor` compiles
 none of the OpenGL ones and reports them unavailable.
 
@@ -348,6 +348,39 @@ an effect runs (`xd_frame_keep_pixels`): the scene graph lets go of a
 buffer once it has a texture. Buffers are whole multiples of 64 px
 (llvmpipe overruns smaller udmabuf buffers). `XD_EFFECTS_TIMING=1` logs
 frame times.
+
+**Closing effects** (close, minimize). `xd_glfx_begin_closing_window(view,
+impl, data)`, called from the UNMAP or MINIMIZE window event while the
+window's content is still there, draws the window once into the effect's
+texture, which it keeps (`held`): the effect runs on without the window,
+its node beside the window's tree in the same layer (just above it), so
+it stays where the window was stacked when the tree is hidden or freed.
+`effect->view` is the window until it's destroyed (`xd_glfx_drop_view`),
+then nullptr; a live effect begun on a window that has a closing one
+(restored while it's being minimized) ends it. An effect that draws
+minimizing and restoring sets `animates_minimize` in its
+`xd_effect_impl`, and XP's bar animation is left out while it's on.
+
+**Output filters** (whole-output effects: Water; a cube or a wall).
+`xd_glfx_add_output_filter(server, impl, data)`: while a filter is active,
+output.c asks `xd_effects_build_output_state()` for each frame, which has
+the scene graph draw into a buffer of ours (`wlr_scene_output_build_state`
+with our swapchain, so its damage tracking still holds) and the filter's
+`draw(filter, output, scene, draw)` draw the output's real buffer from it
+(`scene->box` the output's box in layout units, `draw->projection` from
+layout units). Several filters run in the order added, each from the one
+before. `update(filter, seconds)` runs once a frame and says whether it
+changes the picture: an idle filter costs nothing (no pass, no frames)
+till `xd_glfx_wake_output_filter()`, and going idle has the scene graph
+repaint the whole output. Outputs rotated or flipped aren't filtered.
+
+**Bindings.** An implementation's `key(server, state, modifiers, keysym)`
+and `button(server, state, modifiers, button)` hooks see a key or a mouse
+button pressed before our shortcuts and the programs do (not on the lock
+screen, nor while a program inhibits shortcuts), and return true to take
+it (a button's release then goes nowhere either). `xd_effects_is_key()`
+and `xd_effects_is_button()` compare one with a KEY or BUTTON option's
+value. The TITLE window event says a window's title changed.
 
 **Wobbly Windows** (`wobbly.c`, the model in `wobbly_model.c`, unit-tested)
 is Compiz's wobbly plugin: a 4 x 4 grid of masses joined by springs, the

@@ -66,10 +66,11 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
     xd_effects_output_frame(out);
     /* wlr_scene_output_commit, with our gamma ramp (gamma.c) in the same
      * commit when it changed, and adaptive sync and tearing (present.c). */
-    if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out) || xd_present_pending(out)) {
+    if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out) || xd_present_pending(out) ||
+        xd_effects_is_output_filtered(out)) {
         struct wlr_output_state state;
         wlr_output_state_init(&state);
-        if (wlr_scene_output_build_state(so, &state, nullptr)) {
+        if (xd_effects_build_output_state(out, so, &state)) {
             xd_gamma_frame(out, &state);
             xd_present_frame(out, &state);
             if (wlr_output_commit_state(out->wlr_output, &state))

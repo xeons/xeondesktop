@@ -27,6 +27,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../core/alloc.h"
+#include "effects/effects.h"
 #include "grabkeys.h"
 #include "server.h"
 
@@ -849,7 +850,10 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
             .logo = mods & WLR_MODIFIER_LOGO,
         };
         for (int i = 0; i < nsyms; i++) {
-            if (!inhibited || xd_grab_key_kept(held, syms[i]))
+            /* Desktop Effects' bindings first (none clash with ours). */
+            if (!inhibited && !server->locked && xd_effects_key(server, mods, syms[i]))
+                handled = true;
+            else if (!inhibited || xd_grab_key_kept(held, syms[i]))
                 handled = handle_binding(server, mods, syms[i]) || handled;
         }
         /* One of our shortcuts: a captured pointer is the desktop's again. */
@@ -1829,6 +1833,16 @@ static void process_button(xd_server *server,
 
     if (server->mode != XD_CURSOR_PASSTHROUGH)
         return;
+    /* A Desktop Effects mouse binding (Water's ripple): the press and its
+     * release go nowhere else. */
+    struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
+    if (!xd_shortcuts_inhibited(server) &&
+        xd_effects_button(server, keyboard != nullptr ? wlr_keyboard_get_modifiers(keyboard) : 0,
+                          pointer_button_event->button)) {
+        server->ignore_release = true;
+        server->super_alone = false;
+        return;
+    }
     /* An open popup (menu) owns the pointer: a click outside it must reach
      * the grab so the menu closes, not start a window drag. */
     if (wlr_seat_pointer_has_grab(server->seat)) {
