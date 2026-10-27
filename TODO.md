@@ -123,6 +123,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       in software (src/saver/raster3d.c, and raycasting for the maze). Not
       yet: hardware tests of monitor power; Pipes' textured surfaces. 3D
       Flower Box's Setup is our own layout: Windows' dialog wasn't copied.
+      Digital Rain (src/saver/rain.c, [ScreenSaver.Rain]) is our own, after
+      the film; its look awaits the user's review.
 - [x] **Priority**: a display manager can run at background priority
       (CachyOS's ananicy-cpp types sddm as a "Launcher": nice 16, idle I/O)
       and the session inherited it, delaying input by seconds. The
