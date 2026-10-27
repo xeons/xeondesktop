@@ -3163,6 +3163,35 @@ def files_save_search(s):
 
 
 @scenario()
+def start_menu_search(s):
+    """The Start menu's Search > For Files or Folders... opens xd-files on
+    My Computer with the Search pane (Windows 2000's)."""
+    s.settle("desktop")
+    s.inject("key", "ctrl+Escape")
+    s.settle("start-menu")
+    # From nothing selected, Up: Shut Down, Log Off, Run, Help, Search.
+    s.inject("key", "Up", "key", "Up", "key", "Up", "key", "Up", "key", "Up", "key", "Right",
+             "sleep", 300, "key", "Return")
+    s.wait_window(app_id=FILES, title="My Computer", state="activated")
+    s.log("ok: Search opened xd-files on My Computer")
+    shot = s.settle("search pane")
+    s.inject("type", "anything")
+    typed = s.settle("typed")
+    s.check(typed.changed_box(shot, (0, 0, WIDTH, HEIGHT - 40)) is not None,
+            "with the focus in the Search pane's name field")
+
+
+def count_like(shot, rect, rgb, tolerance=40, step=1):
+    x0, y0, w, h = rect
+    count = 0
+    for y in range(y0, y0 + h, step):
+        for x in range(x0, x0 + w, step):
+            if max(abs(p - q) for p, q in zip(shot.pixel(x, y), rgb)) <= tolerance:
+                count += 1
+    return count
+
+
+@scenario()
 def files_search_highlight(s):
     """The matched part of each result's name is highlighted: by default in
     the theme's selected-text colours (white on Classic's dark blue);

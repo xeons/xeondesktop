@@ -42,7 +42,7 @@ they die.
 | `xd-vboxdnd` | none (Wayland, GLib) | VirtualBox drag and drop in both directions, through the host's HGCM service; started by the compositor in a VirtualBox guest. |
 | `xd-mines` | GTK3 | Minefield, XP's mine-clearing game, drawn with cairo. |
 | `xd-snip` | GTK3 | The Snipping Tool (its overlay through gtk-layer-shell), Print Screen's clipboard copies, and screen recording (GStreamer). |
-| `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
+| `xd-help`, `xd-defaults` | GTK3 | Help and Support, Set Program Access and Defaults (the Start menus' Search is `xd-files --search`). |
 | `xd-control` | none | Opens `control:` in `xd-files`, or one applet (`xd-control desk`). |
 | `xdg-desktop-portal-xeondesktop` | GTK3 | The xdg-desktop-portal FileChooser backend: our Open and Save As dialogs (XP's layout with 7's search box, around the folder view) for Flatpaks, GTK 4, Firefox, Chromium and GtkFileChooserNative. In libexecdir, D-Bus activated. |
 | `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-effects`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |

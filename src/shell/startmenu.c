@@ -377,7 +377,7 @@ void xd_start_menu_build(xd_shell *shell) {
     search->submenu = xd_menu_model_new(tree);
     xd_menu_item *files = xd_menu_add_keyed(tree, search->submenu, XD_MENU_ACTION,
                                             "For &Files or Folders...", "system-search");
-    files->command = xd_shell_own_command(shell, "xd-search", nullptr);
+    files->command = xd_shell_own_command(shell, "xd-files", "--search");
 
     xd_menu_item *help = xd_menu_add_keyed(tree, root, XD_MENU_ACTION, "&Help", "help-browser");
     help->command = xd_shell_own_command(shell, "xd-help", nullptr);

@@ -769,7 +769,6 @@ install_data(
   'data/applications/org.xeondesktop.Flatpak.desktop',
   'data/applications/org.xeondesktop.Printers.desktop',
   'data/applications/org.xeondesktop.Scanners.desktop',
-  'data/applications/org.xeondesktop.Search.desktop',
   'data/applications/org.xeondesktop.Help.desktop',
   'data/applications/org.xeondesktop.Defaults.desktop',
   'data/applications/org.xeondesktop.AutomaticUpdates.desktop',
@@ -1056,15 +1055,8 @@ executable(
   install: true,
 )
 
-# The Start menus' Search, Help and Set Program Access and Defaults.
-executable(
-  'xd-search',
-  'src/startmenu/search.c',
-  'src/startmenu/searchlib.c',
-  link_with: [gtkapp_lib],
-  dependencies: [core_dep, settings_dep, gtk_dep],
-  install: true,
-)
+# The Start menus' Help and Set Program Access and Defaults (their Search
+# is xd-files --search).
 executable(
   'xd-help',
   'src/startmenu/help.c',
@@ -1511,7 +1503,6 @@ test_exe = executable(
   'src/printers/printlib.c',
   'src/printers/cupsops.c',
   'src/scanners/scanlib.c',
-  'src/startmenu/searchlib.c',
   'src/files/favorites.c',
   'src/files/launcher.c',
   'src/files/cleanup.c',
@@ -1686,7 +1677,7 @@ install_man(
   'man/xd-keys.1',
   'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mines.1', 'man/xd-mouse.1',
   'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
-  'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
+  'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1',
   'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1', 'man/xd-snip.1',
   'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',
   'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-vboxdnd.1', 'man/xd-wifi-key.1',

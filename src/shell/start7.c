@@ -2204,7 +2204,7 @@ static void activate_right(xd_start7 *menu, int hit) {
         run_command(menu, xd_shell_own_command(shell, "xd-help", nullptr));
         return;
     case HIT_XP_SEARCH:
-        run_command(menu, xd_shell_own_command(shell, "xd-search", nullptr));
+        run_command(menu, xd_shell_own_command(shell, "xd-files", "--search"));
         return;
     case R_RUN:
         run_command(menu, xd_shell_own_command(shell, "xd-run", nullptr));

@@ -90,7 +90,6 @@
 #include "../src/shell/apps.h"
 #include "../src/shell/gpu.h"
 #include "../src/startup/startup.h"
-#include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
 #include "../src/timedate/zone.h"
@@ -7492,8 +7491,6 @@ static void test_scanners(void) {
     CHECK(!xd_scan_convert_line(SANE_FRAME_GRAY, 4, 1, green, rgb));
 }
 
-/* xd-search: part of a name or a wildcard pattern, ignoring case; text
- * in a file's bytes. */
 /* Task Manager: Networking's adapters from a sysfs-like tree, and Peak
  * Mem Usage's VmHWM. */
 static void put_attr(const char *root, const char *rel, const char *text) {
@@ -8617,35 +8614,53 @@ static void test_search_walk(void) {
     g_free(root);
 }
 
+/* XP's and 2000's fields: the name and the text in the file. */
+static bool fields_find(const char *name_field, const char *contents_field,
+                        const search_file *file) {
+    xd_search_criteria criteria;
+    xd_search_criteria_init(&criteria);
+    criteria.name = g_strdup(name_field);
+    criteria.contents = g_strdup(contents_field);
+    xd_search_query *query = xd_search_query_new(&criteria, nullptr, 1, nullptr);
+    bool found = query != nullptr && query_matches(query, file);
+    xd_search_query_unref(query);
+    xd_search_criteria_clear(&criteria);
+    return found;
+}
+
+static bool name_field_finds(const char *field, const char *name) {
+    search_file file = {.name = name};
+    return fields_find(field, nullptr, &file);
+}
+
+static bool contents_field_finds(const char *field, const char *data, size_t length) {
+    search_file file = {.name = "a", .contents = data, .contents_length = length};
+    return fields_find(nullptr, field, &file);
+}
+
+/* What xd-search's matching did, now the search engine's: part of a name
+ * or a wildcard pattern, ignoring case; text in a file's bytes. */
 static void test_search_match(void) {
-    xd_search_name search_name;
-    xd_search_name_init(&search_name, "  ");
-    CHECK(xd_search_name_matches(&search_name, "anything"));
-    xd_search_name_clear(&search_name);
-    xd_search_name_init(&search_name, "Report");
-    CHECK(xd_search_name_matches(&search_name, "Annual report 2026.odt"));
-    CHECK(xd_search_name_matches(&search_name, "REPORT"));
-    CHECK(!xd_search_name_matches(&search_name, "Repo.txt"));
-    xd_search_name_clear(&search_name);
-    xd_search_name_init(&search_name, "*.TXT");
-    CHECK(xd_search_name_matches(&search_name, "notes.txt"));
-    CHECK(!xd_search_name_matches(&search_name, "notes.txt.bak"));
-    xd_search_name_clear(&search_name);
-    xd_search_name_init(&search_name, "l?tter*");
-    CHECK(xd_search_name_matches(&search_name, "Letter.txt"));
-    CHECK(!xd_search_name_matches(&search_name, "a Letter.txt"));
-    xd_search_name_clear(&search_name);
-    xd_search_name_init(&search_name, "\u00FCn\u00EF");
-    CHECK(xd_search_name_matches(&search_name, "\u00DCN\u00CFCODE"));
-    xd_search_name_clear(&search_name);
-    CHECK(search_name.part == nullptr && search_name.glob == nullptr);
+    CHECK(name_field_finds("  ", "anything"));
+    CHECK(name_field_finds("Report", "Annual report 2026.odt"));
+    CHECK(name_field_finds("Report", "REPORT"));
+    CHECK(!name_field_finds("Report", "Repo.txt"));
+    CHECK(name_field_finds("*.TXT", "notes.txt"));
+    CHECK(!name_field_finds("*.TXT", "notes.txt.bak"));
+    CHECK(name_field_finds("l?tter*", "Letter.txt"));
+    CHECK(!name_field_finds("l?tter*", "a Letter.txt"));
+    CHECK(name_field_finds("\u00FCn\u00EF", "\u00DCN\u00CFCODE"));
+    /* Several names, as XP took them: commas or semicolons between. */
+    CHECK(name_field_finds("*.bmp, *.jpg", "photo.JPG"));
+    CHECK(name_field_finds("letter;memo", "memo to staff"));
+    CHECK(!name_field_finds("letter;memo", "notes"));
 
     static const char data[] = "Dear Sir,\nShopping\0list";
-    CHECK(xd_search_text_in(data, sizeof(data) - 1, "dear sir"));
-    CHECK(xd_search_text_in(data, sizeof(data) - 1, "LIST"));
-    CHECK(xd_search_text_in(data, sizeof(data) - 1, ""));
-    CHECK(!xd_search_text_in(data, sizeof(data) - 1, "shopping list"));
-    CHECK(!xd_search_text_in("ab", 2, "abc"));
+    CHECK(contents_field_finds("dear sir", data, sizeof(data) - 1));
+    CHECK(contents_field_finds("LIST", data, sizeof(data) - 1));
+    CHECK(contents_field_finds("", data, sizeof(data) - 1));
+    CHECK(!contents_field_finds("shopping list", data, sizeof(data) - 1));
+    CHECK(!contents_field_finds("abc", "ab", 2));
 }
 
 /* The freedesktop thumbnail cache: MD5-of-URI names, the sizes' folders,

@@ -1218,6 +1218,10 @@ static node *name_terms(const xd_search_criteria *criteria, GError **error) {
         free_node(any);
         return only;
     }
+    if (any->children->len == 0) {
+        free_node(any);
+        return new_group(NODE_AND); /* only spaces and separators: any name */
+    }
     return any;
 }
 
