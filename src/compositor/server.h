@@ -9,6 +9,7 @@
 #include <time.h>
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
+#include <wlr/render/drm_format_set.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
@@ -315,6 +316,9 @@ struct xd_server {
     struct wlr_session *session;
     struct wlr_renderer *renderer;
     struct wlr_allocator *allocator;
+    /* ARGB8888 in the layouts the renderer draws into, for our own
+     * offscreen buffers (xd_server_get_offscreen_format). */
+    struct wlr_drm_format_set offscreen_formats;
 
     struct wlr_scene *scene;
     struct wlr_scene_output_layout *scene_layout;
@@ -529,6 +533,9 @@ void xd_output_update_backgrounds(xd_server *server);
 void xd_output_arrange(xd_output *out);
 xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output);
 xd_output *xd_output_at(xd_server *server, double lx, double ly);
+/* The format for buffers we draw into and sample or read back, never
+ * scanned out: window captures, the effects' pictures. */
+const struct wlr_drm_format *xd_server_get_offscreen_format(const xd_server *server);
 
 /* layers.c */
 void xd_layers_init(xd_server *server);

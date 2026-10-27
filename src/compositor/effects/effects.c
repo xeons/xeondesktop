@@ -139,7 +139,8 @@ void xd_effects_init(xd_server *server) {
     effects_explain_plain_build(server, &effects->support);
 #endif
     wlr_log(WLR_INFO, "effects: OpenGL effects %s (%s)",
-            effects->support.opengl ? "available" : "unavailable", effects->support.renderer);
+            effects->support.opengl ? "available" : "unavailable",
+            effects->support.opengl ? effects->support.renderer : effects->support.reason);
 
     xd_effects_load(effects->settings);
     effects->watch_fd = xd_effects_watch();

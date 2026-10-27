@@ -13,7 +13,9 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <drm_fourcc.h>
 #include <wlr/render/drm_syncobj.h>
+#include <wlr/types/wlr_buffer.h>
 #include <wlr/render/pixman.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_control_v1.h>
@@ -254,6 +256,38 @@ static bool needs_software_cursor(xd_server *server) {
     return virt;
 }
 
+/* ARGB8888 in the layouts the renderer takes. Leaving the layout to the
+ * driver (DRM_FORMAT_MOD_INVALID, an implicit modifier) works with Mesa,
+ * but NVIDIA's EGL can't draw into such a buffer ("EGLImage not
+ * supported"). So the renderer's explicit modifiers, and the implicit one
+ * only where it lists none (pixman, drivers without modifiers). wlroots
+ * makes public only the formats it samples, not those it draws into; for
+ * ARGB8888 they're the same layouts. */
+static void init_offscreen_formats(xd_server *server) {
+    const struct wlr_drm_format_set *texture_formats =
+        wlr_renderer_get_texture_formats(server->renderer, WLR_BUFFER_CAP_DMABUF);
+    const struct wlr_drm_format *argb =
+        texture_formats != nullptr ? wlr_drm_format_set_get(texture_formats, DRM_FORMAT_ARGB8888)
+                                   : nullptr;
+    size_t explicit_count = 0;
+    for (size_t i = 0; argb != nullptr && i < argb->len; i++) {
+        if (argb->modifiers[i] == DRM_FORMAT_MOD_INVALID)
+            continue;
+        wlr_drm_format_set_add(&server->offscreen_formats, DRM_FORMAT_ARGB8888,
+                               argb->modifiers[i]);
+        explicit_count++;
+    }
+    if (explicit_count == 0)
+        wlr_drm_format_set_add(&server->offscreen_formats, DRM_FORMAT_ARGB8888,
+                               DRM_FORMAT_MOD_INVALID);
+    wlr_log(WLR_INFO, "offscreen buffers: ARGB8888 with %zu explicit modifier(s)",
+            explicit_count);
+}
+
+const struct wlr_drm_format *xd_server_get_offscreen_format(const xd_server *server) {
+    return wlr_drm_format_set_get(&server->offscreen_formats, DRM_FORMAT_ARGB8888);
+}
+
 static bool server_init(xd_server *server) {
     server->display = wl_display_create();
     server->loop = wl_display_get_event_loop(server->display);
@@ -300,6 +334,7 @@ static bool server_init(xd_server *server) {
         wlr_log(WLR_ERROR, "cannot create allocator");
         return false;
     }
+    init_offscreen_formats(server);
 
     server->compositor = wlr_compositor_create(server->display, 6, server->renderer);
     wlr_subcompositor_create(server->display);
@@ -436,6 +471,7 @@ static void server_finish(xd_server *server) {
         wlr_allocator_destroy(server->allocator);
     if (server->renderer != nullptr)
         wlr_renderer_destroy(server->renderer);
+    wlr_drm_format_set_finish(&server->offscreen_formats);
     if (server->backend != nullptr)
         wlr_backend_destroy(server->backend);
     xd_appicons_destroy(server->appicons);

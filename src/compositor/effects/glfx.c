@@ -323,14 +323,10 @@ void xd_glfx_draw_mesh(const xd_glfx_draw *draw, const xd_glfx_mesh *mesh,
 
 /* ---- buffers -------------------------------------------------------------------- */
 
-/* Our buffers are drawn into and sampled, never scanned out: ARGB in
- * whatever layout the allocator picks for it (an implicit modifier), as
- * capture.c's. */
+/* Our buffers are drawn into and sampled, never scanned out. */
 static struct wlr_swapchain *glfx_create_chain(xd_server *server, int width, int height) {
-    uint64_t modifiers[] = {DRM_FORMAT_MOD_INVALID};
-    struct wlr_drm_format format = {
-        .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = modifiers};
-    return wlr_swapchain_create(server->allocator, width, height, &format);
+    return wlr_swapchain_create(server->allocator, width, height,
+                                xd_server_get_offscreen_format(server));
 }
 
 /* A swapchain of buffers at least width x height, whole steps across and

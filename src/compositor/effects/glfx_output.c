@@ -79,12 +79,10 @@ static int output_round_up(double value) {
 
 /* Drawn into and sampled, never scanned out, as glfx.c's. */
 static struct wlr_swapchain *output_create_chain(xd_server *server, int width, int height) {
-    uint64_t modifiers[] = {DRM_FORMAT_MOD_INVALID};
-    struct wlr_drm_format format = {
-        .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = modifiers};
     width = XD_MIN((width + BUFFER_STEP - 1) / BUFFER_STEP * BUFFER_STEP, MAX_PX);
     height = XD_MIN((height + BUFFER_STEP - 1) / BUFFER_STEP * BUFFER_STEP, MAX_PX);
-    struct wlr_swapchain *chain = wlr_swapchain_create(server->allocator, width, height, &format);
+    struct wlr_swapchain *chain = wlr_swapchain_create(server->allocator, width, height,
+                                                       xd_server_get_offscreen_format(server));
     if (chain == nullptr)
         wlr_log(WLR_ERROR, "effects: cannot allocate a %dx%d buffer", width, height);
     return chain;

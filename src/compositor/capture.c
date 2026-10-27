@@ -104,13 +104,9 @@ static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) 
 
 /* The window's frame and client surfaces, scaled into a w x h buffer. */
 static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int width, int height) {
-    /* Whatever layout the allocator picks for ARGB (an implicit modifier):
-     * it's only drawn into and read back. */
-    uint64_t modifiers[] = {DRM_FORMAT_MOD_INVALID};
-    struct wlr_drm_format fmt_set = {
-        .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = modifiers};
-    const struct wlr_drm_format *fmt = &fmt_set;
-    struct wlr_buffer *buf = wlr_allocator_create_buffer(server->allocator, width, height, fmt);
+    /* Only drawn into and read back. */
+    struct wlr_buffer *buf = wlr_allocator_create_buffer(server->allocator, width, height,
+                                                         xd_server_get_offscreen_format(server));
     if (buf == nullptr)
         return nullptr;
     /* With explicit sync, the pass signals a point of our own timeline
