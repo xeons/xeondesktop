@@ -361,6 +361,16 @@ detached at unmap, keeping its last picture. Minimizing zooms to the
 taskbar button the shell reported (`button_box`, as `animate.c` uses), and
 `animates` stops XP's bar for the windows it animates.
 
+**Window Opacity** (`opacity.c`) is the opacity part of Compiz's Opacity,
+Brightness and Saturation: a window's buffers are drawn at its first
+matching rule's opacity, or as Alt and the wheel over it last set, and
+inactive ones no more than the inactive opacity if dimmed. Neither scene
+graph (wlroots' or SceneFX's) draws a buffer with a brightness or
+saturation, so those aren't offered. The opacities are set again before
+each frame (an unchanged one costs nothing), which also restores them
+after an OpenGL effect or Aero Peek, whose own are left alone while it
+shows.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

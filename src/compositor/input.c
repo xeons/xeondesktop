@@ -1907,10 +1907,16 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data) {
     const struct wlr_pointer_axis_event *pointer_axis_event = data;
     xd_idle_activity(server);
     if (pointer_axis_event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL &&
-        server->mode == XD_CURSOR_PASSTHROUGH && !server->locked &&
-        xd_effects_input(server, &(xd_effect_input){.kind = XD_EFFECT_INPUT_AXIS,
-                                                    .delta = pointer_axis_event->delta}))
-        return;
+        server->mode == XD_CURSOR_PASSTHROUGH && !server->locked) {
+        int notches = abs(pointer_axis_event->delta_discrete) / WLR_POINTER_AXIS_DISCRETE_STEP;
+        xd_effect_input input = {
+            .kind = XD_EFFECT_INPUT_AXIS,
+            .delta = pointer_axis_event->delta,
+            .steps = XD_MAX(notches, 1),
+        };
+        if (xd_effects_input(server, &input))
+            return;
+    }
     double delta = pointer_axis_event->delta;
     int32_t discrete = pointer_axis_event->delta_discrete;
     /* [Mouse] WheelLines: clients scroll about 3 lines a notch, so scale

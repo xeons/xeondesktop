@@ -16,3 +16,4 @@ XD_EFFECT_IMPL(water)
 #endif
 XD_EFFECT_IMPL(scale)
 XD_EFFECT_IMPL(animations)
+XD_EFFECT_IMPL(window_opacity)

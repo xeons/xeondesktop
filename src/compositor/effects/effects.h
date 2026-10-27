@@ -54,6 +54,7 @@ typedef struct xd_effect_input {
     uint32_t button;    /* BUTTON: BTN_LEFT... (linux/input-event-codes.h) */
     bool pressed;       /* KEY, BUTTON */
     double delta;       /* AXIS: positive is down (towards the user) */
+    int steps;          /* AXIS: how many of the wheel's notches (at least 1) */
     double x, y;        /* the pointer, layout coordinates */
 } xd_effect_input;
 

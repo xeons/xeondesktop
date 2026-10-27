@@ -1291,6 +1291,64 @@ def animations_minimize_zoom(s):
             "restored, the window is itself again")
 
 
+def contrasting_points(shot, empty, box, avoid=None):
+    """Points in box where shot is far from the desktop's colour, not in
+    the box `avoid`."""
+    x0, y0, w, h = box
+    points = []
+    for y in range(y0 + 40, y0 + h - 10, 17):
+        for x in range(x0 + 10, x0 + w - 10, 23):
+            if avoid and avoid[0] - 4 <= x < avoid[0] + avoid[2] + 4 and \
+                    avoid[1] - 4 <= y < avoid[1] + avoid[3] + 4:
+                continue
+            if sum(abs(a - b) for a, b in zip(shot.pixel(x, y), empty.pixel(x, y))) > 200:
+                points.append((x, y))
+    return points
+
+
+def blended_share(shot, opaque, empty, points):
+    return sum(between(shot.pixel(x, y), opaque.pixel(x, y), empty.pixel(x, y))
+               for x, y in points) / max(len(points), 1)
+
+
+@scenario(setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nDimInactive=true\nInactiveOpacity=50\n"))
+def window_opacity_inactive(s):
+    """Window Opacity: with inactive windows dimmed to 50%, Control Panel
+    behind the Run box shows the desktop through it, while Run, active,
+    is opaque; Alt and the wheel down over Run make it see-through too,
+    and up again opaque."""
+    empty = s.settle("desktop")
+    s.inject("move", WIDTH - 20, 300)
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    run_box = s.settle("run").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    control = s.settle("control-panel")
+    control_box = control.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"Control Panel {control_box}, Run {run_box}")
+    s.inject("key", "alt+Tab")
+    s.wait_window(title="Run", state="activated")
+    both = s.settle("both")
+    points = contrasting_points(control, empty, control_box, avoid=run_box)
+    s.check(len(points) > 10, f"Control Panel has pixels unlike the desktop ({len(points)})")
+    share = blended_share(both, control, empty, points)
+    s.check(share > 0.8, f"inactive, Control Panel is blended with the desktop ({share:.2f})")
+    run_points = contrasting_points(both, empty, run_box)
+    s.check(blended_share(both, both, empty, run_points) == 0, "Run, active, is opaque")
+    # Alt and the wheel over Run: 10 steps of 5% down.
+    s.inject("move", run_box[0] + run_box[2] // 2, run_box[1] + 60, "hold", "alt",
+             "wheel", 10, "release", "alt")
+    faded = s.settle("run-faded")
+    # What's behind Run (Control Panel, dimmed) now shows through it.
+    share = faded.differs(both, run_box)
+    s.check(share > 0.2, f"Alt and the wheel down make Run see-through ({share:.2f})")
+    s.inject("hold", "alt", "wheel", -10, "release", "alt")
+    opaque = s.settle("run-opaque")
+    s.check(opaque.differs(both, run_box) < 0.02, "and up again, opaque")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

@@ -154,6 +154,7 @@ settings_lib = static_library(
   'src/settings/effects/water.c',
   'src/settings/effects/scale.c',
   'src/settings/effects/animations.c',
+  'src/settings/effects/window_opacity.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -422,6 +423,7 @@ compositor_src += files(
   'src/compositor/effects/scale_model.c',
   'src/compositor/effects/animations.c',
   'src/compositor/effects/animations_model.c',
+  'src/compositor/effects/opacity.c',
 )
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
