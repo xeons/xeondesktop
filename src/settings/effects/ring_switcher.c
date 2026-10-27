@@ -121,9 +121,11 @@ static const xd_effect_option options[] = {
     {
         .key = "PreviousKey",
         .label = "Previous window",
+        .description = "While the ring shows, Shift+Tab goes back too.",
         .group = "Bindings",
         .type = XD_EFFECT_OPTION_KEY,
-        .default_value = "<Super><Shift>Tab",
+        /* None: Win+Shift+Tab is Shift Switcher's. */
+        .default_value = "",
     },
 };
 

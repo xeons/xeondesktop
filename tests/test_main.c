@@ -11097,6 +11097,33 @@ static void test_effects_conflicts(void) {
     xd_effects_destroy_settings(settings);
 }
 
+/* With every effect of the built-in table on, their default bindings and
+ * edges clash nowhere (Desktop Effects would warn of each one). */
+static void test_effects_default_conflicts(void) {
+    xd_effects_settings *settings = xd_effects_create_settings();
+    size_t count = xd_effects_get_count(settings);
+    for (size_t effect = 0; effect < count; effect++)
+        xd_effects_set_enabled(settings, effect, true);
+    for (size_t effect = 0; effect < count; effect++) {
+        xd_effect_conflict conflicts[8];
+        size_t found = xd_effects_find_conflicts(settings, effect, conflicts,
+                                                 XD_ARRAY_LEN(conflicts));
+        for (size_t i = 0; i < found && i < XD_ARRAY_LEN(conflicts); i++) {
+            const xd_effect_info *info = xd_effects_get_info(settings, effect);
+            const xd_effect_info *other = xd_effects_get_info(settings, conflicts[i].other_effect);
+            const xd_effect_option *option = &info->options[conflicts[i].option];
+            g_autofree char *value =
+                xd_effects_describe_value(option, xd_effects_get_value(settings, effect,
+                                                                       conflicts[i].option));
+            fprintf(stderr, "default clash: %s's %s (%s) with %s's %s\n", info->name,
+                    option->label, value, other->name,
+                    other->options[conflicts[i].other_option].label);
+        }
+        CHECK(found == 0);
+    }
+    xd_effects_destroy_settings(settings);
+}
+
 static void test_effects_match(void) {
     CHECK(xd_effects_match_window("", "foot", "Terminal", false));
     CHECK(xd_effects_match_window(" any ", "foot", "Terminal", true));
@@ -11335,6 +11362,7 @@ int main(void) {
     test_effects_file();
     test_effects_values();
     test_effects_conflicts();
+    test_effects_default_conflicts();
     test_effects_match();
     test_effects_support();
     test_wobbly_model();

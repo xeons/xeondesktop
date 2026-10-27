@@ -272,12 +272,13 @@ static bool ring_handle_key(ring_state *state, const xd_effect_input *input) {
         ring_finish(state, true);
         break;
     case XKB_KEY_Right:
-    case XKB_KEY_Tab:
         ring_step(state, 1);
         break;
     case XKB_KEY_Left:
-    case XKB_KEY_ISO_Left_Tab:
         ring_step(state, -1);
+        break;
+    case XKB_KEY_Tab: /* Shift+Tab too (effects.h) */
+        ring_step(state, (input->modifiers & XD_BINDING_SHIFT) ? -1 : 1);
         break;
     default:
         break;
