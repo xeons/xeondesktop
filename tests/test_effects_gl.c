@@ -3,6 +3,7 @@
  * Explode, Water): included by test_main.c, which has CHECK.
  */
 #include "../src/compositor/effects/burn_model.h"
+#include "../src/compositor/effects/explode_model.h"
 #include "../src/compositor/effects/magic_lamp_model.h"
 
 /* Magic Lamp: the window as it is at the start, narrower near the
@@ -117,7 +118,96 @@ static void test_burn_model(void) {
     xd_burn_free_particles(&particles);
 }
 
+/* The pieces' total area, which a tessellation of the whole window has as
+ * the window's. */
+static double explode_total_area(const xd_explode *explode) {
+    double total = 0;
+    for (size_t i = 0; i < explode->count; i++) {
+        const xd_explode_piece *piece = &explode->pieces[i];
+        double twice = 0;
+        for (int corner = 0; corner < piece->corner_count; corner++) {
+            const double *current = piece->corners[corner];
+            const double *next = piece->corners[(corner + 1) % piece->corner_count];
+            twice += current[0] * next[1] - next[0] * current[1];
+        }
+        total += fabs(twice) / 2;
+    }
+    return total;
+}
+
+/* Explode: each tessellation covers the window exactly once with pieces
+ * inside it; at the start they're where they were, midway they've flown
+ * out (some past the window's box) and are fading. */
+static void test_explode_model(void) {
+    xd_explode explode;
+    CHECK(xd_explode_init(&explode, XD_EXPLODE_RECTANGULAR, 400, 300, 13, 10, 10, 4, 1));
+    CHECK(explode.count == 130 && explode.pieces[0].corner_count == 4);
+    CHECK(fabs(explode_total_area(&explode) - 400 * 300) < 1e-6);
+    /* At the start every corner is where it was. */
+    bool still = true;
+    for (size_t i = 0; i < explode.count; i++) {
+        const xd_explode_piece *piece = &explode.pieces[i];
+        for (int corner = 0; corner < piece->corner_count; corner++) {
+            double x = 0, y = 0;
+            xd_explode_get_corner(&explode, piece, corner, 0, &x, &y);
+            still = still && fabs(x - piece->corners[corner][0]) < 1e-9 &&
+                    fabs(y - piece->corners[corner][1]) < 1e-9;
+        }
+    }
+    CHECK(still);
+    /* Midway: pieces outside the box, each farther from the middle than
+     * it was (on average), and fading but not gone. */
+    size_t outside = 0;
+    double before = 0, after = 0;
+    for (size_t i = 0; i < explode.count; i++) {
+        const xd_explode_piece *piece = &explode.pieces[i];
+        double x = 0, y = 0;
+        xd_explode_get_corner(&explode, piece, 0, 0.5, &x, &y);
+        if (x < 0 || x > 400 || y < 0 || y > 300)
+            outside++;
+        before += hypot(piece->corners[0][0] - 200, piece->corners[0][1] - 150);
+        after += hypot(x - 200, y - 150);
+    }
+    CHECK(outside > explode.count / 4);
+    CHECK(after > before * 1.3);
+    CHECK(xd_explode_get_alpha(0) == 1 && xd_explode_get_alpha(1) == 0);
+    CHECK(xd_explode_get_alpha(0.7) > 0 && xd_explode_get_alpha(0.7) < 1);
+    double normal[3];
+    xd_explode_get_normal(&explode.pieces[0], 0, normal);
+    CHECK(fabs(normal[2] - 1) < 1e-9);
+    xd_explode_get_normal(&explode.pieces[0], 0.5, normal);
+    CHECK(fabs(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2] - 1) < 1e-9);
+    xd_explode_free(&explode);
+
+    /* Hexagons and glass: clipped to the window, covering it, convex
+     * enough to fan. */
+    const xd_explode_tessellation others[] = {XD_EXPLODE_HEXAGONAL, XD_EXPLODE_GLASS};
+    for (size_t kind = 0; kind < 2; kind++) {
+        CHECK(xd_explode_init(&explode, others[kind], 400, 300, 8, 6, 10, 4, 99));
+        CHECK(fabs(explode_total_area(&explode) - 400 * 300) < 1e-3);
+        bool inside = true;
+        for (size_t i = 0; i < explode.count; i++) {
+            const xd_explode_piece *piece = &explode.pieces[i];
+            inside = inside && piece->corner_count >= 3 &&
+                     piece->corner_count <= XD_EXPLODE_MAX_CORNERS;
+            for (int corner = 0; corner < piece->corner_count; corner++)
+                inside = inside && piece->corners[corner][0] >= -1e-9 &&
+                         piece->corners[corner][0] <= 400 + 1e-9 &&
+                         piece->corners[corner][1] >= -1e-9 &&
+                         piece->corners[corner][1] <= 300 + 1e-9;
+        }
+        CHECK(inside);
+        xd_explode_free(&explode);
+    }
+    CHECK(xd_explode_init(&explode, XD_EXPLODE_GLASS, 400, 300, 1, 1, 10, 4, 5));
+    CHECK(explode.count == 40); /* every shard reaches into the window */
+    xd_explode_free(&explode);
+    CHECK(!xd_explode_init(&explode, XD_EXPLODE_RECTANGULAR, 0, 300, 4, 4, 3, 1, 1));
+    xd_explode_free(&explode);
+}
+
 static void test_effects_gl(void) {
     test_magic_lamp_model();
     test_burn_model();
+    test_explode_model();
 }

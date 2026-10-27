@@ -405,6 +405,15 @@ glowing in the fire's colour at its edge and dropping what's burnt;
 sparks born along the front rise, slow and fade, drawn as points that
 add up their glow.
 
+**Explode** (`explode.c`, the pieces in `explode_model.c`, unit-tested)
+cuts a closing window's picture into rectangles, hexagons or glass shards
+(rings round its middle cut by spokes, clipped to the window), each a
+triangle fan of one mesh, flying out from the middle, spinning about an
+axis of its own and coming toward the viewer in perspective, then
+fading. Thickness is faked: a darker copy of each piece, pushed the way
+it's tilted, shows as its edge. A window has one closing effect: the
+first effect turned on to ask for it.
+
 **Testing headless.** `tests/ui/run.py` runs a scenario declared with
 `fx=True` on `xd-compositor-fx` with Mesa's llvmpipe, through EGL on no
 device (`WLR_RENDERER_FORCE_SOFTWARE`, buffers from `/dev/udmabuf`), and

@@ -1062,6 +1062,28 @@ def burn_close(s):
            "the window burnt away", timeout=10)
 
 
+@scenario(setup=effects_setup("[Explode]\nEnabled=true\nDuration=4000\n"), fx=True)
+def explode_close(s):
+    """Explode (xd-compositor-fx), slowed to 4 s: a window closed with
+    Alt+F4 shatters, and midway its pieces lie outside its old box (below
+    it and to its right, where the desktop was empty); then they're
+    gone."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1600)
+    mid = s.shot("midway")
+    right = mid.differs(empty, (x + w + 4, y, WIDTH - (x + w + 4), h), step=2)
+    below = mid.differs(empty, (x, y + h + 4, w, HEIGHT - 40 - (y + h + 4)), step=2)
+    inside = mid.differs(empty, (x, y, w, h), step=2)
+    s.log(f"midway: {right:.2f} right of its box, {below:.2f} below it, {inside:.2f} inside")
+    s.check(right > 0.03 and below > 0.03, f"pieces lie outside its box ({right:.2f}, {below:.2f})")
+    s.check(inside < 0.9, f"its box isn't whole any more ({inside:.2f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the pieces gone", timeout=10)
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
