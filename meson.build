@@ -150,6 +150,8 @@ settings_lib = static_library(
   'src/settings/effects/wobbly_windows.c',
   'src/settings/effects/general_options.c',
   'src/settings/effects/desktop_wall.c',
+  'src/settings/effects/desktop_cube.c',
+  'src/settings/effects/rotate_cube.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -421,6 +423,8 @@ effects_fx_src = files(
   'src/compositor/effects/glfx.c',
   'src/compositor/effects/wobbly.c',
   'src/compositor/effects/wobbly_model.c',
+  'src/compositor/effects/glfx_output.c',
+  'src/compositor/effects/cube.c',
 )
 lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
 lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []

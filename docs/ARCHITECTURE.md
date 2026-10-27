@@ -348,6 +348,31 @@ Edge flip move (off by default): a window dragged against the layout's
 edge for the delay is carried to the desktop that way, the pointer
 warped to come in from the other side.
 
+**Whole-output OpenGL effects** (`glfx_output.c`, declared in `glfx.h`).
+`xd_glfx_capture_scene()` draws what the scene shows of a box into a
+texture, walking the scene tree itself so a filter can pick windows
+whether they're shown or not (another desktop's, minimized): the desktop
+colour, layer surfaces and those windows, without `layer_drag`, the lock
+screen or the effects' own pictures; while any capture object exists,
+every window's frame keeps its pixels. `xd_glfx_begin_output()` starts an
+effect that draws whole outputs: from its `frame` hook it captures what it
+needs and calls `xd_glfx_draw_output()`, whose `draw` paints the output
+into a buffer shown by an opaque scene node under the lock screen; the
+effect drives its frames with a timer and takes the pointer through the
+input hooks. `xd_glfx_draw_quad()` (a texture on a quad in clip space with
+its w, for perspective) and `xd_glfx_fill_polygon()` draw in 3D; the
+maths stays on the CPU (`viewport_model.c`'s camera: Compiz's 60 degree
+field of view, the screen filling the view at z = 0).
+
+**Desktop Cube** and **Rotate Cube** (`cube.c`): the current row's
+desktops are the faces of a prism (two are two sides of a cube with blank
+sides), each face a scene capture of its desktop, back faces culled (or
+drawn first when the cube is see-through while turning), caps filled. A
+switch across turns it (above Desktop Wall's priority, which still
+slides up and down), zooming out half-way; Rotate Cube's binding
+(Ctrl+Alt+Button1) drags it round and tilts it, and let go it settles on
+the nearest desktop face and switches there without animating again.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

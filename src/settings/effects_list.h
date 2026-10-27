@@ -9,3 +9,5 @@
 XD_EFFECT(wobbly_windows)
 XD_EFFECT(general_options)
 XD_EFFECT(desktop_wall)
+XD_EFFECT(desktop_cube)
+XD_EFFECT(rotate_cube)

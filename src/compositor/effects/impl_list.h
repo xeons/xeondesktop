@@ -12,3 +12,7 @@ XD_EFFECT_IMPL(wobbly_windows)
 #endif
 XD_EFFECT_IMPL(general_options)
 XD_EFFECT_IMPL(desktop_wall)
+#ifdef XD_SCENEFX
+XD_EFFECT_IMPL(desktop_cube)
+XD_EFFECT_IMPL(rotate_cube)
+#endif

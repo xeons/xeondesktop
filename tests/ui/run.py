@@ -1131,6 +1131,57 @@ def desktop_wall_edge_flip(s):
     s.wait_window(title="Control Panel", gone=True)
 
 
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopCube]\nEnabled=true\nRotationTime=3\n"),
+          fx=True)
+def desktop_cube_turn(s):
+    """Desktop Cube (xd-compositor-fx): Ctrl+Alt+Right turns the cube of
+    the two desktops; mid-turn the screen is neither desktop flat (both
+    in perspective, zoomed out, the desktop colour round them); then the
+    second desktop shows, without the window."""
+    require_opengl_effects(s)
+    empty, box = open_control_panel(s)
+    shown = s.settle("shown")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(1.2)
+    mid = s.shot("mid-turn")
+    whole = (0, 0, WIDTH, HEIGHT)
+    s.check(mid.differs(shown, whole, step=8) > 0.3, "mid-turn it isn't the first desktop flat")
+    s.check(mid.differs(empty, (0, HEIGHT - 30, WIDTH, 30), step=4) > 0.3,
+            "nor the second: the taskbars are turned with their desktops")
+    time.sleep(3)
+    done = s.settle("turned")
+    s.check(done.differs(empty, whole, step=8) < 0.02, "turned, the second desktop shows")
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[DesktopCube]\nEnabled=true\n"
+                              "[RotateCube]\nEnabled=true\n"), fx=True)
+def rotate_cube_drag(s):
+    """Rotate Cube (xd-compositor-fx): dragging with Ctrl+Alt and the left
+    button turns the cube; held mid-drag the screen is the cube, zoomed
+    out, not the desktop; let go past half-way, it settles on the second
+    desktop."""
+    require_opengl_effects(s)
+    empty, box = open_control_panel(s)
+    shown = s.settle("shown")
+    steps = ["hold", "ctrl", "hold", "alt", "move", 900, 300, "down"]
+    for i in range(1, 9):
+        steps += ["move", 900 - 75 * i, 300]
+    drag = s.launch(s.tool("xd-inject"), *map(str, steps + ["sleep", 2500, "up", "release", "alt",
+                                                            "release", "ctrl"]))
+    time.sleep(1.2)
+    mid = s.shot("mid-drag")
+    whole = (0, 0, WIDTH, HEIGHT)
+    s.check(mid.differs(shown, whole, step=8) > 0.3, "mid-drag the cube shows, not the desktop")
+    s.check(mid.differs(shown, (0, 0, WIDTH, 20), step=4) > 0.3,
+            "zoomed out: the desktop colour above the cube")
+    drag.wait(timeout=30)
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(1)
+    done = s.settle("settled")
+    s.check(done.differs(empty, whole, step=8) < 0.02, "it settled on the second desktop")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

@@ -166,4 +166,83 @@ void xd_glfx_frame_done(xd_server *server, xd_output *output);
 /* The window is unmapped or destroyed: its effects end. */
 void xd_glfx_forget_view(xd_view *view);
 
+/* ---- the scene as a texture (glfx_output.c) ---------------------------------------- */
+
+/* What the scene shows of a box, drawn into a texture: the desktop's
+ * colour, layer surfaces (the shell's desktop, taskbar, notifications) and
+ * windows, bottom to top, as an output there would show them, but with
+ * the windows `include_view` picks (nullptr: those shown), whether they're
+ * shown or hidden (another desktop's, minimized): what a desktop effect
+ * needs to draw desktops that aren't showing, or a window on its own.
+ * Never the dragged things and switchers above everything
+ * (server->layer_drag), the lock screen while unlocked, nor whole-output
+ * effects' own pictures. Buffers drawn fully transparent (a window an
+ * OpenGL window effect draws) are left out; their effect's picture is in.
+ *
+ * Captures happen outside render passes (an effect's `frame` hook, before
+ * xd_glfx_draw_output). Each capture object holds its last texture until
+ * the next; while any exists, every window's frame keeps its pixels
+ * (xd_frame_keep_pixels) for them. */
+typedef struct xd_glfx_scene_capture xd_glfx_scene_capture;
+typedef bool (*xd_glfx_view_filter)(const xd_view *view, void *data);
+
+xd_glfx_scene_capture *xd_glfx_create_scene_capture(xd_server *server);
+void xd_glfx_destroy_scene_capture(xd_glfx_scene_capture *capture);
+/* `box` (layout units) at `scale` device px per unit into `out`; false if
+ * it couldn't (out unchanged). Layer surfaces are left out unless
+ * `layers`, for a window alone. */
+bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, double scale,
+                           bool layers, xd_glfx_view_filter include_view, void *data,
+                           xd_glfx_texture *out);
+/* effects.c: the window is unmapped or destroyed. */
+void xd_glfx_capture_forget_view(xd_view *view);
+
+/* ---- whole-output effects (glfx_output.c) ------------------------------------------ */
+
+/* An effect that draws whole outputs, in place of the scene (Desktop Cube,
+ * Expo, Shift Switcher): the effect calls xd_glfx_draw_output from its
+ * `frame` hook (after capturing what it needs), and `draw` paints the
+ * whole output into a buffer of the output's size, which a scene buffer
+ * node shows over everything but the lock screen and the dragged things
+ * (opaque, so what's under it isn't drawn). Input still goes where it
+ * would: an effect taking the pointer uses up its events (effects.h's
+ * button and motion hooks). The effect drives its own frames
+ * (wlr_output_schedule_frame from a timer), as long as it runs. */
+typedef struct xd_output_effect xd_output_effect;
+
+typedef struct xd_output_effect_impl {
+    const char *name; /* for the log */
+    /* `draw->bounds` is the output's layout box. Clip space covers it
+     * (xd_glfx_draw_quad); draw->projection maps layout units, too. */
+    void (*draw)(xd_output_effect *effect, xd_output *output, const xd_glfx_draw *draw);
+    /* Ended: free `data` here. Optional. */
+    void (*done)(xd_output_effect *effect);
+} xd_output_effect_impl;
+
+struct xd_output_effect {
+    const xd_output_effect_impl *impl;
+    xd_server *server;
+    void *data; /* the effect's */
+    struct xd_output_effect_private *private_state; /* the framework's */
+};
+
+xd_output_effect *xd_glfx_begin_output(xd_server *server, const xd_output_effect_impl *impl,
+                                       void *data);
+/* Ends it now (calls done): the scene shows again. */
+void xd_glfx_end_output(xd_output_effect *effect);
+/* Draws the effect's picture of `output` and shows it. */
+void xd_glfx_draw_output(xd_output_effect *effect, xd_output *output);
+
+/* Drawing in 3D, for them: a texture's whole picture on a quad whose
+ * corners (top left, top right, bottom right, bottom left) are in clip
+ * space with their w (viewport_model.h's xd_camera_project), so the
+ * picture is in perspective; faded by `alpha`, its colours times
+ * `brightness` (0..1: darker). */
+void xd_glfx_draw_quad(const xd_glfx_draw *draw, const xd_glfx_texture *texture,
+                       const float corners[4][4], float alpha, float brightness);
+/* A convex polygon (clip space, as a fan from the first corner) filled
+ * with a colour, RGBA 0..1 not premultiplied. */
+void xd_glfx_fill_polygon(const xd_glfx_draw *draw, const float (*corners)[4], size_t count,
+                          const float color[4]);
+
 #endif

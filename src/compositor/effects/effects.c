@@ -195,6 +195,9 @@ void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
     if (kind == XD_WINDOW_EVENT_UNMAP || kind == XD_WINDOW_EVENT_DESTROY ||
         kind == XD_WINDOW_EVENT_MINIMIZE)
         xd_glfx_forget_view(view);
+    /* Scene captures (glfx_output.c) keep its frame's pixels no more. */
+    if (kind == XD_WINDOW_EVENT_UNMAP || kind == XD_WINDOW_EVENT_DESTROY)
+        xd_glfx_capture_forget_view(view);
 #endif
 }
 
