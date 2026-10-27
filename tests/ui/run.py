@@ -2949,11 +2949,13 @@ def read_trace(s):
         return []
 
 
-def last_search(s, root):
+def last_search(s, root, query=None):
     """The last search's results (relative to root, sorted) once it's done,
-    or None while it runs."""
+    or None while it runs. With a query, the last search of that query: one
+    of a half-typed query (typing paused under load) doesn't count."""
     lines = read_trace(s)
-    starts = [i for i, line in enumerate(lines) if line.startswith("start ")]
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith("start ") and (query is None or line == "start " + query)]
     if not starts:
         return None
     block = lines[starts[-1] + 1:]
@@ -2963,8 +2965,8 @@ def last_search(s, root):
     return sorted(os.path.relpath(path, root) for path in found)
 
 
-def expect_search(s, root, expected, what):
-    got = s.wait(lambda: last_search(s, root), what + " to finish", timeout=30)
+def expect_search(s, root, expected, what, query=None):
+    got = s.wait(lambda: last_search(s, root, query), what + " to finish", timeout=30)
     s.check(got == sorted(expected), f"{what}: found {got}")
 
 
@@ -3049,7 +3051,7 @@ def files_search_box(s):
     s.settle("finds")
     s.inject("key", "ctrl+e", "sleep", 200, "type", "report -old")
     s.wait_window(app_id=FILES, title="Search Results in Finds")
-    expect_search(s, root, ["Report 2025.odt", "report.txt"], "report -old")
+    expect_search(s, root, ["Report 2025.odt", "report.txt"], "report -old", "report -old")
     for text, expected, what in [
         ("kind:document size:tiny datemodified:2020", ["old.txt"],
          "kind:, size: and datemodified:"),
@@ -3059,7 +3061,7 @@ def files_search_box(s):
     ]:
         open(search_trace(s), "w").close()
         s.inject("key", "ctrl+a", "type", text)
-        expect_search(s, root, expected, what)
+        expect_search(s, root, expected, what, text)
     s.settle("results")
     s.inject("key", "ctrl+a", "type", "/a(/")
     s.wait(lambda: any(line.startswith("error ") and "a(" in line for line in read_trace(s)),
