@@ -8,6 +8,8 @@
 
 #include <drm_fourcc.h>
 #include <math.h>
+#include <stdlib.h>
+#include <time.h>
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/pass.h>
 #include <wlr/render/swapchain.h>
@@ -22,6 +24,53 @@
 static constexpr int MAX_PX = 8192;
 static constexpr int BUFFER_STEP = 64;
 enum { MAX_OUTPUTS = 16, SYNCED_MAX = 32 };
+
+/* XD_EFFECTS_TIMING: what whole-output effects cost, logged over this
+ * long (glfx.c logs window effects'). */
+static constexpr double TIMING_SECONDS = 2.0;
+
+static struct {
+    int checked; /* 0: not yet, 1: off, 2: on */
+    double start, last_frame;
+    double capture_total, draw_total, interval_total, interval_max;
+    int captures, frames;
+} timing;
+
+static double output_get_now(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec + (double)now.tv_nsec / 1e9;
+}
+
+static bool output_is_timing(void) {
+    if (timing.checked == 0)
+        timing.checked = getenv("XD_EFFECTS_TIMING") != nullptr ? 2 : 1;
+    return timing.checked == 2;
+}
+
+/* A frame drawn: logs the averages every TIMING_SECONDS. */
+static void output_count_frame(double now) {
+    if (timing.last_frame > 0 && now - timing.last_frame < 1.0) {
+        double interval = now - timing.last_frame;
+        timing.interval_total += interval;
+        timing.interval_max = XD_MAX(timing.interval_max, interval);
+        timing.frames++;
+    } else {
+        timing.start = now;
+    }
+    timing.last_frame = now;
+    if (timing.frames == 0 || now - timing.start < TIMING_SECONDS)
+        return;
+    wlr_log(WLR_INFO,
+            "effects: whole-output: %d frames, %.1f ms apart (at most %.1f), %.2f ms capturing "
+            "(%d captures), %.2f ms drawing a frame",
+            timing.frames, timing.interval_total / timing.frames * 1000.0,
+            timing.interval_max * 1000.0, timing.capture_total / timing.frames * 1000.0,
+            timing.captures / timing.frames, timing.draw_total / timing.frames * 1000.0);
+    timing.frames = timing.captures = 0;
+    timing.capture_total = timing.draw_total = timing.interval_total = timing.interval_max = 0;
+    timing.start = now;
+}
 
 static int output_round_up(double value) {
     double rounded = ceil(value);
@@ -360,6 +409,7 @@ bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, d
         wlr_buffer_unlock(target);
         return false;
     }
+    double started = output_is_timing() ? output_get_now() : 0;
     wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
                                        .box = {0, 0, target->width, target->height},
                                        .color = {0, 0, 0, 0},
@@ -376,6 +426,11 @@ bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, d
     };
     capture_walk_tree(&walk, &server->scene->tree, 0, 0, 0);
     bool ok = wlr_render_pass_submit(pass);
+    if (output_is_timing()) {
+        glFinish();
+        timing.capture_total += output_get_now() - started;
+        timing.captures++;
+    }
     for (size_t i = 0; ok && options.signal_timeline != nullptr && i < walk.synced_count; i++)
         wlr_linux_drm_syncobj_v1_state_add_release_point(walk.synced[i], options.signal_timeline,
                                                          options.signal_point, server->loop);
@@ -510,6 +565,7 @@ void xd_glfx_draw_output(xd_output_effect *effect, xd_output *output) {
             wlr_buffer_unlock(target);
         return;
     }
+    double started = output_is_timing() ? output_get_now() : 0;
     /* The pass made SceneFX's context current with the target bound. */
     glViewport(0, 0, width_px, height_px);
     glClearColor(0, 0, 0, 1);
@@ -517,7 +573,14 @@ void xd_glfx_draw_output(xd_output_effect *effect, xd_output *output) {
     xd_glfx_draw draw = {.bounds = bounds, .scale = scale, .glfx = server->glfx};
     xd_glfx_set_ortho(draw.projection, bounds);
     effect->impl->draw(effect, output, &draw);
+    if (output_is_timing())
+        glFinish();
     wlr_render_pass_submit(pass);
+    if (output_is_timing()) {
+        double now = output_get_now();
+        timing.draw_total += now - started;
+        output_count_frame(now);
+    }
 
     struct wlr_scene_buffer *node = picture->node;
     wlr_scene_buffer_set_buffer(node, target);

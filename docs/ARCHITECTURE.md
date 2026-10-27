@@ -362,7 +362,8 @@ effect drives its frames with a timer and takes the pointer through the
 input hooks. `xd_glfx_draw_quad()` (a texture on a quad in clip space with
 its w, for perspective) and `xd_glfx_fill_polygon()` draw in 3D; the
 maths stays on the CPU (`viewport_model.c`'s camera: Compiz's 60 degree
-field of view, the screen filling the view at z = 0).
+field of view, the screen filling the view at z = 0). `XD_EFFECTS_TIMING=1` logs
+their frame times too (capturing and drawing).
 
 **Desktop Cube** and **Rotate Cube** (`cube.c`): the current row's
 desktops are the faces of a prism (two are two sides of a cube with blank
