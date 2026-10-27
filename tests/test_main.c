@@ -11217,6 +11217,8 @@ static void test_wobbly_model(void) {
     CHECK(finite && near);
 }
 
+#include "test_effects_gl.c"
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -11329,6 +11331,7 @@ int main(void) {
     test_effects_match();
     test_effects_support();
     test_wobbly_model();
+    test_effects_gl();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

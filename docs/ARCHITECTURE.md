@@ -389,6 +389,15 @@ are the control points of (exactly the rectangle at rest), in steps of
 15 ms. Let go, each mass is also drawn to its place on the window, so it
 settles where the window is (Compiz moved the window instead).
 
+**Magic Lamp** (`magic_lamp.c`, the shape in `magic_lamp_model.c`,
+unit-tested) draws a minimized window (a closing effect) as a mesh of
+strips that first bend toward its taskbar button along a half cosine and
+then slide into it, squeezed to the button's size; worked out for a
+button below the window and turned for any other edge. Restoring runs it
+backwards as a live effect (from where a minimize still under way had
+got to). With OpenClose, windows open from their button or the pointer
+and close into it. It's our own curve, not Compiz's (no waves).
+
 **Testing headless.** `tests/ui/run.py` runs a scenario declared with
 `fx=True` on `xd-compositor-fx` with Mesa's llvmpipe, through EGL on no
 device (`WLR_RENDERER_FORCE_SOFTWARE`, buffers from `/dev/udmabuf`), and

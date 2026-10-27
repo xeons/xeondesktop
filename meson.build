@@ -148,6 +148,7 @@ settings_lib = static_library(
   # Desktop Effects: the table (one file per effect) and effects.ini.
   'src/settings/effects.c',
   'src/settings/effects/wobbly_windows.c',
+  'src/settings/effects/magic_lamp.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -414,6 +415,8 @@ effects_fx_src = files(
   'src/compositor/effects/glfx.c',
   'src/compositor/effects/wobbly.c',
   'src/compositor/effects/wobbly_model.c',
+  'src/compositor/effects/magic_lamp.c',
+  'src/compositor/effects/magic_lamp_model.c',
 )
 lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
 lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []
@@ -1482,6 +1485,7 @@ test_exe = executable(
   'src/vboxdnd/fakehost.c',
   'src/files/versions.c',
   'src/portal/chooserlib.c',
+  'src/compositor/effects/magic_lamp_model.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,

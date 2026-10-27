@@ -7,3 +7,4 @@
  * Included with XD_EFFECT defined, more than once, so no include guard.
  */
 XD_EFFECT(wobbly_windows)
+XD_EFFECT(magic_lamp)

@@ -965,7 +965,9 @@ def desktop_effects_panel(s):
             "a filter finding nothing leaves no effect shown")
     s.inject("key", "ctrl+a", "type", "wobbly", "sleep", 300)
     found = s.settle("filtered")
-    s.check(found.differs(grid, (300, 80, 400, 60), step=2) < 0.01,
+    # (Compared with nothing found, not the whole grid: other effects
+    # share its row.)
+    s.check(found.differs(nothing, (240, 88, 260, 38), step=2) > 0.05,
             "one finding Wobbly Windows shows it again")
     s.inject("key", "Return")
     s.settle("page")
@@ -998,6 +1000,46 @@ def desktop_effects_unavailable(s):
     s.settle("after-space")
     s.check(effects_ini_value(s, "WobblyWindows", "Enabled") != "true",
             "Wobbly Windows stays off")
+
+
+def row_span(shot, empty, y, left=0, right=WIDTH):
+    """How wide row y's part that differs from the empty desktop is (from
+    its first such pixel to its last), or 0."""
+    xs = [x for x in range(left, right)
+          if max(abs(a - b) for a, b in zip(shot.pixel(x, y), empty.pixel(x, y))) > 8]
+    return xs[-1] - xs[0] + 1 if xs else 0
+
+
+def open_control_panel(s, empty):
+    """Control Panel opened and settled: its box (x, y, w, h)."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    return s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+
+@scenario(setup=effects_setup("[MagicLamp]\nEnabled=true\nDuration=4000\n"), fx=True)
+def magic_lamp_minimize(s):
+    """Magic Lamp (xd-compositor-fx), slowed to 4 s: minimized, a window
+    bends toward its taskbar button, so midway its rows near the taskbar
+    are narrower than its top; then it's gone, minimized, and restoring it
+    brings it back where it was."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "super+Down", "sleep", 1600)
+    mid = s.shot("midway")
+    top = row_span(mid, empty, y + 30)
+    bottom = row_span(mid, empty, y + h - 10)
+    s.log(f"midway: {top} px wide at its top, {bottom} near the taskbar (was {w})")
+    s.check(top > w * 0.8, f"midway its top is still about as wide ({top} of {w})")
+    s.check(0 < bottom < top * 0.75, f"near the taskbar it's narrower ({bottom} < {top})")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window gone into its button", timeout=10)
+    s.inject("key", "alt+Tab", "sleep", 4600)
+    back = s.settle("restored").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(back is not None and max(abs(a - b) for a, b in zip(back, (x, y, w, h))) <= 2,
+            f"restored where it was ({back}, was {(x, y, w, h)})")
 
 
 @scenario(AERO_INI)
