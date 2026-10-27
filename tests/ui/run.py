@@ -1420,6 +1420,39 @@ def enhanced_zoom_pointer(s):
     s.check(after.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.02, "zoomed out, it's as it was")
 
 
+def is_red(pixel):
+    r, g, b = pixel
+    return r > 200 and g < 60 and b < 60
+
+
+@scenario(setup=effects_setup("[Annotate]\nEnabled=true\n"))
+def annotate_stroke(s):
+    """Annotate: Windows+Alt and a left-button drag draw a red line (with a
+    green outline, Compiz's colours) over the windows, which keep the
+    focus; Windows+Alt+K clears it."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("move", WIDTH - 20, 300)
+    before = s.settle("before")
+    steps = ["hold", "super", "hold", "alt", "move", 150, 200, "down"]
+    for i in range(1, 11):
+        steps += ["move", 150 + 40 * i, 200 + 20 * i]
+    steps += ["up", "release", "alt", "release", "super", "move", WIDTH - 20, 300]
+    s.inject(*steps)
+    drawn = s.settle("drawn")
+    on_line = [(150 + 40 * i, 200 + 20 * i) for i in range(0, 11)]
+    red = sum(is_red(drawn.pixel(x, y)) for x, y in on_line)
+    s.check(red >= 10, f"a red line along the drag ({red} of {len(on_line)} points)")
+    green = sum(drawn.pixel(x, y + 2)[1] > 200 and drawn.pixel(x, y + 2)[0] < 100
+                for x, y in on_line)
+    s.check(green >= 5, f"with its green outline ({green})")
+    s.check(drawn.differs(before, (0, 0, WIDTH, HEIGHT), step=2) < 0.05, "the rest is as it was")
+    s.check(active_title(s) == "Control Panel", "the window keeps the focus")
+    s.inject("key", "super+alt+k")
+    cleared = s.settle("cleared")
+    s.check(cleared.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.01, "Windows+Alt+K clears it")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the

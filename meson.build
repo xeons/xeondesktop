@@ -157,6 +157,7 @@ settings_lib = static_library(
   'src/settings/effects/window_opacity.c',
   'src/settings/effects/ring_switcher.c',
   'src/settings/effects/enhanced_zoom.c',
+  'src/settings/effects/annotate.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -429,6 +430,7 @@ compositor_src += files(
   'src/compositor/effects/ring.c',
   'src/compositor/effects/ring_model.c',
   'src/compositor/effects/zoom.c',
+  'src/compositor/effects/annotate.c',
   'src/compositor/effects/zoom_model.c',
 )
 effects_fx_src = files(

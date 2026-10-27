@@ -391,6 +391,13 @@ under the pointer under it, so input needs no translating. Software
 cursors are drawn in both drawings, so the zoomed picture has a larger
 copy of the pointer under the real one, as ezoom's scaled pointer.
 
+**Annotate** (`annotate.c`) is Compiz's annotate plugin, freehand: a
+cairo picture per output in an overlay that takes no input. Each output
+keeps the strokes finished apart from the picture shown, which is redrawn
+from them with the stroke being drawn (its outline, then its line), so a
+stroke's outline never covers its own line. While a stroke is drawn it
+has the pointer; the windows keep the keyboard throughout.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:
