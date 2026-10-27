@@ -4,6 +4,11 @@
  * <name>.c. OpenGL effects inside XD_SCENEFX: only xd-compositor-fx has
  * them (meson.build's effects_fx_src).
  *
+ * The order is the effects': input is offered to them in it (the first
+ * to use up a key or click has it), an effect animating a window event
+ * has it before those after (xd_effects_is_animated_before), and their
+ * frame hooks run in it.
+ *
  * Included with XD_EFFECT_IMPL defined, more than once, so no include
  * guard.
  */
@@ -18,7 +23,6 @@ XD_EFFECT_IMPL(scale)
 XD_EFFECT_IMPL(animations)
 XD_EFFECT_IMPL(window_opacity)
 XD_EFFECT_IMPL(ring_switcher)
-XD_EFFECT_IMPL(enhanced_zoom)
 XD_EFFECT_IMPL(annotate)
 XD_EFFECT_IMPL(show_mouse)
 XD_EFFECT_IMPL(general_options)
@@ -29,3 +33,5 @@ XD_EFFECT_IMPL(rotate_cube)
 XD_EFFECT_IMPL(expo)
 XD_EFFECT_IMPL(shift_switcher)
 #endif
+/* Last: its frame draws the whole scene again, as the others left it. */
+XD_EFFECT_IMPL(enhanced_zoom)

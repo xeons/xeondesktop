@@ -108,14 +108,18 @@ void xd_effects_publish(xd_server *server, const char *display);
 void xd_effects_finish(xd_server *server);
 void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
                              const struct wlr_box *from);
-/* output.c: before building the output's frame, and after committing it. */
+/* output.c: before building the output's frame (the effects' frame
+ * hooks, in impl_list.h's order, then the OpenGL window effects), and
+ * after committing it. */
 void xd_effects_output_frame(xd_output *output);
 void xd_effects_output_frame_done(xd_output *output);
 /* Whether `effect` (the settings' index) is turned on and running. */
 bool xd_effects_is_running(const xd_server *server, const char *id);
-/* output.c: whether an effect draws the output's frames itself (every
- * frame is drawn then), and the frame's state, as
- * wlr_scene_output_build_state makes it. */
+/* output.c: whether an output filter (Water) draws the output's frames
+ * (every frame is drawn then), and the frame's state, as
+ * wlr_scene_output_build_state makes it, filtered: a filter works on the
+ * picture the scene graph drew, whole-output effects' (Cube, Expo,
+ * Shift) and Zoom's included. */
 bool xd_effects_is_output_filtered(const xd_output *output);
 bool xd_effects_build_output_state(xd_output *output, struct wlr_scene_output *scene_output,
                                    struct wlr_output_state *state);
@@ -145,6 +149,10 @@ bool xd_effects_match_view(const char *match, const xd_view *view);
 /* A tree above every window and panel and below the lock screen, for an
  * effect's own pictures; destroy it with wlr_scene_node_destroy. */
 struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server);
+/* Marks a tree (a child of the scene's root) as an effect's own picture:
+ * scene captures (glfx.h) leave it out, so a desktop's picture in Expo or
+ * on the cube is the desktop's, not what an effect draws over it. */
+void xd_effects_tag_picture(struct wlr_scene_tree *tree);
 /* Asks every output for another frame (an effect is animating). */
 void xd_effects_schedule_frames(xd_server *server);
 

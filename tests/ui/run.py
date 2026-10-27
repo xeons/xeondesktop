@@ -1714,6 +1714,45 @@ def expo_wall(s):
     s.wait_window(title="Control Panel", gone=True)
 
 
+def count_reddish(shot, box, step=2):
+    """How many points of box are clearly red (an annotation, even shrunk
+    and blended)."""
+    x0, y0, w, h = box
+    return sum(1 for y in range(y0, y0 + h, step) for x in range(x0, x0 + w, step)
+               if (lambda p: p[0] > 140 and p[0] - p[1] > 70 and p[0] - p[2] > 70)(
+                   shot.pixel(x, y)))
+
+
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[Expo]\nEnabled=true\n[Annotate]\nEnabled=true\n"),
+          fx=True)
+def expo_leaves_out_effects(s):
+    """Expo (xd-compositor-fx) with Annotate on: a red line drawn over the
+    desktop is an effect's picture, not the desktop's, so Win+W's pictures
+    of the desktops leave it out; Win+W again, and it's back over the
+    desktop."""
+    require_opengl_effects(s)
+    s.inject("move", WIDTH - 20, 300)
+    s.settle("desktop")
+    steps = ["hold", "super", "hold", "alt", "move", 150, 200, "down"]
+    for i in range(1, 11):
+        steps += ["move", 150 + 50 * i, 200 + 20 * i]
+    steps += ["up", "release", "alt", "release", "super", "move", WIDTH - 20, 300]
+    s.inject(*steps)
+    drawn = s.settle("drawn")
+    # Above the desktops' pictures' taskbars (their icons have red).
+    whole = (0, 0, WIDTH, 540)
+    before = count_reddish(drawn, whole)
+    s.check(before > 50, f"the red line is drawn ({before} red points)")
+    s.inject("key", "super+w")
+    wall = s.settle("wall")
+    s.check(max(wall.pixel(WIDTH // 2, HEIGHT // 2)) < 60, "Expo shows the desktops")
+    inside = count_reddish(wall, whole)
+    s.check(inside == 0, f"no red line in the desktops' pictures ({inside} red points)")
+    s.inject("key", "super+w")
+    after = count_reddish(s.settle("back"), whole)
+    s.check(after > 50, f"Expo gone, the line is over the desktop again ({after})")
+
+
 @scenario(setup=effects_setup("[ShiftSwitcher]\nEnabled=true\n"), fx=True)
 def shift_switcher_cover(s):
     """Shift Switcher (xd-compositor-fx): with two windows open, Win+Shift+Tab

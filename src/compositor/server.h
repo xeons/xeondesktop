@@ -40,6 +40,7 @@
 typedef enum xd_node_kind : uint8_t {
     XD_NODE_VIEW = 1,
     XD_NODE_LAYER = 2,
+    XD_NODE_EFFECT = 3, /* an effect's own picture (effects/effects.h) */
 } xd_node_kind;
 
 typedef struct xd_node_tag {

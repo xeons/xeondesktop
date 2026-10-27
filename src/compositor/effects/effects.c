@@ -409,7 +409,13 @@ bool xd_effects_match_view(const char *match, const xd_view *view) {
 struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server) {
     struct wlr_scene_tree *tree = wlr_scene_tree_create(&server->scene->tree);
     wlr_scene_node_place_below(&tree->node, &server->layer_lock->node);
+    xd_effects_tag_picture(tree);
     return tree;
+}
+
+void xd_effects_tag_picture(struct wlr_scene_tree *tree) {
+    static xd_node_tag picture_tag = {.kind = XD_NODE_EFFECT};
+    tree->node.data = &picture_tag;
 }
 
 void xd_effects_schedule_frames(xd_server *server) {

@@ -209,6 +209,7 @@ static void *zoom_enable(xd_server *server) {
     zoom_state *state = XD_NEW(zoom_state);
     state->server = server;
     state->tree = wlr_scene_tree_create(&server->scene->tree);
+    xd_effects_tag_picture(state->tree);
     wl_list_init(&state->outputs);
     return state;
 }

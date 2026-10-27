@@ -240,8 +240,9 @@ bool xd_glfx_build_output_state(xd_output *output, struct wlr_scene_output *scen
  * shown or hidden (another desktop's, minimized): what a desktop effect
  * needs to draw desktops that aren't showing, or a window on its own.
  * Never the dragged things and switchers above everything
- * (server->layer_drag), the lock screen while unlocked, nor whole-output
- * effects' own pictures. Buffers drawn fully transparent (a window an
+ * (server->layer_drag), the lock screen while unlocked, nor effects' own
+ * pictures (whole-output effects', Zoom's, the overlays: trees tagged
+ * with xd_effects_tag_picture). Buffers drawn fully transparent (a window an
  * OpenGL window effect draws) are left out; their effect's picture is in.
  *
  * Captures happen outside render passes (an effect's `frame` hook, before

@@ -374,8 +374,10 @@ static void capture_walk_tree(capture_walk *walk, struct wlr_scene_tree *tree, i
         return;
     struct wlr_scene_node *child;
     wl_list_for_each(child, &tree->children, link) {
-        /* Whole-output effects' own trees carry this tag. */
-        if (child->data == &captures)
+        /* Effects' own pictures: whole-output effects', Zoom's, the
+         * overlays (xd_effects_tag_picture). */
+        const xd_node_tag *tag = child->data;
+        if (tag != nullptr && tag->kind == XD_NODE_EFFECT)
             continue;
         capture_walk_node(walk, child, x, y, depth);
     }
@@ -487,7 +489,7 @@ xd_output_effect *xd_glfx_begin_output(xd_server *server, const xd_output_effect
     struct wlr_scene_tree *tree = wlr_scene_tree_create(&server->scene->tree);
     /* Under the lock screen and the dragged things; captures skip it. */
     wlr_scene_node_place_below(&tree->node, &server->layer_lock->node);
-    tree->node.data = &captures;
+    xd_effects_tag_picture(tree);
     effect->private_state->tree = tree;
     return effect;
 }

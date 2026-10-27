@@ -534,7 +534,7 @@ then nullptr; a live effect begun on a window that has a closing one
 minimizing and restoring says so in its `animates` hook, as any effect
 does.
 
-**Output filters** (whole-output effects: Water; a cube or a wall).
+**Output filters** (Water: a post-process over the finished picture).
 `xd_glfx_add_output_filter(server, impl, data)`: while a filter is active,
 output.c asks `xd_effects_build_output_state()` for each frame, which has
 the scene graph draw into a buffer of ours (`wlr_scene_output_build_state`
@@ -546,6 +546,26 @@ before. `update(filter, seconds)` runs once a frame and says whether it
 changes the picture: an idle filter costs nothing (no pass, no frames)
 till `xd_glfx_wake_output_filter()`, and going idle has the scene graph
 repaint the whole output. Outputs rotated or flipped aren't filtered.
+
+**A frame, and the two whole-output paths.** Output filters and
+whole-output effects (`glfx_output.c`) both change a whole output but do
+different things, so both stay: a whole-output effect (Cube, Expo,
+Shift) draws the output from captures of the scene into a scene node,
+which the scene graph then shows like any other (the lock screen and the
+dragged things above it, input going where it would); a filter works on
+the finished picture, after the scene graph drew it. `output.c`'s frame
+runs them in one order: (1) `xd_effects_output_frame()`, the effects'
+frame hooks in `impl_list.h`'s order (whole-output effects capture and
+draw; Enhanced Zoom, last, draws the scene again magnified, so it zooms
+the cube or Expo too), then the OpenGL window effects; (2)
+`xd_effects_build_output_state()`, the scene graph's picture and the
+filters over it (Water ripples the cube too); (3) the gamma ramp
+(`gamma.c`) and present options set on the same commit. The ramp is a
+colour transform the display applies to whatever buffer is committed,
+so filtered frames keep Night Light. Scene captures leave out every tree
+an effect tags as its own picture (`xd_effects_tag_picture()`:
+whole-output effects', Zoom's and the overlays), so a desktop's picture
+is the desktop's.
 
 **Wobbly Windows** (`wobbly.c`, the model in `wobbly_model.c`, unit-tested)
 is Compiz's wobbly plugin: a 4 x 4 grid of masses joined by springs, the

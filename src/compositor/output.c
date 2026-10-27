@@ -62,10 +62,17 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
     struct wlr_scene_output *so = wlr_scene_get_scene_output(out->server->scene, out->wlr_output);
     if (so == nullptr)
         return;
-    /* Effects update what the scene shows (effects/effects.h). */
+    /* A frame, in this order (effects/effects.h):
+     * 1. the effects update what the scene shows: their frame hooks
+     *    (whole-output effects draw their picture of the output into a
+     *    scene node from captures of the scene; Zoom, last, draws the
+     *    scene again magnified), then the OpenGL window effects;
+     * 2. the scene graph draws the output, and output filters (Water)
+     *    each draw it again from the one before;
+     * 3. our gamma ramp (gamma.c) joins the same commit when it changed,
+     *    a colour transform the display applies to whatever was drawn,
+     *    and adaptive sync and tearing (present.c). */
     xd_effects_output_frame(out);
-    /* wlr_scene_output_commit, with our gamma ramp (gamma.c) in the same
-     * commit when it changed, and adaptive sync and tearing (present.c). */
     if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out) || xd_present_pending(out) ||
         xd_effects_is_output_filtered(out)) {
         struct wlr_output_state state;
