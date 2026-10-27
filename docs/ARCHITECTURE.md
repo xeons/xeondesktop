@@ -378,6 +378,19 @@ fainter towards the back, turned with Scale's velocity model (in degrees)
 to the one picked, its title drawn with the theme's caption font below.
 Its key's modifiers (but Shift) keep it open; letting go switches.
 
+**Enhanced Zoom Desktop** (`zoom.c`, the view in `zoom_model.c`,
+unit-tested) is Compiz's ezoom. Neither scene graph scales an output's
+view, so a zoomed output's frame is drawn twice: `wlr_scene_output_build_state()`
+into a swapchain of the effect's own (its node hidden), then that buffer,
+cut to the view (`src_box`) and stretched over the output, by a scene
+buffer at the very top of the scene, which the output's own frame shows.
+The first drawing happens only when the scene needs a frame or the view
+moved, so a still screen costs nothing more; direct scanout is off
+meanwhile (`wlr_output_lock_attach_render`). The view keeps the point
+under the pointer under it, so input needs no translating. Software
+cursors are drawn in both drawings, so the zoomed picture has a larger
+copy of the pointer under the real one, as ezoom's scaled pointer.
+
 **The OpenGL path** (`glfx.h`, `xd-compositor-fx` only). A window effect
 takes a window over with `xd_glfx_begin_window(view, impl, data)`; each
 frame, from the output's frame event before the scene is drawn:

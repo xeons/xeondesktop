@@ -6,6 +6,7 @@
 #include "../src/compositor/effects/animations_model.h"
 #include "../src/compositor/effects/ring_model.h"
 #include "../src/compositor/effects/scale_model.h"
+#include "../src/compositor/effects/zoom_model.h"
 
 static bool rects_overlap(xd_effect_rect left, xd_effect_rect right) {
     return left.x < right.x + right.width && right.x < left.x + left.width &&
@@ -170,9 +171,46 @@ static void test_ring_model(void) {
     CHECK(xd_ring_step_index(0, 1, 0) == 0);
 }
 
+/* Enhanced Zoom: the view keeps the pointer's point under the pointer,
+ * stays on the monitor, and eases to the level asked for. */
+static void test_zoom_model(void) {
+    const xd_effect_rect output = {1024, 0, 1280, 1024}; /* a second monitor */
+    xd_effect_rect none = xd_zoom_get_view(output, 1500, 300, 1.0);
+    CHECK(none.x == 1024 && none.y == 0 && none.width == 1280 && none.height == 1024);
+    const double pointers[][2] = {{1500, 300}, {1024, 0}, {2303, 1023}, {1664, 512}};
+    for (size_t i = 0; i < XD_ARRAY_LEN(pointers); i++) {
+        double x = pointers[i][0], y = pointers[i][1];
+        xd_effect_rect view = xd_zoom_get_view(output, x, y, 4.0);
+        CHECK(fabs(view.width - 320) < 1e-9 && fabs(view.height - 256) < 1e-9);
+        CHECK(view.x >= 1024 - 1e-9 && view.x + view.width <= 2304 + 1e-9);
+        CHECK(view.y >= -1e-9 && view.y + view.height <= 1024 + 1e-9);
+        /* The point under the pointer, drawn over the monitor, is under it. */
+        double shown_x = output.x + (x - view.x) / view.width * output.width;
+        double shown_y = output.y + (y - view.y) / view.height * output.height;
+        CHECK(fabs(shown_x - x) < 1e-6 && fabs(shown_y - y) < 1e-6);
+    }
+    /* The middle zooms the middle; off the monitor counts as its edge. */
+    xd_effect_rect middle = xd_zoom_get_view(output, 1664, 512, 2.0);
+    CHECK(fabs(middle.x - 1344) < 1e-9 && fabs(middle.y - 256) < 1e-9);
+    xd_effect_rect off = xd_zoom_get_view(output, 0, -50, 2.0);
+    CHECK(off.x == 1024 && off.y == 0);
+    /* Below 1 is no zoom. */
+    CHECK(xd_zoom_get_view(output, 1500, 300, 0.5).width == 1280);
+
+    double level = 1.0;
+    int frames = 0;
+    for (; level != 2.25 && frames < 200; frames++)
+        level = xd_zoom_step_level(level, 2.25, 0.016, 25.0);
+    CHECK(level == 2.25 && frames > 5 && frames < 60);
+    CHECK(xd_zoom_step_level(2.0, 1.0, 0.016, 25.0) < 2.0);
+    CHECK(xd_zoom_step_level(2.0, 1.0, 0.0, 25.0) == 2.0);
+    CHECK(xd_zoom_step_level(1.001, 1.0, 0.016, 25.0) == 1.0);
+}
+
 static void test_effects_scene(void) {
     test_scale_layout();
     test_scale_motion();
     test_animations_model();
     test_ring_model();
+    test_zoom_model();
 }

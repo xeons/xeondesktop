@@ -1377,6 +1377,49 @@ def ring_switcher_thumbnails(s):
     s.wait(lambda: active_title(s) == "Run", "Super+Tab alone to switch back to Run")
 
 
+def zoomed_match(zoomed, before, x, y, level, radius=150, step=7):
+    """Around (x, y): the share of points that show what `before` had
+    `level` times closer to (x, y), and the share that changed at all.
+    The pointer itself (below and right of it) isn't counted."""
+    total = matched = changed = 0
+    for dy in range(-radius, radius + 1, step):
+        for dx in range(-radius, radius + 1, step):
+            if -10 <= dx <= 75 and -10 <= dy <= 75:
+                continue
+            zx, zy = x + dx, y + dy
+            bx, by = round(x + dx / level), round(y + dy / level)
+            if not (0 <= zx < WIDTH and 0 <= zy < HEIGHT):
+                continue
+            total += 1
+            z, b, same = zoomed.pixel(zx, zy), before.pixel(bx, by), before.pixel(zx, zy)
+            matched += max(abs(p - q) for p, q in zip(z, b)) <= 48
+            changed += max(abs(p - q) for p, q in zip(z, same)) > 24
+    return matched / max(total, 1), changed / max(total, 1)
+
+
+@scenario(setup=effects_setup("[EnhancedZoom]\nEnabled=true\nZoomFactor=2.0\n"))
+def enhanced_zoom_pointer(s):
+    """Enhanced Zoom Desktop (zoom factor 2): Windows and the wheel up
+    zoom the screen in around the pointer: what was near it is twice as
+    big and twice as far from it, the point under it staying put; the
+    wheel down zooms back out to the screen as it was."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    x, y = 330, 260
+    s.inject("move", x, y)
+    before = s.settle("before")
+    s.inject("hold", "super", "wheel", -1, "release", "super")
+    zoomed = s.settle("zoomed")
+    matched, changed = zoomed_match(zoomed, before, x, y, 2.0)
+    s.log(f"{matched:.2f} of the points show what was half as far from the pointer; "
+          f"{changed:.2f} changed")
+    s.check(changed > 0.3, f"the screen is zoomed ({changed:.2f} of it changed)")
+    s.check(matched > 0.8, f"what's round the pointer is twice the size ({matched:.2f})")
+    s.inject("hold", "super", "wheel", 1, "release", "super")
+    after = s.settle("unzoomed")
+    s.check(after.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.02, "zoomed out, it's as it was")
+
+
 @scenario(AERO_INI)
 def start7_search_caret(s):
     """Windows 7's Start menu opens with the focus in its search box: the
