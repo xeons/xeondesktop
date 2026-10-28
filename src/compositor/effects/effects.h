@@ -114,8 +114,6 @@ void xd_effects_window_event(xd_view *view, xd_window_event_kind kind,
  * after committing it. */
 void xd_effects_output_frame(xd_output *output);
 void xd_effects_output_frame_done(xd_output *output);
-/* Whether `effect` (the settings' index) is turned on and running. */
-bool xd_effects_is_running(const xd_server *server, const char *id);
 /* output.c: whether an output filter (Water) draws the output's frames
  * (every frame is drawn then), and the frame's state, as
  * wlr_scene_output_build_state makes it, filtered: a filter works on the

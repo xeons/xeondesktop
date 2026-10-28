@@ -28,10 +28,7 @@ static const xd_effect_impl *const impls[] = {
 #include "impl_list.h"
     nullptr, /* so the list is never empty */
 };
-/* Tested, so it counts as used where the list is empty. */
-#ifdef XD_EFFECT_IMPL
 #undef XD_EFFECT_IMPL
-#endif
 
 /* A function, not a constant: the plain build's loops over none would
  * be "always false" comparisons. */
@@ -228,17 +225,6 @@ void xd_effects_output_frame_done([[maybe_unused]] xd_output *output) {
 #ifdef XD_SCENEFX
     xd_glfx_frame_done(output->server, output);
 #endif
-}
-
-bool xd_effects_is_running(const xd_server *server, const char *id) {
-    const xd_effects *effects = server->effects;
-    if (effects == nullptr)
-        return false;
-    for (size_t i = 0; i < effects_count_impls(); i++) {
-        if (strcmp(impls[i]->id, id) == 0)
-            return effects->running[i].on;
-    }
-    return false;
 }
 
 /* ---- input ---------------------------------------------------------------------- */

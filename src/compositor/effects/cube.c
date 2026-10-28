@@ -58,7 +58,6 @@ typedef struct cube_state {
     xd_server *server;
     cube_options options;
     rotate_options rotate; /* Rotate Cube's, while it's on */
-    bool rotate_on;
     cube_phase phase;
     xd_output_effect *effect;
     struct wl_event_source *timer;
@@ -213,12 +212,9 @@ static void cube_draw(xd_output_effect *effect, [[maybe_unused]] xd_output *outp
     }
 }
 
-static void cube_done([[maybe_unused]] xd_output_effect *effect) {}
-
 static const xd_output_effect_impl cube_output_impl = {
     .name = "Desktop Cube",
     .draw = cube_draw,
-    .done = cube_done,
 };
 
 /* ---- turning ---------------------------------------------------------------------- */
@@ -400,11 +396,8 @@ static void *rotate_enable([[maybe_unused]] xd_server *server) {
 }
 
 static void rotate_disable([[maybe_unused]] xd_server *server, void *data) {
-    if (running_cube != nullptr) {
-        running_cube->rotate_on = false;
-        if (running_cube->phase == CUBE_DRAGGING)
-            cube_stop(running_cube);
-    }
+    if (running_cube != nullptr && running_cube->phase == CUBE_DRAGGING)
+        cube_stop(running_cube);
     xd_free(data);
 }
 
@@ -413,10 +406,8 @@ static void rotate_configure([[maybe_unused]] xd_server *server, void *data,
     rotate_state *rotate = data;
     xd_effects_get_binding(settings, effect, "Initiate", &rotate->options.initiate);
     rotate->options.sensitivity = xd_effects_get_double(settings, effect, "Sensitivity");
-    if (running_cube != nullptr) {
+    if (running_cube != nullptr)
         running_cube->rotate = rotate->options;
-        running_cube->rotate_on = true;
-    }
 }
 
 static bool rotate_handle_button(xd_server *server, rotate_state *rotate,
@@ -450,7 +441,6 @@ static bool rotate_handle_button(xd_server *server, rotate_state *rotate,
         !xd_effects_binding_matches(&rotate->options.initiate, input))
         return false;
     state->rotate = rotate->options;
-    state->rotate_on = true;
     if (state->phase == CUBE_IDLE) {
         if (!cube_start(state))
             return false;

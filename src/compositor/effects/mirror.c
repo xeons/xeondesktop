@@ -188,10 +188,6 @@ void xd_mirror_destroy(xd_mirror *mirror) {
     xd_free(mirror);
 }
 
-xd_view *xd_mirror_get_view(const xd_mirror *mirror) {
-    return mirror->view;
-}
-
 struct wlr_box xd_mirror_get_box(const xd_mirror *mirror) {
     return mirror->box;
 }
