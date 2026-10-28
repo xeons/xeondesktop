@@ -16,6 +16,7 @@
 
 #include "../../settings/effects.h"
 #include "../server.h"
+#include "animations_model.h"
 
 /* What happened to a window, told to every effect turned on. */
 typedef enum xd_window_event_kind : uint8_t {
@@ -146,6 +147,21 @@ bool xd_effects_binding_matches(const xd_effect_binding *binding, const xd_effec
 bool xd_effects_is_binding_held(const xd_effect_binding *binding, const xd_effect_input *input);
 /* Whether a window matches an XD_EFFECT_OPTION_MATCH value. */
 bool xd_effects_match_view(const char *match, const xd_view *view);
+
+/* Animations' settings for one of its events, for the effects that draw
+ * its choices of theirs (Burn, Explode). */
+typedef struct xd_animation_event_settings {
+    xd_animation_effect effect;
+    int duration_ms;
+    char windows[512]; /* which windows: xd_effects_match_view */
+} xd_animation_event_settings;
+
+/* Animations' events from `settings` (every effect's configure gets all
+ * of them); false, and every event None, while Animations is off. */
+bool xd_effects_get_animation_events(const xd_effects_settings *settings,
+                                     xd_animation_event_settings events[XD_ANIMATION_EVENT_COUNT]);
+/* The Animations event a window event is, if it's one. */
+bool xd_effects_get_animation_event(xd_window_event_kind kind, xd_animation_event *event);
 /* A tree above every window and panel and below the lock screen, for an
  * effect's own pictures; destroy it with wlr_scene_node_destroy. */
 struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server);

@@ -3,6 +3,14 @@
  * pieces (explode_model.h) that fly out, spin and fade, drawn as one mesh
  * of triangle fans. Thickness is faked: each piece's darker copy, pushed
  * the way it's tilted, shows as its edge.
+ *
+ * It shatters closing windows of its own accord (its page's Explode
+ * every closing window), as it did before Animations listed it, and the
+ * windows of Animations' events set to Explode, as CCSM had it: in place
+ * when minimizing, and backwards on the live window when opening or
+ * restoring (the pieces fly together into it). Before Animations and the
+ * Add-On in impl_list.h, it takes those windows from them; Magic Lamp
+ * and Burn, before it, keep their own.
  */
 #include <math.h>
 
@@ -48,12 +56,14 @@ typedef struct explode_options {
     int duration_ms;
     xd_explode_tessellation tessellation;
     int across, down, spokes, tiers, thickness;
-    char windows[512]; /* which windows: xd_effects_match_window */
+    bool closing;      /* Explode every closing window */
+    char windows[512]; /* which of them: xd_effects_match_window */
 } explode_options;
 
 typedef struct explode_state {
     xd_server *server;
     explode_options options;
+    xd_animation_event_settings events[XD_ANIMATION_EVENT_COUNT]; /* Animations' */
     struct wl_list windows; /* explode_window.link */
     uint64_t seed;
 } explode_state;
@@ -63,7 +73,10 @@ typedef struct explode_window {
     explode_state *state;
     xd_window_effect *effect;
     xd_explode explode;
-    double progress;
+    uint64_t seed; /* the pieces' */
+    int duration_ms;
+    bool appearing;  /* opening or restoring: flying together, live */
+    double progress; /* 0: the whole window, 1: gone */
     xd_glfx_mesh mesh; /* every piece's fan; positions are the faces' */
     float *face_positions, *edge_positions;
 } explode_window;
@@ -121,16 +134,17 @@ static void explode_begin(xd_window_effect *effect) {
     const struct wlr_fbox *box = &effect->texture.box;
     xd_explode_init(&window->explode, options->tessellation, box->width, box->height,
                     options->across, options->down, options->spokes, options->tiers,
-                    ++window->state->seed);
+                    window->seed);
     explode_build_mesh(window);
 }
 
 static bool explode_update(xd_window_effect *effect, double seconds) {
     explode_window *window = effect->data;
-    window->progress += seconds * 1000.0 / XD_MAX(window->state->options.duration_ms, 1);
+    double step = seconds * 1000.0 / XD_MAX(window->duration_ms, 1);
+    window->progress = xd_animation_step_progress(window->progress, step, window->appearing);
     /* 16-bit indices: a window cut finer than that just goes. */
-    return window->progress < 1 && window->mesh.vertex_count > 0 &&
-           window->mesh.vertex_count <= UINT16_MAX;
+    return xd_animation_has_further(window->progress, window->appearing) &&
+           window->mesh.vertex_count > 0 && window->mesh.vertex_count <= UINT16_MAX;
 }
 
 static struct wlr_fbox explode_get_bounds(xd_window_effect *effect) {
@@ -138,6 +152,10 @@ static struct wlr_fbox explode_get_bounds(xd_window_effect *effect) {
     const xd_explode *explode = &window->explode;
     const struct wlr_fbox *box = &effect->texture.box;
     double thickness = window->state->options.thickness;
+    /* A live window (opening) may still be settling on its size: the
+     * pieces cut from its first come together into its latest. */
+    double stretch_x = explode->width > 0 ? box->width / explode->width : 1;
+    double stretch_y = explode->height > 0 ? box->height / explode->height : 1;
     size_t vertex = 0;
     for (size_t i = 0; i < explode->count; i++) {
         const xd_explode_piece *piece = &explode->pieces[i];
@@ -146,6 +164,8 @@ static struct wlr_fbox explode_get_bounds(xd_window_effect *effect) {
         for (int corner = 0; corner < piece->corner_count; corner++) {
             double x = 0, y = 0;
             xd_explode_get_corner(explode, piece, corner, window->progress, &x, &y);
+            x *= stretch_x;
+            y *= stretch_y;
             window->face_positions[vertex * 2] = (float)(box->x + x);
             window->face_positions[vertex * 2 + 1] = (float)(box->y + y);
             window->edge_positions[vertex * 2] = (float)(box->x + x - normal[0] * thickness);
@@ -238,38 +258,78 @@ static void explode_configure([[maybe_unused]] xd_server *server, void *data,
     options->spokes = xd_effects_get_int(settings, effect, "Spokes");
     options->tiers = xd_effects_get_int(settings, effect, "Tiers");
     options->thickness = xd_effects_get_int(settings, effect, "Thickness");
+    options->closing = xd_effects_get_bool(settings, effect, "Closing");
+    /* Animations' events say which other windows are ours: its settings
+     * come with ours (every effect is told of every change). */
+    xd_effects_get_animation_events(settings, state->events);
     snprintf(options->windows, sizeof(options->windows), "%s",
              xd_effects_get_text(settings, effect, "Windows"));
 }
 
-/* Whether it takes this window's closing: Animations, later in the
- * list, then leaves the window alone (xd_effects_is_animated_before). */
-static bool explode_is_wanted(const explode_state *state, const xd_view *view,
-                              xd_window_event_kind kind) {
-    return kind == XD_WINDOW_EVENT_UNMAP && !view->fullscreen &&
-           xd_effects_match_window(state->options.windows, xd_view_app_id(view),
-                                   xd_view_title(view), view->dialog);
+/* Whether it takes this window event, and whose duration it has: its
+ * page's own (closing windows) or that of Animations' event. Animations
+ * and the Add-On, later in the list, then leave the window alone
+ * (xd_effects_is_animated_before). */
+static xd_animation_claim explode_get_claim(const explode_state *state, const xd_view *view,
+                                            xd_window_event_kind kind,
+                                            xd_animation_event *event) {
+    if (view->fullscreen || !xd_effects_get_animation_event(kind, event))
+        return XD_ANIMATION_CLAIM_NONE;
+    const explode_options *options = &state->options;
+    const xd_animation_event_settings *chosen = &state->events[*event];
+    bool own_match = *event == XD_ANIMATION_EVENT_CLOSE && options->closing &&
+                     xd_effects_match_window(options->windows, xd_view_app_id(view),
+                                             xd_view_title(view), view->dialog);
+    bool event_match =
+        chosen->effect == XD_ANIMATION_EXPLODE && xd_effects_match_view(chosen->windows, view);
+    return xd_animation_get_claim(XD_ANIMATION_EXPLODE, *event, options->closing, own_match,
+                                  chosen->effect, event_match);
 }
 
 static bool explode_animates([[maybe_unused]] xd_server *server, void *data, const xd_view *view,
                              xd_window_event_kind kind) {
-    return explode_is_wanted(data, view, kind);
+    xd_animation_event event;
+    return explode_get_claim(data, view, kind, &event) != XD_ANIMATION_CLAIM_NONE;
+}
+
+static void explode_start(explode_state *state, xd_view *view, xd_animation_event event,
+                          xd_animation_claim claim) {
+    explode_window *window = XD_NEW(explode_window);
+    window->state = state;
+    window->appearing = xd_animation_is_appearing(event);
+    window->duration_ms = claim == XD_ANIMATION_CLAIM_OWN ? state->options.duration_ms
+                                                          : state->events[event].duration_ms;
+    window->progress = xd_animation_get_start_progress(window->appearing);
+    window->seed = ++state->seed;
+    /* Turned round midway (closed while it opens, minimized while it's
+     * restored, or back): the same pieces, from where they had got to. */
+    xd_window_effect *before = xd_glfx_find_window(view, &window_impl);
+    if (before != nullptr) {
+        const explode_window *previous = before->data;
+        window->progress = previous->progress;
+        window->seed = previous->seed;
+    }
+    window->effect = window->appearing
+                         ? xd_glfx_begin_window(view, &window_impl, window)
+                         : xd_glfx_begin_closing_window(view, &window_impl, window);
+    if (window->effect == nullptr) {
+        xd_free(window);
+        return;
+    }
+    wl_list_insert(&state->windows, &window->link);
 }
 
 static void explode_handle_window_event([[maybe_unused]] xd_server *server, void *data,
                                         const xd_window_event *event) {
     explode_state *state = data;
     xd_view *view = event->view;
-    if (!explode_is_wanted(state, view, event->kind))
+    xd_animation_event kind;
+    xd_animation_claim claim = explode_get_claim(state, view, event->kind, &kind);
+    /* Magic Lamp and Burn, before it, keep the windows they take. */
+    if (claim == XD_ANIMATION_CLAIM_NONE ||
+        xd_effects_is_animated_before(&xd_effect_impl_explode, view, event->kind))
         return;
-    explode_window *window = XD_NEW(explode_window);
-    window->state = state;
-    window->effect = xd_glfx_begin_closing_window(view, &window_impl, window);
-    if (window->effect == nullptr) {
-        xd_free(window);
-        return;
-    }
-    wl_list_insert(&state->windows, &window->link);
+    explode_start(state, view, kind, claim);
 }
 
 const xd_effect_impl xd_effect_impl_explode = {

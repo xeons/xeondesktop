@@ -388,7 +388,8 @@ Effects greys the choice while that's off or can't be drawn, with a note
 saying `choice_fallback` (Zoom) is used meanwhile. The Add-On comes before
 Animations in `impl_list.h` and reads Animations' event settings; it takes a
 window whose event is set to one of its effects (Magic Lamp, Burn and
-Explode, before it, keep theirs), and Animations zooms any it doesn't take
+Explode, before it, keep theirs; Burn and Explode are choices too, drawn
+by their own effects), and Animations zooms any it doesn't take
 (off, plain build). The window's picture is cut into flat pieces that turn
 about hinges (folds, dominoes) or fly off, drawn each frame as one mesh of
 slabs back to front (face or mirrored back, and the sides facing the eye,
@@ -621,6 +622,27 @@ axis of its own and coming toward the viewer in perspective, then
 fading. Thickness is faked: a darker copy of each piece, pushed the way
 it's tilted, shows as its edge. A window has one closing effect: the
 first effect turned on to ask for it.
+
+Burn and Explode are also choices in each of Animations' events, as
+CCSM listed animationaddon's (`burn`, `explode`; `choice_requires` names
+their own pages, which hold their options, and Zoom is drawn while the
+page is off). Each takes, in this order: closing windows its own page
+matches while its Burn (Explode) every closing window is ticked (on by
+default, so an effects.ini from before keeps burning closing windows
+whatever Animations says), with its page's duration; then the windows of
+Animations' events set to it, with the event's duration and windows
+(`xd_effects_get_animation_events`, `xd_animation_get_claim`). Being
+before the Add-On and Animations in `impl_list.h`, they take those
+windows from them; Magic Lamp, before them, keeps its own, and Burn comes
+before Explode. Minimizing burns or shatters the window in place, as
+Compiz did (no flight to the taskbar). Opening and restoring run the
+effect backwards on the live window (`xd_animation_step_progress`):
+Compiz's 1 - progress; the front starts and ends beyond the reach of its
+noise, and the pieces are where they were at 0 (stretched to the live
+window's size), so the last frame is the window itself. Turned round
+midway (closed while opening, minimized while restoring), the new one
+starts from the old one's progress, with the same pieces (seed) or
+direction.
 
 **Water Effect** (`water.c`, the waves in `water_model.c`, unit-tested)
 is an output filter. A height field covers the output layout, a cell

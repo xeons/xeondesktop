@@ -1261,7 +1261,7 @@ def animations_addon_panel(s):
     s.log("ok: the Effect list still works")
     s.check(before is not None, "the page showed")
     # Dropped down, the list shows them greyed too: Glide 2's row (the
-    # fifth of thirteen) has black text, Airplane's (the sixth) none.
+    # fifth of fifteen) has black text, Airplane's (the sixth) none.
     closed = s.settle("closed-list")
     s.inject("key", "alt+Down", "sleep", 500)
     dropped = s.settle("open-list")
@@ -1275,7 +1275,7 @@ def animations_addon_panel(s):
     top = bottom
     while top > 0 and dropped.pixel(lx, top - 1) == dropped.pixel(lx, bottom):
         top -= 1
-    row_height = (bottom - top - 1) // 13
+    row_height = (bottom - top - 1) // 15
 
     def get_darkest(row):
         row_top = top + 1 + row * row_height
@@ -1306,6 +1306,220 @@ def animations_addon_panel(s):
     s.wait(lambda: effects_ini_value(s, "AnimationsAddOn", "FoldGridWidth") == "5",
            "FoldGridWidth=5 in effects.ini")
     s.log("ok: Grid width saved")
+
+
+def events_setup(animations, effects=""):
+    """effects.ini with Animations on (its events as given) and other
+    effects' sections."""
+    return effects_setup("[Animations]\nEnabled=true\n" + animations + effects)
+
+
+def outside_box(shot, empty, box):
+    """How much of the bands round box (x, y, w, h) differs from the empty
+    desktop: left, right, above and below it, each 60 px deep (within the
+    screen, above the taskbar)."""
+    x, y, w, h = box
+    bands = [(max(x - 60, 0), y, min(60, x), h), (x + w + 2, y, min(60, WIDTH - x - w - 2), h),
+             (x, max(y - 60, 0), w, min(60, y)),
+             (x, y + h + 2, w, min(60, HEIGHT - 40 - y - h - 2))]
+    return [shot.differs(empty, band, step=2) if band[2] > 4 and band[3] > 4 else 0.0
+            for band in bands]
+
+
+@scenario(setup=events_setup("OpenEffect=explode\nOpenDuration=4000\n",
+                             "[Explode]\nEnabled=true\n"), fx=True)
+def explode_open(s):
+    """Explode chosen for Animations' Open (xd-compositor-fx), slowed to
+    4 s: the window's pieces fly together, so midway some lie outside the
+    box it will have and it isn't whole; at the end it's itself, and the
+    first picture after the animation is the same as once it has
+    settled (no jump)."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel")
+    started = time.monotonic()
+    time.sleep(1.6)
+    mid = s.shot("midway")
+    # Pictures till well past its end, to find the first that's final.
+    late = []
+    while time.monotonic() - started < 5.5:
+        late.append((time.monotonic() - started, s.shot("ending")))
+        time.sleep(0.05)
+    final = s.settle("opened")
+    box = final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the window shows once it has opened")
+    outside = outside_box(mid, empty, box)
+    inside = mid.differs(final, box, step=2)
+    s.log(f"midway: {outside} of the bands round its box drawn, {inside:.2f} of it unlike "
+          "the end")
+    s.check(sum(1 for share in outside if share > 0.02) >= 2,
+            f"midway pieces lie outside the box it will have ({outside})")
+    s.check(inside > 0.3, f"midway it isn't whole yet ({inside:.2f})")
+    done = [(when, shot) for when, shot in late
+            if shot.differs(final, (0, 0, WIDTH, HEIGHT - 40), step=2) < 0.002]
+    s.check(done and done[0][0] < 5.0, "it's itself by the end, as once settled")
+    # Its last pictures come ever nearer the window as it settles, and
+    # the next is it: the pieces land where it is, rather than it
+    # appearing somewhere else.
+    first = late.index(done[0])
+    nearing = [shot.differs(final, box, step=2) for _, shot in late[max(first - 4, 0):first]]
+    s.log(f"its last pictures before it's itself: {[round(share, 2) for share in nearing]} "
+          "unlike it")
+    s.check(len(nearing) >= 2 and all(a > b for a, b in zip(nearing, nearing[1:])),
+            "its last pictures come ever nearer the window")
+    time.sleep(0.5)
+    s.check(s.shot("still").differs(final, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+            "once opened it stays itself")
+
+
+@scenario(setup=events_setup("OpenEffect=explode\nOpenDuration=4000\n",
+                             "[Explode]\nEnabled=true\nDuration=2000\n"), fx=True)
+def explode_open_closed_midway(s):
+    """Explode on open and (its own page's) on close: a window closed
+    while its pieces are still flying together flies apart again from
+    there, and is gone; nothing is left on the screen and the compositor
+    carries on (another window opens and shows)."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(1.5)
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "the pieces gone", timeout=10)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(4.5)
+    final = s.settle("reopened")
+    s.check(final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40)) is not None,
+            "a window opened afterwards shows")
+
+
+@scenario(setup=events_setup("MinimizeEffect=burn\nMinimizeDuration=4000\n",
+                             "[Burn]\nEnabled=true\n"), fx=True)
+def burn_minimize(s):
+    """Burn chosen for Animations' Minimize (xd-compositor-fx), slowed to
+    4 s: the window burns away where it is, from the top down, so midway
+    its top is gone and its bottom still there; then it's minimized and
+    gone, and restoring it (Zoom) brings it back where it was."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "super+Down", "sleep", 1800)
+    mid = s.shot("midway")
+    top = mid.differs(empty, (x, y, w, 40), step=2)
+    bottom = mid.differs(empty, (x, y + h - 60, w, 50), step=2)
+    s.log(f"midway: {top:.2f} of its top differs from the desktop, {bottom:.2f} of its bottom")
+    s.check(top < 0.05, f"midway its top is burnt away ({top:.2f})")
+    s.check(bottom > 0.5, f"midway its bottom is still there, in place ({bottom:.2f})")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window burnt away", timeout=10)
+    s.inject("key", "alt+Tab", "sleep", 1000)
+    back = s.settle("restored").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(back is not None and max(abs(a - b) for a, b in zip(back, (x, y, w, h))) <= 2,
+            f"restored where it was ({back}, was {(x, y, w, h)})")
+
+
+@scenario(setup=events_setup("MinimizeEffect=burn\nMinimizeDuration=4000\n"
+                             "UnminimizeEffect=burn\nUnminimizeDuration=4000\n",
+                             "[Burn]\nEnabled=true\n"), fx=True)
+def burn_restore_midway(s):
+    """Burn on minimize and restore, slowed to 4 s: restored while it's
+    still burning away, the window comes back out of the fire from where
+    it had got to, and ends whole where it was; minimized again while it
+    comes back, it burns away and stays minimized."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    whole = s.settle("whole")
+    s.inject("key", "super+Down", "sleep", 2500)
+    s.inject("key", "alt+Tab")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(0.3)
+    mid = s.shot("coming-back")
+    top = mid.differs(empty, (x, y, w, 40), step=2)
+    s.log(f"coming back: {top:.2f} of its top shows")
+    s.check(top < 0.05, f"coming back from where it had got to, its top still burnt ({top:.2f})")
+    s.wait(lambda: s.shot("back").differs(whole, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "the window whole where it was", timeout=10)
+    s.inject("key", "super+Down", "sleep", 600, "key", "alt+Tab", "sleep", 600,
+             "key", "super+Down")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window burnt away and minimized", timeout=12)
+
+
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"
+                              "[Animations]\nEnabled=true\n"), fx=True)
+def burn_close_old_config(s):
+    """An effects.ini from before Burn was one of Animations' choices: Burn
+    on (slowed to 4 s) and Animations on, left as it was (Zoom on close).
+    A window closed still burns away, from the top down, as it did: midway
+    its top is gone and its bottom still there, not a smaller picture."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1800)
+    mid = s.shot("midway")
+    top = mid.differs(empty, (x, y, w, 40), step=2)
+    bottom = mid.differs(empty, (x, y + h - 60, w, 50), step=2)
+    s.log(f"midway: {top:.2f} of its top differs from the desktop, {bottom:.2f} of its bottom")
+    s.check(top < 0.05, f"midway its top is gone ({top:.2f})")
+    s.check(bottom > 0.5, f"midway its bottom is still there, full size ({bottom:.2f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window burnt away", timeout=10)
+
+
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nClosing=false\n"
+                              "[Animations]\nEnabled=true\nCloseDuration=4000\n"), fx=True)
+def burn_closing_off(s):
+    """Burn on, but Burn every closing window off and Animations' Close
+    left at Zoom (slowed to 4 s): a window closed zooms, its picture
+    smaller midway and centred where it was, and doesn't burn."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1800)
+    now = s.shot("zooming").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"window {(x, y, w, h)}, midway {now}")
+    s.check(now is not None and now[2] < w - 20 and now[3] < h - 20,
+            "midway its picture is smaller (Zoom)")
+    s.check(abs(now[0] + now[2] / 2 - (x + w / 2)) < 20 and
+            abs(now[1] + now[3] / 2 - (y + h / 2)) < 20,
+            "centred on where the window was")
+
+
+@scenario(setup=events_setup("OpenEffect=explode\nOpenDuration=4000\n",
+                             "[Explode]\nEnabled=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)], fx=True)  # TWO_MONITORS
+def explode_open_output_off(s):
+    """Explode on open, slowed to 4 s, of a window on the second monitor,
+    which is turned off while the pieces fly together: the window ends up
+    whole on the first monitor, and stays as it is."""
+    require_opengl_effects(s)
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    empty = s.settle("desktop")
+    s.inject("move", SECOND_X + 300, 200)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel")
+    time.sleep(1.0)
+    flying = s.shot("on-second").changed_box(empty, SECOND)
+    s.check(flying is not None, f"its pieces fly together on the second monitor ({flying})")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-2", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the second monitor turned off ({r.stderr.strip()})")
+    time.sleep(4.5)
+    final = s.settle("moved")
+    box = final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None and box[2] > 200, f"the window whole on the first monitor ({box})")
+    time.sleep(0.8)
+    s.check(s.shot("still").differs(final, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+            "and it stays as it is")
 
 
 @scenario(setup=effects_setup("[Water]\nEnabled=true\n"), fx=True)

@@ -8,11 +8,20 @@
 #include "../../core/alloc.h"
 
 static constexpr double CHAR_EDGE = 0.15;
+static constexpr double RAGGED_REACH = 0.04;
+/* How far before the start and past the end the front goes: past where
+ * the noise reaches, so nothing is touched at the start (a window burning
+ * backwards ends exactly as itself) and nothing left at the end. */
+static constexpr double FRONT_MARGIN = RAGGED_REACH + 0.01;
 /* Fire rises: layout units a second, each second. */
 static constexpr double RISE = 60.0;
 
 double xd_burn_get_edge(void) {
     return CHAR_EDGE;
+}
+
+double xd_burn_get_ragged_reach(void) {
+    return RAGGED_REACH;
 }
 
 void xd_burn_get_axis(xd_burn_direction direction, double axis[3]) {
@@ -46,7 +55,7 @@ double xd_burn_get_along(xd_burn_direction direction, double across, double down
 
 double xd_burn_get_front(double progress) {
     progress = progress < 0 ? 0 : progress > 1 ? 1 : progress;
-    return progress * (1 + CHAR_EDGE);
+    return progress * (1 + CHAR_EDGE + 2 * FRONT_MARGIN) - FRONT_MARGIN;
 }
 
 double xd_burn_get_char(double along, double front) {

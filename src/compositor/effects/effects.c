@@ -407,6 +407,54 @@ bool xd_effects_match_view(const char *match, const xd_view *view) {
                                    view->dialog);
 }
 
+bool xd_effects_get_animation_events(const xd_effects_settings *settings,
+                                     xd_animation_event_settings events[XD_ANIMATION_EVENT_COUNT]) {
+    static const char *const prefixes[XD_ANIMATION_EVENT_COUNT] = {"Open", "Close", "Minimize",
+                                                                   "Unminimize"};
+    size_t animations = 0;
+    bool on = xd_effects_find(settings, "Animations", &animations) &&
+              xd_effects_is_enabled(settings, animations);
+    for (size_t i = 0; i < XD_ANIMATION_EVENT_COUNT; i++) {
+        xd_animation_event_settings *event = &events[i];
+        *event = (xd_animation_event_settings){0};
+        if (!on)
+            continue;
+        char key[32];
+        snprintf(key, sizeof(key), "%sEffect", prefixes[i]);
+        event->effect =
+            xd_animation_find_effect(xd_effects_get_choice_name(settings, animations, key));
+        snprintf(key, sizeof(key), "%sDuration", prefixes[i]);
+        event->duration_ms = xd_effects_get_int(settings, animations, key);
+        snprintf(key, sizeof(key), "%sWindows", prefixes[i]);
+        snprintf(event->windows, sizeof(event->windows), "%s",
+                 xd_effects_get_text(settings, animations, key));
+    }
+    return on;
+}
+
+bool xd_effects_get_animation_event(xd_window_event_kind kind, xd_animation_event *event) {
+    switch (kind) {
+    case XD_WINDOW_EVENT_MAP:
+        *event = XD_ANIMATION_EVENT_OPEN;
+        return true;
+    case XD_WINDOW_EVENT_UNMAP:
+        *event = XD_ANIMATION_EVENT_CLOSE;
+        return true;
+    case XD_WINDOW_EVENT_MINIMIZE:
+        *event = XD_ANIMATION_EVENT_MINIMIZE;
+        return true;
+    case XD_WINDOW_EVENT_UNMINIMIZE:
+        *event = XD_ANIMATION_EVENT_UNMINIMIZE;
+        return true;
+    case XD_WINDOW_EVENT_DESTROY:
+    case XD_WINDOW_EVENT_FOCUS:
+    case XD_WINDOW_EVENT_MAXIMIZE:
+    case XD_WINDOW_EVENT_TITLE:
+        return false;
+    }
+    return false;
+}
+
 struct wlr_scene_tree *xd_effects_create_overlay(xd_server *server) {
     struct wlr_scene_tree *tree = wlr_scene_tree_create(&server->scene->tree);
     wlr_scene_node_place_below(&tree->node, &server->layer_lock->node);

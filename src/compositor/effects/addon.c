@@ -390,6 +390,8 @@ static xd_addon_effect addon_get_model_effect(xd_animation_effect effect) {
     case XD_ANIMATION_ZOOM:
     case XD_ANIMATION_GLIDE_1:
     case XD_ANIMATION_GLIDE_2:
+    case XD_ANIMATION_BURN:
+    case XD_ANIMATION_EXPLODE:
     case XD_ANIMATION_EFFECT_COUNT:
         break;
     }

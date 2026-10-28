@@ -20,12 +20,16 @@ typedef enum xd_burn_direction : uint8_t {
 /* How deep the charred band behind the front is, as a share of the
  * window. */
 double xd_burn_get_edge(void);
+/* How far the shader's noise moves the front either way, as a share of
+ * the window. */
+double xd_burn_get_ragged_reach(void);
 /* `along` = axis[0] * across + axis[1] * down + axis[2]: 0 where the
  * fire starts, 1 where it ends (across and down 0..1 over the window). */
 void xd_burn_get_axis(xd_burn_direction direction, double axis[3]);
 double xd_burn_get_along(xd_burn_direction direction, double across, double down);
 /* Where the front is along at `progress` (0..1): nothing is burnt at 0,
- * everything at 1. */
+ * everything at 1, however ragged the front (so a window burning
+ * backwards ends exactly as itself). */
 double xd_burn_get_front(double progress);
 /* How burnt a point `along` is with the front at `front`: 0 untouched,
  * 0..1 charring, 1 gone. */
