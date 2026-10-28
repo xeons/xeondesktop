@@ -3,8 +3,6 @@
  * Snipping Tool's Window Snip and Alt+Print Screen. Any program that may
  * capture the screen may ask (trust.c's privileged globals).
  */
-#include <wlr/types/wlr_scene.h>
-
 #include "server.h"
 #include "xd-window-rectangles-v1-protocol.h"
 

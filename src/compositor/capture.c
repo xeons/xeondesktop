@@ -135,9 +135,13 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int widt
         .sx = (double)width / XD_MAX(outer.width, 1),
         .sy = (double)height / XD_MAX(outer.height, 1),
     };
+    /* SceneFX's scene lets go of the frame's buffer once it has uploaded
+     * it: frame.c keeps the pixels for us while the source lives. */
+    struct wlr_buffer *frame_buffer =
+        view->kept_frame != nullptr ? view->kept_frame : view->frame->buffer;
     struct wlr_texture *frame_tex = nullptr;
-    if (view->frame->node.enabled && view->frame->buffer != nullptr) {
-        frame_tex = wlr_texture_from_buffer(server->renderer, view->frame->buffer);
+    if (view->frame->node.enabled && frame_buffer != nullptr) {
+        frame_tex = wlr_texture_from_buffer(server->renderer, frame_buffer);
         if (frame_tex != nullptr)
             wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
                                                   .texture = frame_tex,
@@ -149,6 +153,13 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int widt
     if (surface != nullptr && view->content != nullptr) {
         draw.ox = view->content->node.x;
         draw.oy = view->content->node.y;
+        /* The content tree's origin is the window geometry's; an xdg
+         * window's surface starts before it by its shadow margins, as the
+         * scene graph places it. */
+        if (view->kind == XD_VIEW_XDG) {
+            draw.ox -= view->toplevel->base->geometry.x;
+            draw.oy -= view->toplevel->base->geometry.y;
+        }
         wlr_surface_for_each_surface(surface, draw_surface, &draw);
     }
     bool ok = wlr_render_pass_submit(pass);
@@ -267,6 +278,7 @@ static xd_capture_source *source_for(xd_view *view) {
         src->base.shm_formats_len = 2;
     }
     view->capture = src;
+    xd_frame_keep_pixels(view, true);
     return src;
 }
 
@@ -274,8 +286,10 @@ static xd_capture_source *source_for(xd_view *view) {
 static void source_destroy(xd_capture_source *src) {
     if (src->idle != nullptr)
         wl_event_source_remove(src->idle);
-    if (src->view != nullptr)
+    if (src->view != nullptr) {
         src->view->capture = nullptr;
+        xd_frame_keep_pixels(src->view, false);
+    }
     wlr_ext_image_capture_source_v1_finish(&src->base);
     xd_free(src);
 }
@@ -321,10 +335,8 @@ void xd_capture_view_shown(xd_view *view) {
 }
 
 void xd_capture_view_hidden(xd_view *view) {
-    if (view->capture != nullptr) {
-        view->capture->view = nullptr;
+    if (view->capture != nullptr)
         source_destroy(view->capture);
-    }
     if (view->ext_toplevel != nullptr)
         wlr_ext_foreign_toplevel_handle_v1_destroy(view->ext_toplevel);
     view->ext_toplevel = nullptr;

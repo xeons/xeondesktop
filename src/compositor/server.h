@@ -230,6 +230,7 @@ typedef struct xd_view {
     struct wl_listener request_close;
     struct wl_listener set_decorations;
     struct wl_listener set_hints;
+    struct wl_listener set_override_redirect;
     struct wl_listener content_destroy; /* wlroots frees it with the surface */
     struct wl_listener set_title;
     struct wl_listener ping_timeout;

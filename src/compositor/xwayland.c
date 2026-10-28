@@ -26,8 +26,11 @@ typedef struct xd_unmanaged {
     struct wl_listener unmap;
     struct wl_listener set_geometry;
     struct wl_listener request_configure;
+    struct wl_listener set_override_redirect;
     struct wl_listener destroy;
 } xd_unmanaged;
+
+static void handle_um_override_redirect(struct wl_listener *listener, void *data);
 
 static void unmanaged_place(xd_unmanaged *unmanaged) {
     if (unmanaged->tree != nullptr)
@@ -97,11 +100,12 @@ static void handle_um_destroy(struct wl_listener *listener, [[maybe_unused]] voi
     xd_unlisten(&unmanaged->unmap);
     xd_unlisten(&unmanaged->set_geometry);
     xd_unlisten(&unmanaged->request_configure);
+    xd_unlisten(&unmanaged->set_override_redirect);
     xd_unlisten(&unmanaged->destroy);
     xd_free(unmanaged);
 }
 
-static void new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
+static xd_unmanaged *new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
     xd_unmanaged *unmanaged = XD_NEW(xd_unmanaged);
     unmanaged->server = server;
     unmanaged->xsurface = xs;
@@ -109,7 +113,10 @@ static void new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
     XD_LISTEN(&xs->events.dissociate, unmanaged, dissociate, handle_um_dissociate);
     XD_LISTEN(&xs->events.set_geometry, unmanaged, set_geometry, handle_um_geometry);
     XD_LISTEN(&xs->events.request_configure, unmanaged, request_configure, handle_um_configure);
+    XD_LISTEN(&xs->events.set_override_redirect, unmanaged, set_override_redirect,
+              handle_um_override_redirect);
     XD_LISTEN(&xs->events.destroy, unmanaged, destroy, handle_um_destroy);
+    return unmanaged;
 }
 
 /* ---- managed windows ------------------------------------------------------------ */
@@ -240,8 +247,8 @@ static void handle_x_minimize(struct wl_listener *listener, void *data) {
     const struct wlr_xwayland_minimize_event *xwayland_minimize_event = data;
     if (xwayland_minimize_event->minimize)
         xd_view_minimize(view);
-    else
-        xd_view_focus(view);
+    else if (view->mapped)
+        xd_view_focus(view); /* a withdrawn window isn't shown by it */
 }
 
 static void handle_x_fullscreen(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -299,7 +306,18 @@ static void handle_x_class(struct wl_listener *listener, [[maybe_unused]] void *
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_app_id);
     if (view->ftl != nullptr && view->xsurface->class != nullptr)
         wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, view->xsurface->class);
+    xd_capture_view_changed(view);
+    xd_frame_render(view, false); /* its icon */
 }
+
+/* WM_TRANSIENT_FOR changed: an owned window has no taskbar button. */
+static void handle_x_parent(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_parent);
+    if (view->mapped)
+        xd_view_update_taskbar_button(view);
+}
+
+static void handle_x_override_redirect(struct wl_listener *listener, void *data);
 
 static void handle_x_decorations(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view_update_decorations(XD_CONTAINER_OF(listener, xd_view, set_decorations));
@@ -332,7 +350,56 @@ static void new_managed(xd_server *server, struct wlr_xwayland_surface *xs) {
     XD_LISTEN(&xs->events.set_class, view, set_app_id, handle_x_class);
     XD_LISTEN(&xs->events.set_decorations, view, set_decorations, handle_x_decorations);
     XD_LISTEN(&xs->events.set_hints, view, set_hints, handle_x_hints);
+    XD_LISTEN(&xs->events.set_parent, view, set_parent, handle_x_parent);
     XD_LISTEN(&xs->events.ping_timeout, view, ping_timeout, handle_x_ping_timeout);
+    XD_LISTEN(&xs->events.set_override_redirect, view, set_override_redirect,
+              handle_x_override_redirect);
+}
+
+/* An X11 window mapped again may change override-redirect (a program
+ * reusing one window as a menu, then as a normal window): it is then
+ * handled as the other kind, as other wlroots compositors do. Unmapping
+ * dissociates it, so it usually has no surface yet; if it has, the new
+ * kind takes the surface over as it is. */
+static void handle_x_override_redirect(struct wl_listener *listener,
+                                       [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_override_redirect);
+    struct wlr_xwayland_surface *xs = view->xsurface;
+    xd_server *server = view->server;
+    if (!xs->override_redirect)
+        return;
+    bool associated = xs->surface != nullptr;
+    bool mapped = associated && xs->surface->mapped;
+    if (view->mapped)
+        handle_x_unmap(&view->unmap, nullptr);
+    if (associated)
+        handle_x_dissociate(&view->dissociate, nullptr);
+    handle_x_destroy(&view->destroy, nullptr);
+    xd_unmanaged *unmanaged = new_unmanaged(server, xs);
+    if (associated)
+        handle_um_associate(&unmanaged->associate, nullptr);
+    if (mapped)
+        handle_um_map(&unmanaged->map, nullptr);
+}
+
+static void handle_um_override_redirect(struct wl_listener *listener,
+                                        [[maybe_unused]] void *data) {
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, set_override_redirect);
+    struct wlr_xwayland_surface *xs = unmanaged->xsurface;
+    xd_server *server = unmanaged->server;
+    if (xs->override_redirect)
+        return;
+    bool associated = xs->surface != nullptr;
+    bool mapped = associated && xs->surface->mapped;
+    if (unmanaged->tree != nullptr)
+        handle_um_unmap(&unmanaged->unmap, nullptr);
+    handle_um_destroy(&unmanaged->destroy, nullptr);
+    new_managed(server, xs);
+    xd_view *view = xs->data;
+    if (associated)
+        handle_x_associate(&view->associate, nullptr);
+    if (mapped)
+        handle_x_map(&view->map, nullptr);
 }
 
 static void handle_new_surface(struct wl_listener *listener, void *data) {

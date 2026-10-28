@@ -408,7 +408,9 @@ static bool server_init(xd_server *server) {
     xd_trust_privileged(server, server->output_manager->global);
     xd_trust_privileged(server, server->layer_shell->global);
     xd_trust_privileged(server, server->virtual_keyboards->global);
-    xd_trust_privileged(server, server->ext_toplevels->global);
+    /* nullptr when window capture couldn't start (capture.c). */
+    if (server->ext_toplevels != nullptr)
+        xd_trust_privileged(server, server->ext_toplevels->global);
     xd_trust_privileged(server, server->arranger);
     return true;
 }
@@ -448,6 +450,16 @@ static void server_finish(xd_server *server) {
         xd_unlisten(listeners[i]);
     if (server->sigchld != nullptr)
         wl_event_source_remove(server->sigchld);
+    if (server->ping_timer != nullptr)
+        wl_event_source_remove(server->ping_timer);
+    if (server->lock_shown_timer != nullptr)
+        wl_event_source_remove(server->lock_shown_timer);
+    server->ping_timer = server->lock_shown_timer = nullptr;
+    /* Their clients are gone, and the windows a peek reordered. */
+    XD_FREE(&server->arranger_clients);
+    server->arranger_clients_n = server->arranger_clients_cap = 0;
+    XD_FREE(&server->peek_order);
+    server->peek_order_n = 0;
     if (server->zooms.next != nullptr)
         xd_animate_finish(server);
     xd_snap_finish(server);

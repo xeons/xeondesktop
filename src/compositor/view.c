@@ -67,6 +67,12 @@ static bool view_wants_fullscreen(const xd_view *view) {
                                      : view->toplevel->requested.fullscreen;
 }
 
+static bool view_wants_maximized(const xd_view *view) {
+    return view->kind == XD_VIEW_X11
+               ? view->xsurface->maximized_vert && view->xsurface->maximized_horz
+               : view->toplevel->requested.maximized;
+}
+
 static bool view_is_fixed_size(const xd_view *view) {
     if (view->kind == XD_VIEW_X11) {
         const xcb_size_hints_t *xcb_size_hints = view->xsurface->size_hints;
@@ -516,9 +522,17 @@ void xd_view_close(xd_view *view) {
     }
 }
 
-void xd_view_set_maximized(xd_view *view, bool maximized) {
+/* Opening maximized (announced false), the window neither plays the
+ * Maximize sound nor zooms: its opening sound and effect play instead. */
+static void set_maximized(xd_view *view, bool maximized, bool announced) {
     if (!view_initialized(view))
         return;
+    /* Asked before the window maps, it opens maximized (xd_view_on_map):
+     * there's no size or place to restore to yet. */
+    if (!view->mapped) {
+        view_schedule_configure(view);
+        return;
+    }
     if (view->dialog)
         maximized = false; /* dialogs keep their size */
     if (view->maximized == maximized) {
@@ -533,14 +547,16 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
         struct wlr_box area = xd_output_work_area_at(view->server, outer.x + outer.width / 2.0,
                                                      outer.y + outer.height / 2.0);
         view->maximized = true;
-        xd_sound_play_event(XD_SOUND_MAXIMIZE);
+        if (announced)
+            xd_sound_play_event(XD_SOUND_MAXIMIZE);
         view_set_maximized_state(view, true);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, true);
         xd_view_set_outer_box(view, area);
-        xd_animate_zoom(view->server, before, (struct wlr_box){area.x, area.y, area.width,
-                                                               before.height},
-                        nullptr);
+        if (announced)
+            xd_animate_zoom(view->server, before,
+                            (struct wlr_box){area.x, area.y, area.width, before.height},
+                            nullptr);
     } else {
         view->maximized = false;
         xd_sound_play_event(XD_SOUND_RESTORE_DOWN);
@@ -553,7 +569,12 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
                                          before.height},
                         nullptr);
     }
-    xd_effects_window_event(view, XD_WINDOW_EVENT_MAXIMIZE, &outer_before);
+    if (announced)
+        xd_effects_window_event(view, XD_WINDOW_EVENT_MAXIMIZE, &outer_before);
+}
+
+void xd_view_set_maximized(xd_view *view, bool maximized) {
+    set_maximized(view, maximized, true);
 }
 
 void xd_view_set_fullscreen(xd_view *view, bool fullscreen) {
@@ -964,6 +985,11 @@ void xd_view_on_map(xd_view *view) {
     }
     update_content_position(view);
     place_new_view(view);
+    /* Maximized before it mapped (GTK3 asks before its first commit, X11
+     * programs with _NET_WM_STATE): restored, it goes where it was
+     * placed. */
+    if (view_wants_maximized(view))
+        set_maximized(view, true, false);
     xd_view_focus(view);
     xd_frame_render(view, true);
     if (view_wants_fullscreen(view))
@@ -1346,6 +1372,7 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->request_close);
     xd_unlisten(&view->set_decorations);
     xd_unlisten(&view->set_hints);
+    xd_unlisten(&view->set_override_redirect);
     xd_unlisten(&view->content_destroy);
     xd_unlisten(&view->set_title);
     xd_unlisten(&view->ping_timeout);
@@ -1357,6 +1384,13 @@ void xd_view_on_destroy(xd_view *view) {
     xd_arrange_forget_view(view->server, view);
     xd_snap_forget_view(view->server, view);
     xd_animate_forget_view(view->server, view);
+    /* The frame's kept pixels: the capture source let go above (with the
+     * taskbar button), and effects' mirrors let go when the surface went;
+     * whatever is left goes with the window. */
+    if (view->kept_frame != nullptr)
+        wlr_buffer_unlock(view->kept_frame);
+    view->kept_frame = nullptr;
+    view->keep_frame = 0;
     wl_list_remove(&view->link);
     /* Takes the frame buffer and the client's scene subtree with it. */
     wlr_scene_node_destroy(&view->tree->node);

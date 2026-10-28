@@ -64,6 +64,9 @@ struct xd_gamma_output {
     char profile[1024]; /* the ICC file its calibration came from */
     float *calibration;  /* 3 x calibration_n, or nullptr */
     size_t calibration_n;
+    /* The gamma size the profile was last looked at for: 0 when the
+     * monitor was off (no ramp to sample), so it is tried again once on. */
+    size_t profile_size;
     bool dirty;
     bool ramp_set; /* a ramp (ours or a program's) went into a commit */
     struct wl_listener commit;
@@ -100,10 +103,10 @@ static void load_calibration(xd_gamma *gamma, xd_output *out) {
     size_t count = wlr_output_get_gamma_size(out->wlr_output);
     if (count == 0 && gamma->trace != nullptr)
         count = TRACE_RAMP;
-    if (strcmp(go->profile, path) == 0 &&
-        (go->calibration == nullptr || go->calibration_n == count))
+    if (strcmp(go->profile, path) == 0 && go->profile_size == count)
         return;
     snprintf(go->profile, sizeof(go->profile), "%s", path);
+    go->profile_size = count;
     XD_FREE(&go->calibration);
     go->calibration_n = 0;
     if (path[0] != '\0' && count >= 2) {
