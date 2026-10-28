@@ -44,8 +44,8 @@ Accounts), libudev and libevdev (Device Manager, Game Controllers),
 polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
 (Network Connections), PackageKit and Flatpak (Add or Remove Programs),
 libcups, SANE and libgphoto2 (printers, scanners, cameras), libsystemd,
-libxcursor (pointer previews), libarchive (Send To > Compressed Folder)
-NUT's libupsclient (Power Options' UPS tab) and xdg-desktop-portal's
+libxcursor (pointer previews), libarchive (Send To > Compressed Folder),
+liburing (Disk Benchmark and Health), NUT's libupsclient (Power Options' UPS tab) and xdg-desktop-portal's
 interface files (the Open and Save As dialogs).
 At run time, Xwayland (`xorg-xwayland`) runs X11 applications; without it
 only Wayland ones work. xdg-desktop-portal gives Flatpaks, GTK 4 programs,
@@ -381,7 +381,7 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 |---|---|---|
 | Accessibility Options | `xd-access` | StickyKeys, FilterKeys (SlowKeys, BounceKeys), ToggleKeys, MouseKeys and High Contrast, with XP's shortcuts, done by the compositor |
 | Add or Remove Programs | `xd-appwiz` | installed programs (size, last used, where each came from: the package manager's repository, Flatpak, AppImage), remove and install through PackageKit and Flatpak |
-| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, quick or full formatting, resizing, startup mount points in /etc/fstab, encrypted (LUKS) volumes), Device Manager, System Configuration Utility (`msconfig`: startup programs and your systemd user services) |
+| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, quick or full formatting, resizing, startup mount points in /etc/fstab, encrypted (LUKS) volumes), Device Manager, System Configuration Utility (`msconfig`: startup programs and your systemd user services), Disk Benchmark and Health (`xd-diskbench`: sequential and random read/write speed with io_uring and direct I/O; S.M.A.R.T. attributes and NVMe health through UDisks2, also from a drive's Properties > Tools > Test Now) |
 | Automatic Updates | `xd-wuaucpl` | distribution (PackageKit) and Flatpak updates in one list, firmware (fwupd) and its Host Security ID; a scheduled check with XP's tray balloon, never installing without your click |
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
 | Color Management | `xd-color` | colord's devices and ICC profiles; a monitor's calibration applied to its gamma ramp |

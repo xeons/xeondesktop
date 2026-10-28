@@ -1353,6 +1353,15 @@ against mocks or scratch directories; none yet against the real services.
         requests on other desktops don't show; Annotate and Show Mouse
         draw under Expo; output filters skip rotated outputs.
 
+- [~] Disk Benchmark and Health (`xd-diskbench`): sequential and random
+      speed (io_uring, O_DIRECT, profiles, Copy as text) and S.M.A.R.T./NVMe
+      health through UDisks2, opened from Administrative Tools, a drive's
+      Tools tab (Test Now) and Disk Management's disk menu (Health...).
+      Tested headless against dbusmock's UDisks2 and tmpfs only: untested
+      on a real drive (O_DIRECT on disk, real SMART data, SmartUpdate's
+      polkit prompt). UDisks2 gives no raw attribute bytes, NVMe command
+      counts, TRIM or NCQ. The UI's looks (status colours, drive dots)
+      await the user's review.
 - [~] Input methods: the compositor relays text-input-v3 to
       input-method-v2 (Fcitx 5 or IBus, started from Keyboard Properties'
       Text Services); tested with a stand-in IME and GTK3. Untested with a
