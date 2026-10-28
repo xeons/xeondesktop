@@ -1648,6 +1648,34 @@ def scale_pick_window(s):
     s.check(active_title(s) == "Control Panel", "and Control Panel stays active")
 
 
+@scenario(setup=effects_setup("[GeneralOptions]\nHorizontalSize=2\n[Scale]\nEnabled=true\n"))
+def scale_two_desktops(s):
+    """Scale with two desktops: on the second, only its own window (Run)
+    is laid out, not the first desktop's Control Panel; Esc puts it back,
+    and Control Panel doesn't turn up on the second desktop."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    before = s.settle("second-desktop")
+    s.inject("key", "shift+alt+Up")
+    grid = s.settle("grid")
+    s.check(darker(grid.pixel(3, 3), empty.pixel(3, 3)), "Scale shows")
+    runs = bright_runs(grid, grid.pixel(3, (HEIGHT - 40) // 2), (HEIGHT - 40) // 2)
+    s.log(f"thumbnails across the middle: {runs}")
+    s.check(len(runs) == 1, f"one thumbnail, the second desktop's window ({runs})")
+    s.inject("key", "Escape")
+    back = s.settle("escaped")
+    s.check(back.differs(before, (0, 0, WIDTH, HEIGHT - 40)) < 0.02,
+            "Esc puts it back, and Control Panel isn't shown here")
+    s.check(s.window(title="Control Panel") is None,
+            "Control Panel stays on the first desktop")
+
+
 def between(pixel, low, high, margin=12):
     """Whether each channel of pixel is between low's and high's, clear of
     both by margin where they differ enough."""
