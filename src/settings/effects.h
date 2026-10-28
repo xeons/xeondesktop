@@ -67,6 +67,10 @@ typedef struct xd_effect_option {
     const char *description; /* its tooltip, or nullptr */
     const char *group;       /* the tab it's on; nullptr is "General" */
     xd_effect_option_type type;
+    /* Drawn with OpenGL ES by xd-compositor-fx, in an effect that isn't
+     * (needs_opengl is the effect's): the effect works without it, but
+     * not this option, which Desktop Effects greys out then. */
+    bool needs_opengl;
     double min, max, step; /* INT and DOUBLE */
     int digits;            /* DOUBLE */
     /* CHOICE: the names stored and the labels shown, nullptr-terminated,

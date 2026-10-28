@@ -399,15 +399,28 @@ Closing and minimizing use `xd_glfx_begin_closing_window`, opening and
 restoring run the same animation backwards on the live window; turned round
 midway, the new one starts where the old one had got to.
 
-**Window Opacity** (`opacity.c`) is the opacity part of Compiz's Opacity,
-Brightness and Saturation: a window's buffers are drawn at its first
-matching rule's opacity, or as Alt and the wheel over it last set, and
-inactive ones no more than the inactive opacity if dimmed. Neither scene
-graph (wlroots' or SceneFX's) draws a buffer with a brightness or
-saturation, so those aren't offered. The opacities are set again before
-each frame (an unchanged one costs nothing), which also restores them
-after an OpenGL effect or Aero Peek, whose own are left alone while it
-shows.
+**Window Opacity** (`opacity.c`, its values in `opacity_model.c`,
+unit-tested) is Compiz's Opacity, Brightness and Saturation: each window
+has the first matching rule's value of each (else unchanged), as the
+bindings over it last set it (Alt, Alt+Shift and Alt+Ctrl with the wheel),
+and inactive ones no more than the inactive opacity and brightness if
+dimmed. The values are set again before each frame (an unchanged one
+costs nothing), which also restores them after an OpenGL effect or Aero
+Peek, whose own are left alone while it shows. Opacity is the buffers'
+own, in either compositor. Neither scene graph draws a buffer with a
+brightness or saturation, so those are xd-compositor-fx's alone (their
+options are `needs_opengl`, greyed in the plain build): `glfx_color.c`
+captures a window whose colours change as a window effect would, draws
+the capture once more through a shader that greys it towards its
+luminance and darkens it, and shows that picture in a node at the top of
+the window's tree at its opacity, its buffers drawn fully transparent. The
+picture is drawn again only when what it shows changes (a hash of the
+window's buffers, their surfaces' commit sequence numbers, places and
+sizes, the scale and the colours), so a window that doesn't change costs
+nothing per frame, and a second monitor's frame of the same moment finds
+it drawn. While a window effect runs on the window it draws it, from a
+capture that `glfx_color.c` colours too (live and closing effects alike),
+and the picture is drawn afresh once it ends.
 
 **Ring Switcher** (`ring.c`, the ellipse in `ring_model.c`, unit-tested)
 is Compiz's ring plugin, beside Alt+Tab rather than in its place: the

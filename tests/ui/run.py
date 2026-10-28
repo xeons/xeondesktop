@@ -912,6 +912,15 @@ def left_edge(shot, empty, y):
     return None
 
 
+def left_edge_in(shot, empty, y, left):
+    """The leftmost x from `left` where row y differs from the empty
+    desktop, or None."""
+    for x in range(left, min(left + WIDTH, shot.width)):
+        if max(abs(a - b) for a, b in zip(shot.pixel(x, y), empty.pixel(x, y))) > 8:
+            return x
+    return None
+
+
 def check_wobbles(s, empty, box):
     """Drags the window at box (x, y, w, h) quickly right by its title bar:
     mid-drag it bends, its bottom lagging behind its top, so its left edge
@@ -1989,6 +1998,169 @@ def window_opacity_inactive(s):
     s.inject("hold", "alt", "wheel", -10, "release", "alt")
     opaque = s.settle("run-opaque")
     s.check(opaque.differs(both, run_box) < 0.02, "and up again, opaque")
+
+
+def settle_shell_desktop(s):
+    """The empty desktop once the shell has drawn it (its taskbar along
+    the bottom): a slow start (leak checking, a parallel suite) shows the
+    bare background first."""
+    s.wait(lambda: (lambda shot: shot.pixel(3, HEIGHT - 10) != shot.pixel(WIDTH // 2, 300))(
+        s.shot("starting")), "the shell's taskbar")
+    return s.settle("desktop")
+
+
+def channel_spread(shot, box, step=6):
+    """The most any pixel in box (x, y, w, h), sampled, has its red, green
+    and blue apart: 0 for greys."""
+    x0, y0, w, h = box
+    return max(max(shot.pixel(x, y)[:3]) - min(shot.pixel(x, y)[:3])
+               for y in range(y0 + 2, y0 + h - 2, step) for x in range(x0 + 2, x0 + w - 2, step))
+
+
+@scenario(setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nSaturationRule1Windows=title=Control Panel\n"
+    "SaturationRule1Value=0\n"), fx=True)
+def window_opacity_saturation_rule(s):
+    """Window Opacity's saturation (xd-compositor-fx): a rule giving
+    Control Panel saturation 0 draws it grey, title bar and icons too: no
+    pixel of it has its channels apart. The rule taken out of effects.ini,
+    it's coloured again."""
+    require_opengl_effects(s)
+    empty = settle_shell_desktop(s)
+    s.inject("move", WIDTH - 20, 300)
+    box = open_control_panel(s, empty)
+    grey = s.settle("grey")
+    spread = channel_spread(grey, box)
+    s.log(f"Control Panel {box}: channels at most {spread} apart")
+    s.check(spread <= 6, f"with saturation 0, Control Panel is grey ({spread})")
+    with open(os.path.join(s.config, "effects.ini"), "w") as f:
+        f.write("[WindowOpacity]\nEnabled=true\n")
+    s.wait(lambda: channel_spread(s.shot("coloured"), box) > 60, "Control Panel coloured again")
+    s.log("ok: without the rule it's coloured")
+
+
+@scenario(setup=effects_setup("[WindowOpacity]\nEnabled=true\n"), fx=True)
+def window_opacity_brightness_binding(s):
+    """Window Opacity's brightness (xd-compositor-fx): Alt+Shift and the
+    wheel down over Control Panel darken it, ten steps of 5% to half as
+    bright; up again, it's as it was."""
+    require_opengl_effects(s)
+    empty = settle_shell_desktop(s)
+    s.inject("move", WIDTH - 20, 300)
+    box = open_control_panel(s, empty)
+    x, y, w, h = box
+    before = s.settle("before")
+    s.inject("move", x + w // 2, y + h // 2, "hold", "shift", "hold", "alt", "wheel", 10,
+             "release", "alt", "release", "shift", "move", WIDTH - 20, 300)
+    dark = s.settle("darker")
+    points = [(px, py) for py in range(y + 30, y + h - 10, 13)
+              for px in range(x + 10, x + w - 10, 17) if sum(before.pixel(px, py)[:3]) > 300]
+    s.check(len(points) > 20, f"Control Panel has bright pixels ({len(points)})")
+    ratio = sum(sum(dark.pixel(*p)[:3]) for p in points) / \
+        sum(sum(before.pixel(*p)[:3]) for p in points)
+    s.log(f"darker: {ratio:.2f} as bright")
+    s.check(0.4 < ratio < 0.6, f"ten steps down, it's half as bright ({ratio:.2f})")
+    s.inject("move", x + w // 2, y + h // 2, "hold", "shift", "hold", "alt", "wheel", -10,
+             "release", "alt", "release", "shift", "move", WIDTH - 20, 300)
+    back = s.settle("back")
+    s.check(back.differs(before, box) < 0.02, "ten steps up, it's as it was")
+
+
+@scenario(setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nRule1Windows=title=Control Panel\nRule1Opacity=50\n"
+    "BrightnessRule1Windows=title=Control Panel\nBrightnessRule1Value=0\n"), fx=True)
+def window_opacity_with_brightness(s):
+    """Window Opacity's opacity and brightness together
+    (xd-compositor-fx): rules giving Control Panel opacity 50% and
+    brightness 0 draw it black at half opacity, so the desktop shows
+    through it at half its brightness."""
+    require_opengl_effects(s)
+    empty = settle_shell_desktop(s)
+    s.inject("move", WIDTH - 20, 300)
+    box = open_control_panel(s, empty)
+    x, y, w, h = box
+    shot = s.settle("window")
+    worst = max(max(abs(a - b / 2) for a, b in zip(shot.pixel(px, py)[:3],
+                                                     empty.pixel(px, py)[:3]))
+                for py in range(y + 4, y + h - 4, 9) for px in range(x + 4, x + w - 4, 11))
+    s.log(f"Control Panel {box}: at most {worst:.0f} off half the desktop's brightness")
+    s.check(worst <= 6, f"Control Panel is black at half opacity ({worst:.0f})")
+
+
+@scenario(setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nSaturationRule1Windows=title=Control Panel\n"
+    "SaturationRule1Value=0\n[WobblyWindows]\nEnabled=true\n"),
+    outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)], fx=True)  # TWO_MONITORS
+def window_opacity_saturation_wobbly(s):
+    """Window Opacity's saturation with Wobbly Windows, on the second of
+    two monitors (scale 1.5) while the first draws frames of its own:
+    Control Panel, given saturation 0 by a rule, stays grey frame after
+    frame, and while it wobbles (dragged by its title bar) its title bar
+    under the pointer is still grey."""
+    require_opengl_effects(s)
+    empty = settle_shell_desktop(s)
+    s.inject("move", SECOND_X + 300, 200)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    box = s.settle("window").changed_box(empty, (SECOND_X, 0, SECOND_W, SECOND_H - 40))
+    s.check(box is not None, f"Control Panel on the second monitor ({box})")
+    x, y, w, h = box
+    # The first monitor's clock-free taskbar repaints as the pointer moves
+    # over it: frames of both monitors at once.
+    for i in range(5):
+        s.inject("move", 200 + 40 * i, HEIGHT - 20, "move", SECOND_X + 300, 200)
+        spread = channel_spread(s.shot(f"frame-{i}"), box)
+        s.check(spread <= 6, f"frame {i}: Control Panel is grey ({spread})")
+    cx, cy = x + w // 2, y + 8
+    steps = ["move", cx, cy, "down", "sleep", 150]
+    for i in range(1, 11):
+        steps += ["move", cx + 10 * i, cy]
+    steps += ["sleep", 1500, "up"]
+    drag = s.launch(s.tool("xd-inject"), *map(str, steps))
+    time.sleep(0.6)
+    bent = None
+    for i in range(8):
+        if drag.poll() is not None:
+            break
+        shot = s.shot(f"dragging-{i}")
+        rows = (y + 40, y + h // 2, y + h - 12)
+        edges = [left_edge_in(shot, empty, row, SECOND_X) for row in rows]
+        strip = (cx + 100 + 12, cy - 3, 40, 6)
+        spread = channel_spread(shot, strip, step=2)
+        s.log(f"mid-drag: left edges {edges}, title bar by the pointer {spread} apart")
+        if None not in edges and max(edges) - min(edges) >= 3:
+            bent = spread
+            break
+    drag.wait(timeout=20)
+    s.check(bent is not None, "the window wobbles while dragged")
+    s.check(bent <= 6, f"wobbling, its title bar is still grey ({bent})")
+    spread = channel_spread(s.settle("dropped"), (x + 100, y, SECOND_X + SECOND_W - x - 100, h))
+    s.check(spread <= 6, f"dropped, it's grey ({spread})")
+
+
+@scenario()
+def window_opacity_plain_greys(s):
+    """Under the plain compositor, Window Opacity's page in Desktop
+    Effects greys out the brightness options (a note says why): Step on
+    the Opacity tab (Alt+S) is saved, but Alt+S on the Brightness tab
+    reaches nothing, and no BrightnessStep is saved."""
+    support = effects_support()
+    s.check(support is not None and support.get("OpenGL") == "false",
+            f"the compositor can't draw OpenGL effects ({support})")
+    s.launch("xd-effects", "--effect", "WindowOpacity")
+    s.wait_window(title="Desktop Effects", state="activated")
+    s.settle("page")
+    s.inject("key", "alt+s", "sleep", 200, "key", "ctrl+a", "type", "20", "key", "Tab")
+    s.wait(lambda: effects_ini_value(s, "WindowOpacity", "Step") == "20",
+           "Step=20 in effects.ini")
+    s.inject("key", "ctrl+Page_Down", "sleep", 300)
+    s.settle("brightness-tab")
+    s.inject("key", "alt+s", "sleep", 200, "key", "ctrl+a", "type", "30", "key", "Tab",
+             "sleep", 500)
+    s.settle("after-typing")
+    s.check(effects_ini_value(s, "WindowOpacity", "BrightnessStep") is None and
+            effects_ini_value(s, "WindowOpacity", "Step") == "20",
+            "the brightness step can't be changed, nor anything else")
 
 
 @scenario(setup=effects_setup("[RingSwitcher]\nEnabled=true\n"))

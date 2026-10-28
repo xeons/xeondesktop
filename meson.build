@@ -437,6 +437,7 @@ compositor_src += files(
   'src/compositor/effects/animations.c',
   'src/compositor/effects/animations_model.c',
   'src/compositor/effects/opacity.c',
+  'src/compositor/effects/opacity_model.c',
   'src/compositor/effects/ring.c',
   'src/compositor/effects/ring_model.c',
   'src/compositor/effects/zoom.c',
@@ -449,6 +450,7 @@ compositor_src += files(
 )
 effects_fx_src = files(
   'src/compositor/effects/glfx.c',
+  'src/compositor/effects/glfx_color.c',
   'src/compositor/effects/wobbly.c',
   'src/compositor/effects/wobbly_model.c',
   'src/compositor/effects/magic_lamp.c',
@@ -1525,6 +1527,7 @@ test_exe = executable(
   'src/compositor/effects/animations_model.c',
   'src/compositor/effects/ring_model.c',
   'src/compositor/effects/zoom_model.c',
+  'src/compositor/effects/opacity_model.c',
   'src/compositor/desktops_grid.c',
   'src/compositor/effects/viewport_model.c',
   'src/color/colorlib.c',
