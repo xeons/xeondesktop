@@ -81,6 +81,44 @@ static void annotate_handle_output_destroy(struct wl_listener *listener,
     annotate_free_canvas(XD_CONTAINER_OF(listener, annotate_canvas, destroy));
 }
 
+/* The canvas's pictures at the monitor's box and scale now: made, or made
+ * again when its mode, scale or place changed, the strokes so far kept
+ * where they were on it. False if there's no memory for them. */
+static bool annotate_fit_canvas(annotate_canvas *canvas) {
+    struct wlr_box box;
+    wlr_output_layout_get_box(canvas->state->server->output_layout, canvas->output, &box);
+    double scale = (double)canvas->output->scale;
+    if (canvas->buffer != nullptr && wlr_box_equal(&box, &canvas->box) && scale == canvas->scale)
+        return true;
+    if (wlr_box_empty(&box))
+        return canvas->buffer != nullptr; /* turned off: as it was, till it's back */
+    double width_px = ceil(box.width * scale), height_px = ceil(box.height * scale);
+    int width = (int)width_px, height = (int)height_px;
+    cairo_surface_t *shown = nullptr;
+    struct wlr_buffer *buffer = xd_cairo_buffer_new(width, height, &shown);
+    if (buffer == nullptr)
+        return false;
+    cairo_surface_t *done = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    if (canvas->done != nullptr) {
+        cairo_t *cairo = cairo_create(done);
+        cairo_scale(cairo, scale / canvas->scale, scale / canvas->scale);
+        cairo_set_source_surface(cairo, canvas->done, 0, 0);
+        cairo_paint(cairo);
+        cairo_destroy(cairo);
+        cairo_surface_destroy(canvas->done);
+    }
+    if (canvas->buffer != nullptr)
+        wlr_buffer_drop(canvas->buffer);
+    canvas->buffer = buffer;
+    canvas->shown = shown;
+    canvas->done = done;
+    canvas->box = box;
+    canvas->scale = scale;
+    wlr_scene_buffer_set_dest_size(canvas->node, box.width, box.height);
+    wlr_scene_node_set_position(&canvas->node->node, box.x, box.y);
+    return true;
+}
+
 /* The drawing on the monitor at (x, y), made if there's none yet. */
 static annotate_canvas *annotate_get_canvas(annotate_state *state, double x, double y) {
     xd_server *server = state->server;
@@ -95,22 +133,15 @@ static annotate_canvas *annotate_get_canvas(annotate_state *state, double x, dou
     canvas = XD_NEW(annotate_canvas);
     canvas->state = state;
     canvas->output = output;
-    wlr_output_layout_get_box(server->output_layout, output, &canvas->box);
-    canvas->scale = (double)output->scale;
-    double width = ceil(canvas->box.width * canvas->scale);
-    double height = ceil(canvas->box.height * canvas->scale);
-    canvas->buffer = xd_cairo_buffer_new((int)width, (int)height, &canvas->shown);
-    if (canvas->buffer == nullptr) {
-        xd_free(canvas);
-        return nullptr;
-    }
-    canvas->done = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)width, (int)height);
     if (state->overlay == nullptr)
         state->overlay = xd_effects_create_overlay(server);
     canvas->node = wlr_scene_buffer_create(state->overlay, nullptr);
     canvas->node->point_accepts_input = annotate_reject_input;
-    wlr_scene_buffer_set_dest_size(canvas->node, canvas->box.width, canvas->box.height);
-    wlr_scene_node_set_position(&canvas->node->node, canvas->box.x, canvas->box.y);
+    if (!annotate_fit_canvas(canvas)) {
+        wlr_scene_node_destroy(&canvas->node->node);
+        xd_free(canvas);
+        return nullptr;
+    }
     XD_LISTEN(&output->events.destroy, canvas, destroy, annotate_handle_output_destroy);
     wl_list_insert(&state->canvases, &canvas->link);
     return canvas;
@@ -185,6 +216,22 @@ static void annotate_update(annotate_state *state) {
         if (state->tool == ANNOTATE_TOOL_ERASE)
             annotate_erase(state, canvas);
         annotate_redraw(state, canvas);
+    }
+}
+
+/* Before each frame of a monitor: its drawing follows a change of its
+ * mode, scale or place. */
+static void annotate_handle_frame([[maybe_unused]] xd_server *server, void *data,
+                                  xd_output *output, [[maybe_unused]] double now) {
+    annotate_state *state = data;
+    annotate_canvas *canvas;
+    wl_list_for_each(canvas, &state->canvases, link) {
+        if (canvas->output != output->wlr_output)
+            continue;
+        struct wlr_buffer *before = canvas->buffer;
+        if (annotate_fit_canvas(canvas) && canvas->buffer != before)
+            annotate_redraw(state, canvas);
+        return;
     }
 }
 
@@ -300,5 +347,6 @@ const xd_effect_impl xd_effect_impl_annotate = {
     .enable = annotate_enable,
     .disable = annotate_disable,
     .configure = annotate_configure,
+    .frame = annotate_handle_frame,
     .input = annotate_handle_input,
 };
