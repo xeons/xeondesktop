@@ -444,6 +444,9 @@ struct xd_server {
     xd_cursor_mode mode;
     xd_view *grab_view;
     xd_frame_part grab_part;
+    /* The button whose release ends a move, resize or caption-button
+     * grab; 0 when no button started it (a finger), so any does. */
+    uint32_t grab_button;
     double grab_x, grab_y;
     struct wlr_box grab_box;
     /* snap.c: Aero Snap and Shake during a move (Aero style). */
@@ -594,6 +597,9 @@ void xd_cursor_set(xd_server *server, const char *name);
 /* Ends a move, size or caption-button grab where it is, without acting on
  * it (the screen locks). */
 void xd_cursor_cancel_grab(xd_server *server);
+/* The button a program's move or resize request was started with (its
+ * implicit grab's), or 0 if none is down; for server->grab_button. */
+uint32_t xd_input_get_held_button(const xd_server *server);
 /* Runs argv[0] (searched in PATH) with argv. Returns the pid or -1. */
 pid_t xd_spawn_argv(char *const argv[]);
 /* posix_spawnp with these file actions (or nullptr) and environment. */
@@ -617,6 +623,12 @@ bool xd_touch_present(const xd_server *server);
 /* A program asks to move or size its window with `serial`: if that's a
  * touch's, the finger drives the move (the cursor goes to it first). */
 bool xd_touch_claim_grab(xd_server *server, struct wlr_surface *surface, uint32_t serial);
+/* The move didn't start after all: the finger is the program's again. */
+void xd_touch_revert_grab(xd_server *server);
+/* Where the program's touch `id` is (layout coordinates); false if none. */
+bool xd_touch_get_position(const xd_server *server, int32_t id, double *lx, double *ly);
+/* input.c: a drag's icon goes to lx, ly (a finger's drag follows it). */
+void xd_input_place_drag_icon(xd_server *server, double lx, double ly);
 /* Maps a touchscreen or tablet: one on a screen to its monitor (udev's
  * `output_name`, else the built-in panel, else the first), others to the
  * whole desktop; again whenever monitors change. */
@@ -630,6 +642,8 @@ void xd_tablet_init(xd_server *server);
 void xd_tablet_finish(xd_server *server);
 void xd_tablet_add(xd_server *server, struct wlr_input_device *device);
 void xd_tablet_add_pad(xd_server *server, struct wlr_input_device *device);
+/* The session was locked: pads leave the programs behind the lock. */
+void xd_tablet_lock_changed(xd_server *server);
 
 /* Alt+Tab's window driven from elsewhere (a touchpad swipe): a step to
  * the next or previous window, then the one chosen focused, or none. */

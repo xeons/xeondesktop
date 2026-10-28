@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_touch.h>
 #include <wlr/util/log.h>
 
@@ -154,9 +155,12 @@ static void handle_layout_change(struct wl_listener *listener, [[maybe_unused]] 
 
 /* ---- touch points --------------------------------------------------------------- */
 
-static touch_point *find_point(xd_touch *touch, int32_t id) {
+/* A contact is its device's: libinput numbers them across the seat, but
+ * other backends (a nested session's, the tests') number each device's
+ * from 0. */
+static touch_point *find_point(xd_touch *touch, const struct wlr_touch *device, int32_t id) {
     XD_LIST_FOR_EACH(contact, &touch->points, touch_point, link) {
-        if (contact->id == id)
+        if (contact->touch == device && contact->id == id)
             return contact;
     }
     return nullptr;
@@ -194,7 +198,7 @@ static void handle_down(struct wl_listener *listener, void *data) {
     xd_server *server = touch->server;
     const struct wlr_touch_down_event *touch_down_event = data;
     xd_idle_activity(server);
-    if (find_point(touch, touch_down_event->touch_id) != nullptr)
+    if (find_point(touch, touch_down_event->touch, touch_down_event->touch_id) != nullptr)
         return; /* a device that repeats itself */
     touch_point *contact = XD_NEW(touch_point);
     contact->id = touch_down_event->touch_id;
@@ -231,6 +235,38 @@ static void handle_down(struct wl_listener *listener, void *data) {
     xd_input_button(server, touch_down_event->time_msec, BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
 }
 
+/* A finger dragging (drag and drop it started): the drag goes to whatever
+ * is under it, as wlroots' drag grab expects the compositor to say. */
+static bool move_touch_drag(xd_server *server, const touch_point *contact, uint32_t time_msec) {
+    const struct wlr_drag *drag = server->seat->drag;
+    if (drag == nullptr || drag->grab_type != WLR_DRAG_GRAB_KEYBOARD_TOUCH ||
+        drag->touch_id != contact->id)
+        return false;
+    xd_input_target target = xd_input_target_at(server, contact->lx, contact->ly);
+    if (target.surface != nullptr) {
+        wlr_seat_touch_point_focus(server->seat, target.surface, time_msec, contact->id,
+                                   target.sx, target.sy);
+        wlr_seat_touch_notify_motion(server->seat, time_msec, contact->id, target.sx, target.sy);
+    } else {
+        wlr_seat_touch_point_clear_focus(server->seat, time_msec, contact->id);
+    }
+    xd_input_place_drag_icon(server, contact->lx, contact->ly);
+    return true;
+}
+
+bool xd_touch_get_position(const xd_server *server, int32_t id, double *lx, double *ly) {
+    if (server->touch == nullptr)
+        return false;
+    XD_LIST_FOR_EACH(contact, &server->touch->points, touch_point, link) {
+        if (contact->id == id && contact->kind == POINT_CLIENT) {
+            *lx = contact->lx;
+            *ly = contact->ly;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool window_grab(const xd_server *server) {
     return server->mode == XD_CURSOR_MOVE || server->mode == XD_CURSOR_RESIZE;
 }
@@ -240,13 +276,15 @@ static void handle_motion(struct wl_listener *listener, void *data) {
     xd_server *server = touch->server;
     const struct wlr_touch_motion_event *touch_motion_event = data;
     xd_idle_activity(server);
-    touch_point *contact = find_point(touch, touch_motion_event->touch_id);
+    touch_point *contact = find_point(touch, touch_motion_event->touch, touch_motion_event->touch_id);
     if (contact == nullptr)
         return;
     touch_position(server, touch_motion_event->touch, touch_motion_event->x, touch_motion_event->y,
                    &contact->lx, &contact->ly);
     switch (contact->kind) {
     case POINT_CLIENT:
+        if (move_touch_drag(server, contact, touch_motion_event->time_msec))
+            break;
         /* Coordinates stay relative to where the surface was when the
          * finger landed, as a pointer's implicit grab has them. */
         wlr_seat_touch_notify_motion(server->seat, touch_motion_event->time_msec,
@@ -270,7 +308,7 @@ static void handle_up(struct wl_listener *listener, void *data) {
     xd_server *server = touch->server;
     const struct wlr_touch_up_event *touch_up_event = data;
     xd_idle_activity(server);
-    touch_point *contact = find_point(touch, touch_up_event->touch_id);
+    touch_point *contact = find_point(touch, touch_up_event->touch, touch_up_event->touch_id);
     if (contact == nullptr)
         return;
     point_kind kind = contact->kind;
@@ -301,13 +339,29 @@ static void cancel_point(xd_touch *touch, touch_point *contact, uint32_t time_ms
     xd_server *server = touch->server;
     point_kind kind = contact->kind;
     int32_t id = contact->id;
+    bool grabbing = kind == POINT_POINTER || kind == POINT_GRAB;
     drop_point(contact);
     if (kind == POINT_CLIENT || kind == POINT_GRAB) {
         struct wlr_touch_point *point = wlr_seat_touch_get_point(server->seat, id);
-        if (point != nullptr && point->client != nullptr)
-            wlr_seat_touch_notify_cancel(server->seat, point->client);
+        if (point != nullptr && point->client != nullptr) {
+            /* wl_touch's cancel ends every touch the program has: its
+             * other fingers count for nothing more until they lift. */
+            struct wlr_seat_client *client = point->client;
+            XD_LIST_FOR_EACH(other, &touch->points, touch_point, link) {
+                if (other->kind != POINT_CLIENT && other->kind != POINT_GRAB)
+                    continue;
+                struct wlr_touch_point *other_point =
+                    wlr_seat_touch_get_point(server->seat, other->id);
+                if (other_point == nullptr || other_point->client != client)
+                    continue;
+                if (other->kind == POINT_GRAB)
+                    grabbing = true; /* its move or size ends too */
+                other->kind = POINT_IGNORED;
+            }
+            wlr_seat_touch_notify_cancel(server->seat, client);
+        }
     }
-    if ((kind == POINT_POINTER || kind == POINT_GRAB) && server->mode != XD_CURSOR_PASSTHROUGH)
+    if (grabbing && server->mode != XD_CURSOR_PASSTHROUGH)
         xd_cursor_cancel_grab(server);
     /* A program that had the pointer's press gets its release. */
     if (kind == POINT_POINTER && server->seat->pointer_state.button_count > 0)
@@ -317,7 +371,7 @@ static void cancel_point(xd_touch *touch, touch_point *contact, uint32_t time_ms
 static void handle_cancel(struct wl_listener *listener, void *data) {
     xd_touch *touch = XD_CONTAINER_OF(listener, xd_touch, cancel);
     const struct wlr_touch_cancel_event *touch_cancel_event = data;
-    touch_point *contact = find_point(touch, touch_cancel_event->touch_id);
+    touch_point *contact = find_point(touch, touch_cancel_event->touch, touch_cancel_event->touch_id);
     if (contact != nullptr)
         cancel_point(touch, contact, touch_cancel_event->time_msec);
 }
@@ -333,13 +387,27 @@ bool xd_touch_claim_grab(xd_server *server, struct wlr_surface *surface, uint32_
         !wlr_seat_validate_touch_grab_serial(server->seat, surface, serial, &point) ||
         point == nullptr)
         return false;
-    touch_point *contact = find_point(server->touch, point->touch_id);
-    if (contact == nullptr || contact->kind != POINT_CLIENT || pointer_held(server->touch))
+    if (pointer_held(server->touch))
         return false;
-    /* The move or size starts from the finger, and follows it. */
-    contact->kind = POINT_GRAB;
-    wlr_cursor_warp(server->cursor, nullptr, contact->lx, contact->ly);
-    return true;
+    /* The seat knows the touch by its id alone. */
+    XD_LIST_FOR_EACH(contact, &server->touch->points, touch_point, link) {
+        if (contact->id != point->touch_id || contact->kind != POINT_CLIENT)
+            continue;
+        /* The move or size starts from the finger, and follows it. */
+        contact->kind = POINT_GRAB;
+        wlr_cursor_warp(server->cursor, nullptr, contact->lx, contact->ly);
+        return true;
+    }
+    return false;
+}
+
+void xd_touch_revert_grab(xd_server *server) {
+    if (server->touch == nullptr)
+        return;
+    XD_LIST_FOR_EACH(contact, &server->touch->points, touch_point, link) {
+        if (contact->kind == POINT_GRAB)
+            contact->kind = POINT_CLIENT;
+    }
 }
 
 /* ---- devices ---------------------------------------------------------------- */

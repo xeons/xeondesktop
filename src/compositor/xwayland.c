@@ -201,6 +201,7 @@ static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *d
         return;
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
+    server->grab_button = xd_input_get_held_button(server);
     server->grab_x = server->cursor->x - view->x;
     server->grab_y = server->cursor->y - view->y;
     server->grab_press_x = server->cursor->x;
@@ -231,6 +232,7 @@ static void handle_x_resize(struct wl_listener *listener, void *data) {
         return;
     server->mode = XD_CURSOR_RESIZE;
     server->grab_view = view;
+    server->grab_button = xd_input_get_held_button(server);
     server->grab_part = part;
     server->grab_x = server->cursor->x;
     server->grab_y = server->cursor->y;

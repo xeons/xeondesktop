@@ -1079,11 +1079,18 @@ static void handle_request_move(struct wl_listener *listener, void *data) {
         return;
     /* Asked from a touch (a header bar dragged with a finger): it starts
      * where the finger is. */
-    xd_touch_claim_grab(server, view->toplevel->base->surface, xdg_toplevel_move_event->serial);
-    if (!xd_snap_begin(server, view))
+    bool touched =
+        xd_touch_claim_grab(server, view->toplevel->base->surface, xdg_toplevel_move_event->serial);
+    if (!xd_snap_begin(server, view)) {
+        /* A maximized window that doesn't move (Classic and XP): the
+         * finger goes on working the program. */
+        if (touched)
+            xd_touch_revert_grab(server);
         return;
+    }
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
+    server->grab_button = touched ? 0 : xd_input_get_held_button(server);
     server->grab_x = server->cursor->x - view->x;
     server->grab_y = server->cursor->y - view->y;
     server->grab_press_x = server->cursor->x;
@@ -1122,9 +1129,10 @@ static void handle_request_resize(struct wl_listener *listener, void *data) {
     if (server->locked || view->maximized || part == XD_PART_NONE ||
         server->mode != XD_CURSOR_PASSTHROUGH)
         return;
-    xd_touch_claim_grab(server, view->toplevel->base->surface, event->serial);
+    bool touched = xd_touch_claim_grab(server, view->toplevel->base->surface, event->serial);
     server->mode = XD_CURSOR_RESIZE;
     server->grab_view = view;
+    server->grab_button = touched ? 0 : xd_input_get_held_button(server);
     server->grab_part = part;
     server->grab_x = server->cursor->x;
     server->grab_y = server->cursor->y;
