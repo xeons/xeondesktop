@@ -1134,6 +1134,88 @@ def burn_close(s):
            "the window burnt away", timeout=10)
 
 
+def smoke_share(shot, empty, rect, step=2):
+    """The share (0..1) of rect's pixels that grey smoke has dulled: each
+    has moved from the empty desktop's colour straight toward some grey,
+    as a grey blended over it would. Orange sparks pull it toward orange
+    instead. (Needs a coloured desktop, as the classic one is.)"""
+    x0, y0, w, h = rect
+    total = grey = 0
+    for y in range(y0, y0 + h, step):
+        for x in range(x0, x0 + w, step):
+            total += 1
+            now, was = shot.pixel(x, y), empty.pixel(x, y)
+            moved = [a - b for a, b in zip(now, was)]
+            if max(abs(m) for m in moved) <= 12:
+                continue
+            red_green, green_blue = was[1] - was[0], was[2] - was[1]
+            if abs(red_green) < 20 or abs(green_blue) < 20:
+                continue
+            # How far toward a grey: the same, by either pair of channels.
+            first = (moved[0] - moved[1]) / red_green
+            second = (moved[1] - moved[2]) / green_blue
+            if 0.02 < first < 1.2 and 0.02 < second < 1.2 and \
+                    abs(first - second) < 0.3 * max(first, second):
+                grey += 1
+    return grey / max(total, 1)
+
+
+def open_run_dialog(s, empty):
+    """The Run dialog opened from the Start menu (a short window, with
+    desktop above it) and settled: its box (x, y, w, h)."""
+    s.inject("key", "ctrl+Escape", "sleep", 300, "key", "Up", "key", "Up", "key", "Up", "key",
+             "Return")
+    s.wait_window(title="Run", state="activated")
+    return s.settle("run").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+
+def burn_run_dialog(s):
+    """Burns the Run dialog away (Burn slowed to 4 s): the desktop's shot,
+    the dialog's box, and how much of the desktop above it and of its top
+    third smoke greys 0.7 s in and midway."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_run_dialog(s, empty)
+    s.log(f"the Run dialog at {(x, y, w, h)}")
+    s.check(y > 100 and h < 300, f"a short window with room above it ({y}, {h} high)")
+    # Above it, and its top third, burnt away midway (the charred band
+    # lies below that).
+    above, top = (x, y - 80, w, 75), (x, y, w, h // 3)
+    s.inject("key", "alt+F4", "sleep", 700)
+    starting = smoke_share(s.shot("starting"), empty, above)
+    time.sleep(1.1)
+    mid = s.shot("midway")
+    midway = max(smoke_share(mid, empty, above), smoke_share(mid, empty, top))
+    s.log(f"greyed: {starting:.3f} above it starting, {midway:.3f} above it or its top midway")
+    return empty, starting, midway
+
+
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\nSmoke=true\n"), fx=True)
+def burn_smoke(s):
+    """Burn with Smoke on, slowed to 4 s: as a short window (Run) burns
+    away from the top down, grey smoke rises over the desktop above its
+    old top edge, from the start and still midway; once it has burnt away
+    the desktop is clean, no puff left behind."""
+    empty, starting, midway = burn_run_dialog(s)
+    s.check(starting > 0.03, f"grey smoke rises above its old top edge ({starting:.3f})")
+    s.check(midway > 0.03, f"and still does midway ({midway:.3f})")
+    s.wait_window(title="Run", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40), tolerance=4)
+           < 0.002, "the window burnt away and its smoke gone", timeout=10)
+
+
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\n"), fx=True)
+def burn_smoke_off(s):
+    """Burn with Smoke off (as by default), slowed to 4 s: sparks, but no
+    grey smoke above a short window (Run) burning away, nor over its burnt
+    top."""
+    empty, starting, midway = burn_run_dialog(s)
+    s.check(starting < 0.005 and midway < 0.005, f"no smoke ({starting:.3f}, {midway:.3f})")
+    s.wait_window(title="Run", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40), tolerance=4)
+           < 0.002, "the window burnt away", timeout=10)
+
+
 @scenario(setup=effects_setup("[Explode]\nEnabled=true\nDuration=4000\n"), fx=True)
 def explode_close(s):
     """Explode (xd-compositor-fx), slowed to 4 s: a window closed with
@@ -1520,6 +1602,44 @@ def explode_open_output_off(s):
     time.sleep(0.8)
     s.check(s.shot("still").differs(final, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
             "and it stays as it is")
+
+
+@scenario(setup=effects_setup("[Burn]\nEnabled=true\nDuration=4000\nSmoke=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)], fx=True)  # TWO_MONITORS
+def burn_smoke_output_off(s):
+    """Burn with Smoke on, slowed to 4 s, of a window closed on the second
+    monitor, which is turned off while it burns and smokes: the burn ends
+    with nothing of it, fire or smoke, left on the first monitor, which
+    stays as it is; and the next window closed burns as before."""
+    require_opengl_effects(s)
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    empty = s.settle("desktop")
+    s.inject("move", SECOND_X + 300, 200)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    on_second = s.settle("on-second")
+    s.check(on_second.changed_box(empty, SECOND) is not None, "the window on the second monitor")
+    s.inject("key", "alt+F4", "sleep", 1000)
+    burning = s.shot("burning").changed_box(empty, SECOND)
+    s.check(burning is not None, f"it burns on the second monitor ({burning})")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-2", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the second monitor turned off ({r.stderr.strip()})")
+    s.wait_window(title="Control Panel", gone=True)
+    first = (0, 0, WIDTH, HEIGHT - 40)
+    s.wait(lambda: s.shot("first").differs(empty, first, tolerance=4) < 0.002,
+           "nothing of it on the first monitor", timeout=10)
+    time.sleep(1.5)
+    s.check(s.shot("still").differs(empty, first, tolerance=4) < 0.002, "and it stays so")
+    # Burn still works: Run, on the first monitor, burns and smokes away.
+    s.inject("move", 500, 400)
+    x, y, w, h = open_run_dialog(s, empty)
+    s.inject("key", "alt+F4", "sleep", 700)
+    smoke = smoke_share(s.shot("run-burning"), empty, (x, y - 80, w, 75))
+    s.check(smoke > 0.03, f"the next window closed burns and smokes ({smoke:.3f})")
+    s.wait(lambda: s.shot("run-gone").differs(empty, first, tolerance=4) < 0.002,
+           "and burns away", timeout=10)
 
 
 @scenario(setup=effects_setup("[Water]\nEnabled=true\n"), fx=True)

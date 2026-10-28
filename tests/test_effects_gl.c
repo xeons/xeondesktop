@@ -246,9 +246,106 @@ static void test_water_model(void) {
     xd_water_free(&water);
 }
 
+/* Burn's smoke: puffs leave the front, rise, swell and fade, all gone
+ * within their life once the fire is; the same seed gives the same
+ * smoke. */
+static void burn_run_smoke(uint64_t seed, xd_burn_particles *smoke) {
+    const xd_burn_smoke_options options = {.count = 50, .size = 8, .life = 0.7};
+    const double box[4] = {100, 100, 400, 300};
+    xd_burn_init_particles(smoke, (size_t)options.count, seed);
+    double owed = 0;
+    for (int frame = 0; frame < 30; frame++) {
+        xd_burn_step_smoke(smoke, 1.0 / 60, 0.5);
+        xd_burn_spawn_smoke(smoke, &options, XD_BURN_DOWN, xd_burn_get_front(frame / 60.0), box,
+                            1.0 / 60, &owed);
+    }
+}
+
+static void test_burn_smoke_model(void) {
+    xd_burn_particles smoke, again, other;
+    burn_run_smoke(42, &smoke);
+    burn_run_smoke(42, &again);
+    burn_run_smoke(43, &other);
+    /* Half a second at 50 / 0.7 s a second: about 35, none past room. */
+    CHECK(smoke.count > 20 && smoke.count <= 50);
+    CHECK(smoke.count == again.count &&
+          memcmp(smoke.items, again.items, smoke.count * sizeof(*smoke.items)) == 0);
+    CHECK(other.count > 0 && memcmp(smoke.items, other.items, sizeof(*smoke.items)) != 0);
+    bool near_front = true, grey = true;
+    for (size_t i = 0; i < smoke.count; i++) {
+        const xd_burn_particle *puff = &smoke.items[i];
+        /* Born along the front (from the top edge to a little past halfway
+         * down), risen a little since. */
+        near_front = near_front && puff->x > 80 && puff->x < 520 && puff->y > 0 &&
+                     puff->y < 100 + 300 * 0.6;
+        grey = grey && puff->red == puff->green && puff->green == puff->blue &&
+               puff->red > 0.2f && puff->red < 0.6f && puff->lifetime <= 0.7;
+    }
+    CHECK(near_front && grey);
+    /* Each rises, and swells as it ages; it fades in, then out. */
+    xd_burn_particles alone;
+    xd_burn_init_particles(&alone, 1, 1);
+    CHECK(xd_burn_add_particle(&alone, &smoke.items[smoke.count - 1]));
+    xd_burn_step_smoke(&alone, 0.05, 0.5);
+    CHECK(alone.count == 1 && alone.items[0].y < smoke.items[smoke.count - 1].y);
+    xd_burn_free_particles(&alone);
+    xd_burn_particle puff = {.life = 1.0, .lifetime = 1.0};
+    double radius = 0, opacity = 0;
+    xd_burn_get_puff(&puff, 8, &radius, &opacity);
+    CHECK(radius == 8 && opacity == 0);
+    puff.life = 0.5;
+    double half_radius = 0, half_opacity = 0;
+    xd_burn_get_puff(&puff, 8, &half_radius, &half_opacity);
+    CHECK(half_radius > 8 && half_radius < 24 && half_opacity > 0.4 && half_opacity <= 0.5);
+    puff.life = 0;
+    xd_burn_get_puff(&puff, 8, &radius, &opacity);
+    CHECK(radius == 24 && opacity == 0);
+    /* The fire out, the last puff is gone within its life. */
+    for (int frame = 0; frame < 42; frame++)
+        xd_burn_step_smoke(&smoke, 1.0 / 60, 0.5);
+    CHECK(smoke.count == 0);
+    /* No room, no puffs, and nothing owed for later. */
+    xd_burn_particles none;
+    xd_burn_init_particles(&none, 0, 1);
+    double owed = 0;
+    const xd_burn_smoke_options options = {.count = 100, .size = 8, .life = 0.7};
+    xd_burn_spawn_smoke(&none, &options, XD_BURN_UP, 0.5, (const double[4]){0, 0, 10, 10}, 1,
+                        &owed);
+    CHECK(none.count == 0 && owed == 0);
+    xd_burn_free_particles(&none);
+    xd_burn_free_particles(&smoke);
+    xd_burn_free_particles(&again);
+    xd_burn_free_particles(&other);
+
+    /* Its options: off by default as Compiz's, and clamped to the page's
+     * ranges; what can't be read keeps the default. */
+    xd_effects_settings *settings = xd_effects_create_settings();
+    size_t burn = 0;
+    CHECK(xd_effects_find(settings, "Burn", &burn));
+    CHECK(!xd_effects_get_bool(settings, burn, "Smoke"));
+    CHECK(xd_effects_get_int(settings, burn, "SmokeCount") == 100);
+    CHECK(xd_effects_get_double(settings, burn, "SmokeSize") == 10.0);
+    g_autofree char *dir = g_dir_make_tmp("xd-smoke-XXXXXX", nullptr);
+    g_autofree char *path = g_build_filename(dir, "effects.ini", nullptr);
+    CHECK(g_file_set_contents(path, "[Burn]\nSmoke=true\nSmokeCount=99999\nSmokeSize=-3\n", -1,
+                              nullptr));
+    xd_effects_load_file(settings, path);
+    CHECK(xd_effects_get_bool(settings, burn, "Smoke"));
+    CHECK(xd_effects_get_int(settings, burn, "SmokeCount") == 1000);
+    CHECK(xd_effects_get_double(settings, burn, "SmokeSize") == 1.0);
+    CHECK(g_file_set_contents(path, "[Burn]\nSmoke=perhaps\nSmokeCount=lots\n", -1, nullptr));
+    xd_effects_load_file(settings, path);
+    CHECK(!xd_effects_get_bool(settings, burn, "Smoke"));
+    CHECK(xd_effects_get_int(settings, burn, "SmokeCount") == 100);
+    g_remove(path);
+    g_rmdir(dir);
+    xd_effects_destroy_settings(settings);
+}
+
 static void test_effects_gl(void) {
     test_magic_lamp_model();
     test_burn_model();
+    test_burn_smoke_model();
     test_explode_model();
     test_water_model();
 }

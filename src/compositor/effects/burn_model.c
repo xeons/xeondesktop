@@ -15,6 +15,13 @@ static constexpr double RAGGED_REACH = 0.04;
 static constexpr double FRONT_MARGIN = RAGGED_REACH + 0.01;
 /* Fire rises: layout units a second, each second. */
 static constexpr double RISE = 60.0;
+/* Smoke rises more gently, and slows half as fast as the sparks (as
+ * Compiz's did). */
+static constexpr double SMOKE_RISE = 40.0;
+/* A puff swells to this many times its first radius, and fades in over
+ * this share of its life. */
+static constexpr double SMOKE_GROWTH = 3.0;
+static constexpr double SMOKE_FADE_IN = 0.15;
 
 double xd_burn_get_edge(void) {
     return CHAR_EDGE;
@@ -117,7 +124,10 @@ bool xd_burn_add_particle(xd_burn_particles *particles, const xd_burn_particle *
     return true;
 }
 
-void xd_burn_step_particles(xd_burn_particles *particles, double seconds, double slowdown) {
+/* Sparks and puffs alike: each ages and moves, rising by `rise` layout
+ * units a second each second and slowing by `slowdown` a second. */
+static void burn_step(xd_burn_particles *particles, double seconds, double slowdown,
+                      double rise) {
     double keep = exp(-slowdown * seconds);
     size_t kept = 0;
     for (size_t i = 0; i < particles->count; i++) {
@@ -128,8 +138,59 @@ void xd_burn_step_particles(xd_burn_particles *particles, double seconds, double
         particle.x += particle.speed_x * seconds;
         particle.y += particle.speed_y * seconds;
         particle.speed_x *= keep;
-        particle.speed_y = particle.speed_y * keep - RISE * seconds;
+        particle.speed_y = particle.speed_y * keep - rise * seconds;
         particles->items[kept++] = particle;
     }
     particles->count = kept;
+}
+
+void xd_burn_step_particles(xd_burn_particles *particles, double seconds, double slowdown) {
+    burn_step(particles, seconds, slowdown, RISE);
+}
+
+/* ---- smoke ---------------------------------------------------------------------- */
+
+void xd_burn_spawn_smoke(xd_burn_particles *smoke, const xd_burn_smoke_options *options,
+                         xd_burn_direction direction, double front, const double box[4],
+                         double seconds, double *owed) {
+    double life = options->life > 0 ? options->life : 0.1;
+    /* Enough a second to keep about `count` alight. */
+    *owed += (double)XD_MAX(options->count, 0) / life * seconds;
+    /* From just behind the front, where the window has already burnt. */
+    double from = front - CHAR_EDGE * 0.4;
+    while (*owed >= 1) {
+        *owed -= 1;
+        uint64_t *seed = &smoke->seed;
+        double across = 0, down = 0;
+        xd_burn_get_front_point(direction, from, xd_burn_get_random(seed), &across, &down);
+        float grey = (float)(0.25 + 0.25 * xd_burn_get_random(seed));
+        xd_burn_particle puff = {
+            .x = box[0] + across * box[2] + (xd_burn_get_random(seed) - 0.5) * 16,
+            .y = box[1] + down * box[3] + (xd_burn_get_random(seed) - 0.5) * 16,
+            .speed_x = (xd_burn_get_random(seed) - 0.5) * 30,
+            .speed_y = -40 - xd_burn_get_random(seed) * 50,
+            .lifetime = life * (0.6 + 0.4 * xd_burn_get_random(seed)),
+            .red = grey,
+            .green = grey,
+            .blue = grey,
+        };
+        puff.life = puff.lifetime;
+        if (!xd_burn_add_particle(smoke, &puff)) {
+            *owed = 0;
+            break;
+        }
+    }
+}
+
+void xd_burn_step_smoke(xd_burn_particles *smoke, double seconds, double slowdown) {
+    burn_step(smoke, seconds, slowdown * 0.5, SMOKE_RISE);
+}
+
+void xd_burn_get_puff(const xd_burn_particle *puff, double size, double *radius,
+                      double *opacity) {
+    double age = puff->lifetime > 0 ? 1 - puff->life / puff->lifetime : 1;
+    age = age < 0 ? 0 : age > 1 ? 1 : age;
+    *radius = size * (1 + (SMOKE_GROWTH - 1) * age);
+    double fading_in = age < SMOKE_FADE_IN ? age / SMOKE_FADE_IN : 1;
+    *opacity = fading_in * (1 - age);
 }

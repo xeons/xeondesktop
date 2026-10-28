@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Burn: a closing window burns away, a flame front crossing it and
- * giving off sparks (src/compositor/effects/burn.c). Compiz's Animation
- * plugin's Burn, with its fire options. It's also a choice in each of
- * Animations' events, as in CCSM (opening and restoring burn backwards:
+ * giving off sparks and, if asked, smoke (src/compositor/effects/burn.c).
+ * Compiz's Burn, with its fire and smoke options. It's also a choice in
+ * each of Animations' events, as in CCSM (opening and restoring burn backwards:
  * the window comes out of the fire), drawn while this page is on.
  */
 #include "../effects.h"
@@ -91,6 +91,39 @@ static const xd_effect_option options[] = {
         .step = 0.1,
         .digits = 1,
         .default_value = "0.5",
+    },
+    {
+        .key = "Smoke",
+        .label = "Smoke",
+        .description = "Grey smoke rises from the flames and drifts away. Windows burning "
+                       "backwards, as they open or are restored, give off none.",
+        .group = "Smoke",
+        .type = XD_EFFECT_OPTION_BOOL,
+        .default_value = "false",
+    },
+    {
+        .key = "SmokeCount",
+        .label = "Number of smoke particles",
+        .description = "How thick the smoke is. Fewer are faster.",
+        .group = "Smoke",
+        .type = XD_EFFECT_OPTION_INT,
+        .min = 10,
+        .max = 1000,
+        .step = 10,
+        .default_value = "100",
+    },
+    {
+        .key = "SmokeSize",
+        .label = "Smoke particle size",
+        .description = "How big a puff of smoke is when it leaves the flames; it swells "
+                       "to three times that. Puffs last as long as sparks do.",
+        .group = "Smoke",
+        .type = XD_EFFECT_OPTION_DOUBLE,
+        .min = 1.0,
+        .max = 20.0,
+        .step = 0.5,
+        .digits = 1,
+        .default_value = "10.0",
     },
     {
         .key = "Closing",
