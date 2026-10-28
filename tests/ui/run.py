@@ -1045,6 +1045,27 @@ def row_span(shot, empty, y, left=0, right=WIDTH):
     return xs[-1] - xs[0] + 1 if xs else 0
 
 
+def first_changed_row(shot, empty, x, y, w, h):
+    """The first row of the box (x, y, w, h), from the top, with a part
+    that differs from the empty desktop, or None."""
+    return next((row for row in range(y, y + h) if row_span(shot, empty, row, x, x + w)), None)
+
+
+def lamp_midway_spans(s, empty, box):
+    """Magic Lamp's shape midway: how wide the minimizing window is a
+    little below its top, as it is in the shot (on a slow machine the shot
+    comes later, when the top has begun to slide), and near the taskbar."""
+    x, y, w, h = box
+    mid = s.shot("midway")
+    top_row = first_changed_row(mid, empty, x, y, w, h)
+    s.check(top_row is not None, f"midway the window shows (box {box})")
+    top = row_span(mid, empty, top_row + 20)
+    bottom = row_span(mid, empty, y + h - 10)
+    s.log(f"midway: from row {top_row}, {top} px wide near its top, {bottom} near the taskbar "
+          f"(was {w}, from row {y})")
+    return top, bottom
+
+
 def open_control_panel(s, empty):
     """Control Panel opened and settled: its box (x, y, w, h)."""
     s.launch("xd-control")
@@ -1062,10 +1083,7 @@ def magic_lamp_minimize(s):
     empty = s.settle("desktop")
     x, y, w, h = open_control_panel(s, empty)
     s.inject("key", "super+Down", "sleep", 1600)
-    mid = s.shot("midway")
-    top = row_span(mid, empty, y + 30)
-    bottom = row_span(mid, empty, y + h - 10)
-    s.log(f"midway: {top} px wide at its top, {bottom} near the taskbar (was {w})")
+    top, bottom = lamp_midway_spans(s, empty, (x, y, w, h))
     s.check(top > w * 0.8, f"midway its top is still about as wide ({top} of {w})")
     s.check(0 < bottom < top * 0.75, f"near the taskbar it's narrower ({bottom} < {top})")
     s.wait_window(title="Control Panel", state="minimized")
@@ -1089,10 +1107,7 @@ def magic_lamp_over_animations(s):
     empty = s.settle("desktop")
     x, y, w, h = open_control_panel(s, empty)
     s.inject("key", "super+Down", "sleep", 1600)
-    mid = s.shot("midway")
-    top = row_span(mid, empty, y + 30)
-    bottom = row_span(mid, empty, y + h - 10)
-    s.log(f"midway: {top} px wide at its top, {bottom} near the taskbar (was {w})")
+    top, bottom = lamp_midway_spans(s, empty, (x, y, w, h))
     s.check(top > w * 0.8, f"midway its top is still about as wide ({top} of {w})")
     s.check(0 < bottom < top * 0.75,
             f"near the taskbar it's narrower, no fading copy over it ({bottom} < {top})")
@@ -6249,7 +6264,7 @@ def network_status(s):
         # Where the icon is: it changes while NetworkManager says it's
         # offline, and back.
         s.inject("move", 300, 300)
-        before = s.settle("desktop")
+        before = settle_shell_desktop(s)
         mock.SetGlobalConnectionState(dbus.UInt32(20))
         _, box = wait_change(s, before, TRAY, "the network icon to go offline", "offline")
         x, y = box[0] + box[2] // 2, box[1] + box[3] // 2
@@ -6744,7 +6759,7 @@ def volume_keys(s):
         return
     subprocess.run(["pactl", "set-sink-volume", "test-sink", "50%"], timeout=10, check=True)
     s.inject("move", 300, 300)
-    before = s.settle("desktop")
+    before = settle_shell_desktop(s)
     # Where the icon is: it changes when muted, and back.
     subprocess.run(["pactl", "set-sink-mute", "test-sink", "1"], timeout=10, check=True)
     _, box = wait_change(s, before, TRAY, "the volume icon to show Mute", "muted")
@@ -7679,7 +7694,7 @@ def vbox_dnd_setup(s):
     """A scripted VirtualBox host for xd-vboxdnd (the compositor starts it
     with $XD_VBOXDND_FAKE), dropping into a scratch TMPDIR."""
     s.vbox_go = os.path.join(s.base, "vbox-go")
-    script = os.path.join(s.base, "vbox.script")
+    script = os.path.join(s.base, "shots", "vbox.script")  # its log kept with --keep
     with open(script, "w") as f:
         f.write(VBOX_SCRIPT.format(go=s.vbox_go))
     s.vbox_log = script + ".log"
@@ -7735,7 +7750,7 @@ def vbox_out_setup(s):
     """A scripted VirtualBox host that, once told, asks whether a guest
     drag is going on, then takes it as dropped on the host."""
     s.vbox_go = os.path.join(s.base, "vbox-go")
-    script = os.path.join(s.base, "vbox-out.script")
+    script = os.path.join(s.base, "shots", "vbox-out.script")  # its log kept with --keep
     with open(script, "w") as f:
         f.write(VBOX_OUT_SCRIPT.format(go=s.vbox_go))
     s.vbox_log = script + ".log"
@@ -7795,7 +7810,7 @@ wait 60000
 def vbox_stall_setup(s):
     """A scripted VirtualBox host whose drag enters, then goes quiet."""
     s.vbox_go = os.path.join(s.base, "vbox-go")
-    script = os.path.join(s.base, "vbox-stall.script")
+    script = os.path.join(s.base, "shots", "vbox-stall.script")  # its log kept with --keep
     with open(script, "w") as f:
         f.write(VBOX_STALL_SCRIPT.format(go=s.vbox_go))
     os.environ["XD_VBOXDND_FAKE"] = script
@@ -9878,7 +9893,10 @@ def msconfig_startup(s):
     s.inject("key", "alt+s", "sleep", 300, "move", check_x, row2, "click", "sleep", 300,
              "key", "alt+a")  # fmt: skip
     s.wait(lambda: not sync_enabled(), "Syncthing to be disabled")
-    s.check("syncthing.service" in (read(remembered) or ""), "the disabled service is remembered")
+    # Remembered once the user manager has answered: a moment after.
+    s.wait(lambda: "syncthing.service" in (read(remembered) or ""),
+           "the disabled service to be remembered")
+    s.log("ok: the disabled service is remembered")
     s.check(len(manager.GetUnitFileLinks("pipewire.service", False)) == 1,
             "PipeWire (every user's) was left alone")  # fmt: skip
 
