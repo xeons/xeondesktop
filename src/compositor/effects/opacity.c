@@ -1,41 +1,48 @@
 /* SPDX-License-Identifier: MIT
- * Window Opacity (both builds): Compiz's Opacity, Brightness and
- * Saturation, the opacity part. Each window's buffers are drawn at the
- * opacity of the first rule it matches (or opaque), as Alt and the wheel
- * over it last set, and inactive windows no more than the inactive
- * opacity when they're dimmed.
+ * Window Opacity: Compiz's Opacity, Brightness and Saturation. Each
+ * window has an opacity, a brightness and a saturation: the first rule's
+ * it matches for each (or unchanged), as the bindings over it last set
+ * them, and inactive windows no more than the inactive opacity and
+ * brightness when they're dimmed.
  *
  * The scene graph has an opacity per buffer, in wlroots and SceneFX
- * alike, but no brightness or saturation, so those aren't offered. The
- * opacities are set again before each frame (unchanged ones cost
- * nothing), which also puts them back after Aero Peek or an OpenGL effect
- * set their own; Aero Peek's are left alone while it shows.
+ * alike, but no brightness or saturation: those are xd-compositor-fx's
+ * alone, which draws a window whose colours change with OpenGL (glfx.h's
+ * xd_glfx_set_window_color), its picture taking the opacity in place of
+ * its buffers. The values are set again before each frame (unchanged
+ * ones cost nothing), which also puts them back after Aero Peek or an
+ * OpenGL effect set their own; Aero Peek's are left alone while it shows.
  */
 
 #include "../../core/alloc.h"
 #include "effects.h"
+#include "opacity_model.h"
+#ifdef XD_SCENEFX
+#include "glfx.h"
+#endif
 
-enum { OPACITY_RULES = 3 };
-/* Alt and the wheel go no lower, so a window can't vanish. */
-static constexpr float LOWEST_OPACITY = 0.05f;
-
-typedef struct opacity_rule {
-    char windows[512]; /* "" is no rule */
-    float opacity;
-} opacity_rule;
+/* Brightness and saturation are drawn with OpenGL, by xd-compositor-fx. */
+#ifdef XD_SCENEFX
+static constexpr size_t PROPERTIES = XD_OPACITY_PROPERTY_COUNT;
+#else
+static constexpr size_t PROPERTIES = XD_OPACITY_PROPERTY_OPACITY + 1;
+#endif
 
 typedef struct opacity_options {
-    float step;
-    xd_effect_binding increase, decrease;
+    float steps[XD_OPACITY_PROPERTY_COUNT];
+    xd_effect_binding increase[XD_OPACITY_PROPERTY_COUNT];
+    xd_effect_binding decrease[XD_OPACITY_PROPERTY_COUNT];
     bool dim_inactive;
-    float inactive;
-    opacity_rule rules[OPACITY_RULES];
+    /* What dimming lowers inactive windows to, per property. */
+    float inactive[XD_OPACITY_PROPERTY_COUNT];
+    xd_opacity_rule rules[XD_OPACITY_PROPERTY_COUNT][XD_OPACITY_RULES];
 } opacity_options;
 
-/* A window whose opacity Alt and the wheel set. */
+/* A window whose values the bindings set. */
 typedef struct opacity_window {
     xd_view *view;
-    float opacity;
+    float values[XD_OPACITY_PROPERTY_COUNT];
+    bool set[XD_OPACITY_PROPERTY_COUNT];
 } opacity_window;
 
 typedef struct opacity_state {
@@ -53,18 +60,14 @@ static opacity_window *opacity_find_window(opacity_state *state, const xd_view *
     return nullptr;
 }
 
-/* The opacity a window has before dimming: Alt and the wheel's, else its
- * rule's. */
-static float opacity_get_base(opacity_state *state, const xd_view *view) {
+/* A value before dimming: the bindings', else its rule's. */
+static float opacity_get_base(opacity_state *state, const xd_view *view,
+                              xd_opacity_property property) {
     const opacity_window *window = opacity_find_window(state, view);
-    if (window != nullptr)
-        return window->opacity;
-    for (size_t i = 0; i < OPACITY_RULES; i++) {
-        const opacity_rule *rule = &state->options.rules[i];
-        if (rule->windows[0] != '\0' && xd_effects_match_view(rule->windows, view))
-            return rule->opacity;
-    }
-    return 1.0f;
+    if (window != nullptr && window->set[property])
+        return window->values[property];
+    return xd_opacity_choose_rule(state->options.rules[property], XD_OPACITY_RULES,
+                                  xd_view_app_id(view), xd_view_title(view), view->dialog);
 }
 
 static void opacity_set_buffer(struct wlr_scene_buffer *buffer, [[maybe_unused]] int sx,
@@ -72,26 +75,38 @@ static void opacity_set_buffer(struct wlr_scene_buffer *buffer, [[maybe_unused]]
     wlr_scene_buffer_set_opacity(buffer, *(const float *)data);
 }
 
-static void opacity_apply(opacity_state *state, float (*choose)(opacity_state *, xd_view *)) {
+static void opacity_choose(opacity_state *state, xd_view *view,
+                           float values[XD_OPACITY_PROPERTY_COUNT]) {
+    bool dimmed = state->options.dim_inactive && xd_view_focused(state->server) != view;
+    for (size_t property = 0; property < XD_OPACITY_PROPERTY_COUNT; property++) {
+        values[property] = 1.0f;
+        if (property >= PROPERTIES)
+            continue;
+        values[property] = opacity_get_base(state, view, (xd_opacity_property)property);
+        if (dimmed)
+            values[property] = XD_MIN(values[property], state->options.inactive[property]);
+    }
+}
+
+/* Every window as the options say, or (`plain`) as itself. */
+static void opacity_apply(opacity_state *state, bool plain) {
     xd_server *server = state->server;
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         if (!view->mapped)
             continue;
-        float opacity = choose(state, view);
-        wlr_scene_node_for_each_buffer(&view->tree->node, opacity_set_buffer, &opacity);
+        float values[XD_OPACITY_PROPERTY_COUNT] = {1.0f, 1.0f, 1.0f};
+        if (!plain)
+            opacity_choose(state, view, values);
+#ifdef XD_SCENEFX
+        /* Drawn by glfx, which gives its picture the opacity. */
+        if (xd_glfx_set_window_color(view, values[XD_OPACITY_PROPERTY_OPACITY],
+                                     values[XD_OPACITY_PROPERTY_BRIGHTNESS],
+                                     values[XD_OPACITY_PROPERTY_SATURATION]))
+            continue;
+#endif
+        wlr_scene_node_for_each_buffer(&view->tree->node, opacity_set_buffer,
+                                       &values[XD_OPACITY_PROPERTY_OPACITY]);
     }
-}
-
-static float opacity_choose(opacity_state *state, xd_view *view) {
-    float opacity = opacity_get_base(state, view);
-    if (state->options.dim_inactive && xd_view_focused(state->server) != view)
-        opacity = XD_MIN(opacity, state->options.inactive);
-    return opacity;
-}
-
-static float opacity_choose_opaque([[maybe_unused]] opacity_state *state,
-                                   [[maybe_unused]] xd_view *view) {
-    return 1.0f;
 }
 
 static void opacity_handle_frame(xd_server *server, void *data,
@@ -99,16 +114,28 @@ static void opacity_handle_frame(xd_server *server, void *data,
                                  [[maybe_unused]] double now) {
     opacity_state *state = data;
     if (!server->peeking)
-        opacity_apply(state, opacity_choose);
+        opacity_apply(state, false);
+}
+
+/* The property whose binding the input is, and which way. */
+static bool opacity_find_binding(const opacity_options *options, const xd_effect_input *input,
+                                 xd_opacity_property *property, bool *more) {
+    for (size_t i = 0; i < PROPERTIES; i++) {
+        *property = (xd_opacity_property)i;
+        *more = xd_effects_binding_matches(&options->increase[i], input);
+        if (*more || xd_effects_binding_matches(&options->decrease[i], input))
+            return true;
+    }
+    return false;
 }
 
 static bool opacity_handle_input(xd_server *server, void *data, const xd_effect_input *input) {
     opacity_state *state = data;
     if (input->kind != XD_EFFECT_INPUT_AXIS && input->kind != XD_EFFECT_INPUT_BUTTON)
         return false;
-    bool more = xd_effects_binding_matches(&state->options.increase, input);
-    bool less = !more && xd_effects_binding_matches(&state->options.decrease, input);
-    if (!more && !less)
+    xd_opacity_property property = XD_OPACITY_PROPERTY_OPACITY;
+    bool more = false;
+    if (!opacity_find_binding(&state->options, input, &property, &more))
         return false;
     xd_view *view = xd_input_target_at(server, input->x, input->y).view;
     if (view == nullptr)
@@ -121,11 +148,16 @@ static bool opacity_handle_input(xd_server *server, void *data, const xd_effect_
                                               sizeof(*state->windows));
         }
         window = &state->windows[state->window_count++];
-        *window = (opacity_window){view, opacity_get_base(state, view)};
+        *window = (opacity_window){.view = view};
     }
-    float step = (more ? state->options.step : -state->options.step) *
-                 (float)(input->kind == XD_EFFECT_INPUT_AXIS ? input->steps : 1);
-    window->opacity = XD_CLAMP(window->opacity + step, LOWEST_OPACITY, 1.0f);
+    if (!window->set[property]) {
+        window->values[property] = opacity_get_base(state, view, property);
+        window->set[property] = true;
+    }
+    float step = more ? state->options.steps[property] : -state->options.steps[property];
+    int steps = input->kind == XD_EFFECT_INPUT_AXIS ? input->steps : 1;
+    window->values[property] =
+        xd_opacity_step_value(property, window->values[property], step, steps);
     xd_effects_schedule_frames(server);
     return true;
 }
@@ -148,8 +180,17 @@ static void *opacity_enable(xd_server *server) {
 
 static void opacity_disable([[maybe_unused]] xd_server *server, void *data) {
     opacity_state *state = data;
+#ifdef XD_SCENEFX
+    /* Aero Peek's opacities stay while it shows, but no window is drawn
+     * by glfx any more. */
+    if (server->peeking) {
+        XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+            xd_glfx_set_window_color(view, 1.0f, 1.0f, 1.0f);
+        }
+    }
+#endif
     if (!server->peeking)
-        opacity_apply(state, opacity_choose_opaque);
+        opacity_apply(state, true);
     xd_effects_schedule_frames(server);
     xd_free(state->windows);
     xd_free(state);
@@ -165,19 +206,41 @@ static void opacity_configure(xd_server *server, void *data, const xd_effects_se
                               size_t effect) {
     opacity_state *state = data;
     opacity_options *options = &state->options;
-    options->step = opacity_get_percent(settings, effect, "Step");
-    xd_effects_get_binding(settings, effect, "IncreaseButton", &options->increase);
-    xd_effects_get_binding(settings, effect, "DecreaseButton", &options->decrease);
-    options->dim_inactive = xd_effects_get_bool(settings, effect, "DimInactive");
-    options->inactive = opacity_get_percent(settings, effect, "InactiveOpacity");
-    for (size_t i = 0; i < OPACITY_RULES; i++) {
-        char key[32];
-        snprintf(key, sizeof(key), "Rule%zuWindows", i + 1);
-        snprintf(options->rules[i].windows, sizeof(options->rules[i].windows), "%s",
-                 xd_effects_get_text(settings, effect, key));
-        snprintf(key, sizeof(key), "Rule%zuOpacity", i + 1);
-        options->rules[i].opacity = opacity_get_percent(settings, effect, key);
+    /* Each property's keys: the opacity ones are the older, plainer names. */
+    static const struct {
+        const char *step, *increase, *decrease, *rule_prefix, *rule_value;
+    } keys[XD_OPACITY_PROPERTY_COUNT] = {
+        [XD_OPACITY_PROPERTY_OPACITY] = {"Step", "IncreaseButton", "DecreaseButton", "",
+                                         "Opacity"},
+        [XD_OPACITY_PROPERTY_BRIGHTNESS] = {"BrightnessStep", "BrightnessIncreaseButton",
+                                            "BrightnessDecreaseButton", "Brightness", "Value"},
+        [XD_OPACITY_PROPERTY_SATURATION] = {"SaturationStep", "SaturationIncreaseButton",
+                                            "SaturationDecreaseButton", "Saturation", "Value"},
+    };
+    for (size_t property = 0; property < XD_OPACITY_PROPERTY_COUNT; property++) {
+        options->steps[property] = opacity_get_percent(settings, effect, keys[property].step);
+        xd_effects_get_binding(settings, effect, keys[property].increase,
+                               &options->increase[property]);
+        xd_effects_get_binding(settings, effect, keys[property].decrease,
+                               &options->decrease[property]);
+        for (size_t i = 0; i < XD_OPACITY_RULES; i++) {
+            xd_opacity_rule *rule = &options->rules[property][i];
+            char key[64];
+            snprintf(key, sizeof(key), "%sRule%zuWindows", keys[property].rule_prefix, i + 1);
+            snprintf(rule->windows, sizeof(rule->windows), "%s",
+                     xd_effects_get_text(settings, effect, key));
+            snprintf(key, sizeof(key), "%sRule%zu%s", keys[property].rule_prefix, i + 1,
+                     keys[property].rule_value);
+            rule->value = opacity_get_percent(settings, effect, key);
+        }
     }
+    options->dim_inactive = xd_effects_get_bool(settings, effect, "DimInactive");
+    options->inactive[XD_OPACITY_PROPERTY_OPACITY] =
+        opacity_get_percent(settings, effect, "InactiveOpacity");
+    options->inactive[XD_OPACITY_PROPERTY_BRIGHTNESS] =
+        opacity_get_percent(settings, effect, "InactiveBrightness");
+    /* Dimming leaves the saturation alone. */
+    options->inactive[XD_OPACITY_PROPERTY_SATURATION] = 1.0f;
     xd_effects_schedule_frames(server);
 }
 

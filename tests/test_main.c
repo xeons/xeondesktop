@@ -12187,6 +12187,8 @@ static void test_wobbly_model(void) {
 #include "test_effects_events.c"
 /* The scene-graph Desktop Effects' maths. */
 #include "test_effects_scene.c"
+/* Window Opacity: opacity, brightness and saturation. */
+#include "test_effects_opacity.c"
 
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
@@ -12313,6 +12315,7 @@ int main(void) {
     test_effects_addon();
     test_effects_events();
     test_effects_scene();
+    test_effects_opacity();
     test_desktops();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

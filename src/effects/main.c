@@ -242,13 +242,21 @@ static void panel_on_use_toggled(GtkToggleButton *check, gpointer data) {
 
 /* ---- option editors ------------------------------------------------------------- */
 
-static void panel_update_reset(option_row *row) {
-    gtk_widget_set_sensitive(row->reset,
-                             !xd_effects_is_default(row->app->settings, row->effect, row->option));
-}
-
 static const xd_effect_option *panel_get_option(const option_row *row) {
     return &xd_effects_get_info(row->app->settings, row->effect)->options[row->option];
+}
+
+/* An option drawn with OpenGL in an effect that isn't (Window Opacity's
+ * brightness) can't be used without it. */
+static bool panel_is_option_available(const option_row *row) {
+    return !panel_get_option(row)->needs_opengl || row->app->support.opengl;
+}
+
+static void panel_update_reset(option_row *row) {
+    gtk_widget_set_sensitive(row->reset,
+                             panel_is_option_available(row) &&
+                                 !xd_effects_is_default(row->app->settings, row->effect,
+                                                        row->option));
 }
 
 /* Whether a choice can be used now (its effect is on and drawable). */
@@ -736,23 +744,49 @@ static GtkWidget *panel_build_tab(panel *app, size_t effect, const char *group) 
     /* Back and "Use this effect" have theirs. */
     char used[64] = "bu";
     int line = 0;
+    /* Options drawn with OpenGL in an effect that isn't: a note says so
+     * (and why they're greyed out without it), and when not every option
+     * on the tab is, marks theirs. */
+    size_t options = 0, opengl_options = 0;
+    for (size_t option = 0; option < info->option_count; option++) {
+        const xd_effect_option *opt = &info->options[option];
+        if (strcmp(xd_effects_get_option_group(opt), group) == 0) {
+            options++;
+            opengl_options += opt->needs_opengl ? 1 : 0;
+        }
+    }
+    bool mark_opengl = opengl_options > 0 && opengl_options < options;
+    if (opengl_options > 0) {
+        const char *what = mark_opengl ? "Options marked (OpenGL) are drawn with OpenGL."
+                                       : "These options are drawn with OpenGL.";
+        g_autofree char *text =
+            app->support.opengl ? g_strdup(what)
+                                : g_strdup_printf("%s %s", what, panel_get_unavailable_reason(app));
+        GtkWidget *note = panel_new_label(text, 0);
+        gtk_label_set_max_width_chars(GTK_LABEL(note), 60);
+        gtk_grid_attach(GTK_GRID(grid), note, 0, line++, 3, 1);
+    }
     for (size_t option = 0; option < info->option_count; option++) {
         const xd_effect_option *opt = &info->options[option];
         if (strcmp(xd_effects_get_option_group(opt), group) != 0)
             continue;
         option_row *row = &app->rows[app->row_count++];
         *row = (option_row){.app = app, .effect = effect, .option = option};
+        const char *suffix = mark_opengl && opt->needs_opengl ? " (OpenGL)" : "";
         g_autofree char *text = opt->type == XD_EFFECT_OPTION_BOOL
-                                    ? g_strdup(opt->label)
-                                    : g_strdup_printf("%s:", opt->label);
+                                    ? g_strdup_printf("%s%s", opt->label, suffix)
+                                    : g_strdup_printf("%s%s:", opt->label, suffix);
         g_autofree char *mnemonic = panel_add_access_key(text, used);
         GtkWidget *editor = panel_new_editor(row, mnemonic);
+        bool available = panel_is_option_available(row);
+        gtk_widget_set_sensitive(editor, available);
         if (opt->type == XD_EFFECT_OPTION_BOOL) {
             gtk_grid_attach(GTK_GRID(grid), editor, 0, line, 2, 1);
         } else {
             GtkWidget *label = gtk_label_new_with_mnemonic(mnemonic);
             gtk_label_set_xalign(GTK_LABEL(label), 0);
             gtk_label_set_mnemonic_widget(GTK_LABEL(label), row->editor);
+            gtk_widget_set_sensitive(label, available);
             gtk_grid_attach(GTK_GRID(grid), label, 0, line, 1, 1);
             gtk_widget_set_hexpand(editor, TRUE);
             gtk_grid_attach(GTK_GRID(grid), editor, 1, line, 1, 1);

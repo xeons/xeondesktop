@@ -345,8 +345,8 @@ static struct wlr_swapchain *glfx_create_chain(xd_server *server, int width, int
 
 /* A swapchain of buffers at least width x height, whole steps across and
  * down, made anew when it's too small or far too big. */
-static bool glfx_ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width,
-                              int height, int step) {
+bool glfx_ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width, int height,
+                       int step) {
     struct wlr_swapchain *current = *chain;
     if (current != nullptr) {
         if (current->width >= width && current->height >= height &&
@@ -429,9 +429,10 @@ static struct wlr_texture *glfx_get_frame_texture(xd_window_effect *effect,
 
 /* Draws the window's buffers (frame, surfaces, subsurfaces, popups) into
  * effect->texture. */
-static bool glfx_capture_window(xd_window_effect *effect) {
+bool glfx_capture_window(xd_window_effect *effect) {
     xd_view *view = effect->view;
     xd_server *server = view->server;
+    glfx_color_prepare_capture(effect);
     capture_list list = {.skip = effect->node, .view = view};
     wlr_scene_node_for_each_buffer(&view->tree->node, glfx_collect_buffer, &list);
     if (list.count == 0) {
@@ -553,10 +554,11 @@ static bool glfx_capture_window(xd_window_effect *effect) {
         .v_scale = (float)height_px / (float)target->height,
         .box = {left, top, right - left, bottom - top},
     };
+    glfx_color_adjust_capture(effect);
     return true;
 }
 
-static void glfx_release_capture(xd_window_effect *effect) {
+void glfx_release_capture(xd_window_effect *effect) {
     if (effect->capture_texture != nullptr)
         wlr_texture_destroy(effect->capture_texture);
     if (effect->capture_buffer != nullptr)
@@ -692,6 +694,7 @@ void xd_glfx_forget_view(xd_view *view) {
     xd_window_effect *effect = nullptr;
     while ((effect = glfx_find_live_window(view)) != nullptr)
         xd_glfx_end_window(effect);
+    glfx_color_forget_view(view);
 }
 
 void xd_glfx_drop_view(xd_view *view) {
@@ -880,8 +883,10 @@ void xd_glfx_frame(xd_server *server, xd_output *output, double now) {
     if (!wl_list_empty(&glfx->filters))
         glfx_update_filters(glfx, now);
     glfx_lock_scanout(output, !wl_list_empty(&glfx->windows) || glfx_has_active_filters(glfx));
-    if (wl_list_empty(&glfx->windows))
+    if (wl_list_empty(&glfx->windows)) {
+        glfx_color_frame(server);
         return;
+    }
     /* Another output's frame of the same moment: drawn already. The
      * windows are hidden again, though: Window Opacity's frame hook has
      * just set their opacity anew. */
@@ -891,6 +896,7 @@ void xd_glfx_frame(xd_server *server, xd_output *output, double now) {
             if (!effect->held && effect->begun && effect->view->mapped)
                 glfx_hide_window(effect);
         }
+        glfx_color_frame(server);
         return;
     }
     glfx->last_frame = now;
@@ -898,6 +904,9 @@ void xd_glfx_frame(xd_server *server, xd_output *output, double now) {
     wl_list_for_each_safe(effect, next, &glfx->windows, link) {
         glfx_draw_window_effect(glfx, effect, now);
     }
+    /* After them: a window whose effect has just ended is drawn with its
+     * colours this frame. */
+    glfx_color_frame(server);
 }
 
 void xd_glfx_frame_done(xd_server *server, [[maybe_unused]] xd_output *output) {
@@ -1239,6 +1248,7 @@ void xd_glfx_finish(xd_server *server) {
         xd_glfx_remove_output_filter(filter);
     }
     glfx_free_filtered_outputs(glfx);
+    glfx_color_finish(server);
     /* Every shader made, ours and the effects', while the renderer and its
      * context are still there. They aren't made again: every effect is off
      * by now, and glfx goes with the compositor. */

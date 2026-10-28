@@ -184,6 +184,35 @@ void xd_glfx_forget_view(xd_view *view);
 /* The window is destroyed: closing effects let go of it. */
 void xd_glfx_drop_view(xd_view *view);
 
+/* ---- window colours (glfx_color.c) ------------------------------------------------ */
+
+/* Window Opacity's brightness and saturation for a window (0..1; 1 and 1
+ * change nothing), with its opacity. While either is below 1 the window
+ * is drawn from a picture of it with them applied, at that opacity, in
+ * its buffers' place (as a window effect's is, glfx.h's top), redrawn
+ * only when the window changes; a window effect on it draws from such a
+ * picture too. True when that picture shows it now: its buffers'
+ * opacities are glfx's to set then; false when they're the caller's
+ * (unchanged colours, a window effect's turn, nothing drawn yet). Called
+ * before each frame; 1 and 1 forget the window. */
+bool xd_glfx_set_window_color(xd_view *view, float opacity, float brightness, float saturation);
+
+/* glfx.c's, for glfx_color.c: an effect's capture (its view, minus its
+ * node) and letting go of it, and a swapchain of buffers at least that
+ * big, in whole steps. */
+bool glfx_capture_window(xd_window_effect *effect);
+void glfx_release_capture(xd_window_effect *effect);
+bool glfx_ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width, int height,
+                       int step);
+/* glfx_color.c's, for glfx.c: around every capture of a window (its
+ * picture's node left out; the picture made with its colours), each
+ * output's frame after the window effects', and the window gone. */
+void glfx_color_prepare_capture(xd_window_effect *effect);
+void glfx_color_adjust_capture(xd_window_effect *effect);
+void glfx_color_frame(xd_server *server);
+void glfx_color_forget_view(xd_view *view);
+void glfx_color_finish(xd_server *server);
+
 /* ---- output filters ------------------------------------------------------------- */
 
 /* A whole-output effect (Water; a cube, a wall): each output's frame is
