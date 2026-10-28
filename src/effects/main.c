@@ -36,6 +36,8 @@ typedef struct option_row {
     GtkWidget *editor; /* the check box, spin button, colour button... */
     GtkAdjustment *adjustment;
     GtkWidget *reset;
+    /* A choice that needs another effect: why it's another meanwhile. */
+    GtkWidget *note;
 } option_row;
 
 /* One effect in the grid. */
@@ -245,6 +247,55 @@ static const xd_effect_option *panel_get_option(const option_row *row) {
     return &xd_effects_get_info(row->app->settings, row->effect)->options[row->option];
 }
 
+/* Whether a choice can be used now (its effect is on and drawable). */
+static bool panel_is_choice_available(const option_row *row, int choice) {
+    panel *app = row->app;
+    return xd_effects_is_choice_available(app->settings, row->effect, row->option, choice,
+                                          app->support.opengl);
+}
+
+/* A choice that needs an effect which is off shows greyed out in the
+ * list; chosen anyway (set before, or in the file), the note under it
+ * says what's drawn meanwhile. */
+static void panel_update_choice_note(option_row *row, int choice) {
+    if (row->note == nullptr)
+        return;
+    panel *app = row->app;
+    const xd_effect_option *option = panel_get_option(row);
+    const char *needed = xd_effects_get_choice_requirement(option, choice);
+    size_t other = 0;
+    if (needed == nullptr || panel_is_choice_available(row, choice) ||
+        !xd_effects_find(app->settings, needed, &other)) {
+        gtk_widget_hide(row->note);
+        return;
+    }
+    const char *fallback = "another effect";
+    for (size_t i = 0; option->choice_fallback != nullptr && option->choice_names[i] != nullptr;
+         i++) {
+        if (strcmp(option->choice_names[i], option->choice_fallback) == 0)
+            fallback = option->choice_labels[i];
+    }
+    const xd_effect_info *info = xd_effects_get_info(app->settings, other);
+    g_autofree char *text =
+        info->needs_opengl && !app->support.opengl
+            ? g_strdup_printf("%s can't be drawn here, so %s is used instead.", info->name,
+                              fallback)
+            : g_strdup_printf("Turn on %s to use this effect. Until then, %s is used.",
+                              info->name, fallback);
+    gtk_label_set_text(GTK_LABEL(row->note), text);
+    gtk_widget_show(row->note);
+}
+
+/* Greys the choices that can't be used now. */
+static void panel_set_choice_sensitive([[maybe_unused]] GtkCellLayout *layout,
+                                       GtkCellRenderer *cell, GtkTreeModel *model,
+                                       GtkTreeIter *iter, gpointer data) {
+    GtkTreePath *path = gtk_tree_model_get_path(model, iter);
+    int choice = gtk_tree_path_get_indices(path)[0];
+    gtk_tree_path_free(path);
+    g_object_set(cell, "sensitive", panel_is_choice_available(data, choice), nullptr);
+}
+
 /* Shows the option's value in its editor. */
 static void panel_show_value(option_row *row) {
     panel *app = row->app;
@@ -273,6 +324,7 @@ static void panel_show_value(option_row *row) {
     }
     case XD_EFFECT_OPTION_CHOICE:
         gtk_combo_box_set_active(GTK_COMBO_BOX(row->editor), value->choice);
+        panel_update_choice_note(row, value->choice);
         break;
     case XD_EFFECT_OPTION_KEY:
     case XD_EFFECT_OPTION_BUTTON:
@@ -637,6 +689,19 @@ static GtkWidget *panel_new_editor(option_row *row, const char *mnemonic_label) 
                                            option->choice_labels[i]);
         gtk_widget_set_halign(row->editor, GTK_ALIGN_START);
         g_signal_connect(row->editor, "changed", G_CALLBACK(panel_on_choice_changed), row);
+        if (option->choice_requires != nullptr) {
+            GList *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(row->editor));
+            for (GList *cell = cells; cell != nullptr; cell = cell->next)
+                gtk_cell_layout_set_cell_data_func(GTK_CELL_LAYOUT(row->editor), cell->data,
+                                                   panel_set_choice_sensitive, row, nullptr);
+            g_list_free(cells);
+            GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+            row->note = panel_new_label("", 0);
+            gtk_widget_set_no_show_all(row->note, TRUE);
+            gtk_box_pack_start(GTK_BOX(box), row->editor, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(box), row->note, FALSE, FALSE, 0);
+            return box;
+        }
         return row->editor;
     case XD_EFFECT_OPTION_KEY:
     case XD_EFFECT_OPTION_BUTTON:
