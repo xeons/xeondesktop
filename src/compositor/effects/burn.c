@@ -3,6 +3,14 @@
  * ragged flame front crossing it (burn_model.h; a shader chars the band
  * behind it and drops what's burnt), giving off sparks drawn as glowing
  * points that rise, slow and fade.
+ *
+ * It burns closing windows of its own accord (its page's Burn every
+ * closing window), as it did before Animations listed it, and the
+ * windows of Animations' events set to Burn, as CCSM had it: in place
+ * when minimizing, and backwards on the live window when opening or
+ * restoring (the window comes out of the fire, Compiz's 1 - progress).
+ * Before Animations and the Add-On in impl_list.h, it takes those
+ * windows from them; Magic Lamp, before it, keeps its own.
  */
 #include <math.h>
 
@@ -36,6 +44,7 @@ static const char window_fragment[] =
     "uniform vec3 along_axis;\n"
     "uniform float front;\n"
     "uniform float edge;\n"
+    "uniform float reach;\n"
     "uniform vec3 fire;\n"
     "varying vec2 v_texcoord;\n"
     "varying vec2 v_window;\n"
@@ -52,7 +61,7 @@ static const char window_fragment[] =
     "}\n"
     "void main() {\n"
     "    float ragged = noise(v_window * 16.0) * 0.7 + noise(v_window * 41.0) * 0.3;\n"
-    "    float along = dot(vec3(v_window, 1.0), along_axis) + (ragged - 0.5) * 0.08;\n"
+    "    float along = dot(vec3(v_window, 1.0), along_axis) + (ragged - 0.5) * 2.0 * reach;\n"
     "    float burnt = (front - along) / edge;\n"
     "    if (burnt >= 1.0)\n"
     "        discard;\n"
@@ -91,7 +100,7 @@ static const char spark_fragment[] = "precision mediump float;\n"
 typedef struct burn_window_shader {
     bool tried;
     xd_glfx_shader shader;
-    GLint along_axis, front, edge, fire;
+    GLint along_axis, front, edge, reach, fire;
 } burn_window_shader;
 
 static burn_window_shader window_shaders[2];
@@ -106,12 +115,14 @@ typedef struct burn_options {
     bool mystical;
     int particle_count;
     double particle_size, particle_life, slowdown;
-    char windows[512]; /* which windows: xd_effects_match_window */
+    bool closing;      /* Burn every closing window */
+    char windows[512]; /* which of them: xd_effects_match_window */
 } burn_options;
 
 typedef struct burn_state {
     xd_server *server;
     burn_options options;
+    xd_animation_event_settings events[XD_ANIMATION_EVENT_COUNT]; /* Animations' */
     struct wl_list windows; /* burn_window.link */
     uint64_t seed;
 } burn_state;
@@ -121,6 +132,8 @@ typedef struct burn_window {
     burn_state *state;
     xd_window_effect *effect;
     xd_burn_direction direction;
+    int duration_ms;
+    bool appearing;  /* opening or restoring: burning backwards, live */
     double progress; /* 0: the whole window, 1: burnt away */
     double spawn_owed;
     xd_burn_particles particles;
@@ -141,6 +154,7 @@ static const burn_window_shader *burn_get_window_shader(GLenum target) {
             entry->along_axis = glGetUniformLocation(program, "along_axis");
             entry->front = glGetUniformLocation(program, "front");
             entry->edge = glGetUniformLocation(program, "edge");
+            entry->reach = glGetUniformLocation(program, "reach");
             entry->fire = glGetUniformLocation(program, "fire");
         }
     }
@@ -175,6 +189,7 @@ static void burn_draw_window(burn_window *window, const xd_glfx_draw *draw) {
     glUniform3f(entry->along_axis, (float)axis[0], (float)axis[1], (float)axis[2]);
     glUniform1f(entry->front, (float)xd_burn_get_front(window->progress));
     glUniform1f(entry->edge, (float)xd_burn_get_edge());
+    glUniform1f(entry->reach, (float)xd_burn_get_ragged_reach());
     glUniform3f(entry->fire, fire[0], fire[1], fire[2]);
     xd_glfx_draw_mesh_with(draw, &window->mesh, &effect->texture, &entry->shader, 1.0f);
 }
@@ -287,11 +302,15 @@ static void burn_begin(xd_window_effect *effect) {
 static bool burn_update(xd_window_effect *effect, double seconds) {
     burn_window *window = effect->data;
     const burn_options *options = &window->state->options;
-    window->progress += seconds * 1000.0 / XD_MAX(options->duration_ms, 1);
+    double step = seconds * 1000.0 / XD_MAX(window->duration_ms, 1);
+    window->progress = xd_animation_step_progress(window->progress, step, window->appearing);
     xd_burn_step_particles(&window->particles, seconds, options->slowdown);
-    if (window->progress < 1)
+    bool burning = xd_animation_has_further(window->progress, window->appearing);
+    if (burning)
         burn_spawn(window, seconds);
-    return window->progress < 1 || window->particles.count > 0;
+    /* The last sparks die down first; meanwhile a window that has come
+     * back is drawn whole. */
+    return burning || window->particles.count > 0;
 }
 
 static struct wlr_fbox burn_get_bounds(xd_window_effect *effect) {
@@ -371,42 +390,81 @@ static void burn_configure([[maybe_unused]] xd_server *server, void *data,
     options->particle_size = xd_effects_get_double(settings, effect, "ParticleSize");
     options->particle_life = xd_effects_get_double(settings, effect, "ParticleLife");
     options->slowdown = xd_effects_get_double(settings, effect, "Slowdown");
+    options->closing = xd_effects_get_bool(settings, effect, "Closing");
+    /* Animations' events say which other windows are ours: its settings
+     * come with ours (every effect is told of every change). */
+    xd_effects_get_animation_events(settings, state->events);
     snprintf(options->windows, sizeof(options->windows), "%s",
              xd_effects_get_text(settings, effect, "Windows"));
 }
 
-/* Whether it takes this window's closing: Animations, later in the
- * list, then leaves the window alone (xd_effects_is_animated_before). */
-static bool burn_is_wanted(const burn_state *state, const xd_view *view,
-                           xd_window_event_kind kind) {
-    return kind == XD_WINDOW_EVENT_UNMAP && !view->fullscreen &&
-           xd_effects_match_window(state->options.windows, xd_view_app_id(view),
-                                   xd_view_title(view), view->dialog);
+/* Whether it takes this window event, and whose duration it has: its
+ * page's own (closing windows) or that of Animations' event. Animations
+ * and the Add-On, later in the list, then leave the window alone
+ * (xd_effects_is_animated_before). */
+static xd_animation_claim burn_get_claim(const burn_state *state, const xd_view *view,
+                                         xd_window_event_kind kind, xd_animation_event *event) {
+    if (view->fullscreen || !xd_effects_get_animation_event(kind, event))
+        return XD_ANIMATION_CLAIM_NONE;
+    const burn_options *options = &state->options;
+    const xd_animation_event_settings *chosen = &state->events[*event];
+    bool own_match = *event == XD_ANIMATION_EVENT_CLOSE && options->closing &&
+                     xd_effects_match_window(options->windows, xd_view_app_id(view),
+                                             xd_view_title(view), view->dialog);
+    bool event_match =
+        chosen->effect == XD_ANIMATION_BURN && xd_effects_match_view(chosen->windows, view);
+    return xd_animation_get_claim(XD_ANIMATION_BURN, *event, options->closing, own_match,
+                                  chosen->effect, event_match);
 }
 
 static bool burn_animates([[maybe_unused]] xd_server *server, void *data, const xd_view *view,
                           xd_window_event_kind kind) {
-    return burn_is_wanted(data, view, kind);
+    xd_animation_event event;
+    return burn_get_claim(data, view, kind, &event) != XD_ANIMATION_CLAIM_NONE;
+}
+
+static void burn_start(burn_state *state, xd_view *view, xd_animation_event event,
+                       xd_animation_claim claim) {
+    burn_window *window = XD_NEW(burn_window);
+    window->state = state;
+    window->appearing = xd_animation_is_appearing(event);
+    window->duration_ms = claim == XD_ANIMATION_CLAIM_OWN ? state->options.duration_ms
+                                                          : state->events[event].duration_ms;
+    window->progress = xd_animation_get_start_progress(window->appearing);
+    int direction = state->options.direction;
+    if (direction < XD_BURN_DOWN || direction > XD_BURN_RIGHT)
+        direction = (int)(xd_burn_get_random(&state->seed) * 4) % 4;
+    window->direction = (xd_burn_direction)direction;
+    /* Turned round midway (closed while it opens, minimized while it's
+     * restored, or back): from where the one before had got to, the same
+     * way across. */
+    xd_window_effect *before = xd_glfx_find_window(view, &window_impl);
+    if (before != nullptr) {
+        const burn_window *previous = before->data;
+        window->progress = previous->progress;
+        window->direction = previous->direction;
+    }
+    window->effect = window->appearing
+                         ? xd_glfx_begin_window(view, &window_impl, window)
+                         : xd_glfx_begin_closing_window(view, &window_impl, window);
+    if (window->effect == nullptr) {
+        xd_free(window);
+        return;
+    }
+    wl_list_insert(&state->windows, &window->link);
 }
 
 static void burn_handle_window_event([[maybe_unused]] xd_server *server, void *data,
                                      const xd_window_event *event) {
     burn_state *state = data;
     xd_view *view = event->view;
-    if (!burn_is_wanted(state, view, event->kind))
+    xd_animation_event kind;
+    xd_animation_claim claim = burn_get_claim(state, view, event->kind, &kind);
+    /* Magic Lamp, before it, keeps the windows it takes. */
+    if (claim == XD_ANIMATION_CLAIM_NONE ||
+        xd_effects_is_animated_before(&xd_effect_impl_burn, view, event->kind))
         return;
-    burn_window *window = XD_NEW(burn_window);
-    window->state = state;
-    int direction = state->options.direction;
-    if (direction < XD_BURN_DOWN || direction > XD_BURN_RIGHT)
-        direction = (int)(xd_burn_get_random(&state->seed) * 4) % 4;
-    window->direction = (xd_burn_direction)direction;
-    window->effect = xd_glfx_begin_closing_window(view, &window_impl, window);
-    if (window->effect == nullptr) {
-        xd_free(window);
-        return;
-    }
-    wl_list_insert(&state->windows, &window->link);
+    burn_start(state, view, kind, claim);
 }
 
 const xd_effect_impl xd_effect_impl_burn = {

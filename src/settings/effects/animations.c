@@ -3,36 +3,41 @@
  * and come back (src/compositor/effects/animations.c), Compiz's
  * animation plugin's events with an effect, a duration and the windows
  * of each. Turned on, it takes over XP's minimize animation for the
- * windows it animates. The Animations Add-On's effects are choices here
- * too; they're drawn while that page is on (OpenGL), Zoom otherwise.
+ * windows it animates. The Animations Add-On's effects, Burn and Explode
+ * are choices here too; each is drawn while its page is on (OpenGL), Zoom
+ * otherwise.
  */
 #include "../effects.h"
 
 /* Compiz's own effects, then the Animations Add-On's (animationaddon's,
- * as CCSM listed them once that plugin was on), each event offering
- * those Compiz offered for it: Airplane only for closing and minimizing
- * (and so restoring, minimizing's played back). */
+ * as CCSM listed them once that plugin was on, Burn and Explode among
+ * them), each event offering those Compiz offered for it: Airplane only
+ * for closing and minimizing (and so restoring, minimizing's played
+ * back). Burn and Explode have pages of their own here, with their
+ * options: a choice of them needs that page on. */
 #define ADDON "AnimationsAddOn"
+#define BURN "Burn"
+#define EXPLODE "Explode"
 
 static const char *const open_names[] = {
-    "none",   "fade",  "zoom", "glide1", "glide2",     "beamup", "domino",
-    "fold",   "glide3", "leafspread", "razr", "skewer", nullptr};
+    "none",    "fade", "zoom",   "glide1",     "glide2", "beamup", "burn", "domino",
+    "explode", "fold", "glide3", "leafspread", "razr",   "skewer", nullptr};
 static const char *const open_labels[] = {
-    "None",    "Fade",   "Zoom", "Glide 1", "Glide 2",     "Beam Up", "Domino",
-    "Fold",    "Glide 3", "Leaf Spread", "Razr", "Skewer", nullptr};
+    "None",    "Fade", "Zoom",    "Glide 1",     "Glide 2", "Beam Up", "Burn", "Domino",
+    "Explode", "Fold", "Glide 3", "Leaf Spread", "Razr",    "Skewer",  nullptr};
 static const char *const open_requires[] = {
-    nullptr, nullptr, nullptr, nullptr, nullptr, ADDON, ADDON,
-    ADDON,   ADDON,   ADDON,   ADDON,   ADDON,   nullptr};
+    nullptr, nullptr, nullptr, nullptr, nullptr, ADDON, BURN, ADDON,
+    EXPLODE, ADDON,   ADDON,   ADDON,   ADDON,   ADDON, nullptr};
 
 static const char *const close_names[] = {
-    "none",   "fade",   "zoom",   "glide1",   "glide2", "airplane", "beamup",
-    "domino", "fold",   "glide3", "leafspread", "razr", "skewer",   nullptr};
+    "none",   "fade",    "zoom", "glide1", "glide2",     "airplane", "beamup", "burn",
+    "domino", "explode", "fold", "glide3", "leafspread", "razr",     "skewer", nullptr};
 static const char *const close_labels[] = {
-    "None",   "Fade", "Zoom",    "Glide 1",     "Glide 2", "Airplane", "Beam Up",
-    "Domino", "Fold", "Glide 3", "Leaf Spread", "Razr",    "Skewer",   nullptr};
+    "None",   "Fade",    "Zoom", "Glide 1", "Glide 2",     "Airplane", "Beam Up", "Burn",
+    "Domino", "Explode", "Fold", "Glide 3", "Leaf Spread", "Razr",     "Skewer",  nullptr};
 static const char *const close_requires[] = {
-    nullptr, nullptr, nullptr, nullptr, nullptr, ADDON, ADDON,
-    ADDON,   ADDON,   ADDON,   ADDON,   ADDON,   ADDON, nullptr};
+    nullptr, nullptr, nullptr, nullptr, nullptr, ADDON, ADDON, BURN,
+    ADDON,   EXPLODE, ADDON,   ADDON,   ADDON,   ADDON, ADDON, nullptr};
 
 #define ANIMATION_EVENT(prefix, tab, list, effect, duration)                                   \
     {                                                                                          \
@@ -76,7 +81,7 @@ const xd_effect_info xd_effect_animations = {
     .id = "Animations",
     .name = "Animations",
     .description = "Windows fade, zoom or glide as they open, close and minimize; with the "
-                   "Animations Add-On, more effects.",
+                   "Animations Add-On, Burn or Explode, more effects.",
     .icon = "preferences-system-windows-effect-glide",
     .category = XD_EFFECT_CATEGORY_EFFECTS,
     .options = options,

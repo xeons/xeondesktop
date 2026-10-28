@@ -12,7 +12,8 @@
 #include "geometry.h"
 
 /* Animations' own effects, then the Animations Add-On's (addon.c draws
- * those, with OpenGL). */
+ * those, with OpenGL), then Burn and Explode (burn.c, explode.c, with
+ * OpenGL too), whose options are on their own pages. */
 typedef enum xd_animation_effect : uint8_t {
     XD_ANIMATION_NONE,
     XD_ANIMATION_FADE,
@@ -27,18 +28,60 @@ typedef enum xd_animation_effect : uint8_t {
     XD_ANIMATION_LEAF_SPREAD,
     XD_ANIMATION_RAZR,
     XD_ANIMATION_SKEWER,
+    XD_ANIMATION_BURN,
+    XD_ANIMATION_EXPLODE,
     XD_ANIMATION_EFFECT_COUNT,
 } xd_animation_effect;
+
+/* Animations' events, in the order of its pages' tabs. */
+typedef enum xd_animation_event : uint8_t {
+    XD_ANIMATION_EVENT_OPEN,
+    XD_ANIMATION_EVENT_CLOSE,
+    XD_ANIMATION_EVENT_MINIMIZE,
+    XD_ANIMATION_EVENT_UNMINIMIZE,
+    XD_ANIMATION_EVENT_COUNT,
+} xd_animation_event;
 
 /* The effect a name in effects.ini stands for ("glide1", "beamup");
  * None for one it doesn't know. */
 xd_animation_effect xd_animation_find_effect(const char *name);
 /* Whether the Animations Add-On draws it. */
 bool xd_animation_is_addon(xd_animation_effect effect);
-/* What Animations draws in its place when the Add-On doesn't draw it (it's
- * off, or there's no OpenGL): Zoom, as Compiz fell back to its default
- * when an effect's plugin was gone. The others are themselves. */
+/* What Animations draws in its place when the Add-On, Burn or Explode
+ * doesn't draw it (its page is off, or there's no OpenGL): Zoom, as
+ * Compiz fell back to its default when an effect's plugin was gone. The
+ * others are themselves. */
 xd_animation_effect xd_animation_get_fallback(xd_animation_effect effect);
+
+/* Whether the event shows the window (opening, restoring): Compiz played
+ * an effect's closing backwards for it. */
+bool xd_animation_is_appearing(xd_animation_event event);
+/* An effect's progress as its closing has it (0 the window whole, 1
+ * gone), moved on by `step` (a share of its duration): forwards when
+ * it's going, backwards when it's `appearing`; within 0..1. */
+double xd_animation_step_progress(double progress, double step, bool appearing);
+/* Whether that progress has further to go: an appearing window is whole
+ * again at 0, a going one gone at 1. */
+bool xd_animation_has_further(double progress, bool appearing);
+/* Where it starts: from the window whole when going, gone when
+ * appearing. */
+double xd_animation_get_start_progress(bool appearing);
+
+/* Who animates an event for Burn or Explode (`own`, the effect itself):
+ * its page's own claim on closing windows (`closing_claimed`, Burn every
+ * closing window, the windows its page matches: `own_match`), which
+ * comes first as it did before these were Animations' choices; else
+ * Animations' choice for the event (`chosen`, while Animations is on,
+ * for the windows that event matches: `event_match`). */
+typedef enum xd_animation_claim : uint8_t {
+    XD_ANIMATION_CLAIM_NONE,
+    XD_ANIMATION_CLAIM_OWN,   /* the page's: its own duration */
+    XD_ANIMATION_CLAIM_EVENT, /* Animations' event's: that event's duration */
+} xd_animation_claim;
+
+xd_animation_claim xd_animation_get_claim(xd_animation_effect own, xd_animation_event event,
+                                          bool closing_claimed, bool own_match,
+                                          xd_animation_effect chosen, bool event_match);
 
 /* The window's picture: its outer box's top left, its size times
  * scale_x and scale_y, and its opacity. */

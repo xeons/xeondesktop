@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Burn: a closing window burns away, a flame front crossing it and
  * giving off sparks (src/compositor/effects/burn.c). Compiz's Animation
- * plugin's Burn, with its fire options.
+ * plugin's Burn, with its fire options. It's also a choice in each of
+ * Animations' events, as in CCSM (opening and restoring burn backwards:
+ * the window comes out of the fire), drawn while this page is on.
  */
 #include "../effects.h"
 
@@ -12,7 +14,8 @@ static const xd_effect_option options[] = {
     {
         .key = "Duration",
         .label = "Duration (ms)",
-        .description = "How long a window takes to burn away.",
+        .description = "How long a closing window takes to burn away. Animations' events "
+                       "set to Burn take their own durations.",
         .type = XD_EFFECT_OPTION_INT,
         .min = 100,
         .max = 10000,
@@ -90,9 +93,20 @@ static const xd_effect_option options[] = {
         .default_value = "0.5",
     },
     {
+        .key = "Closing",
+        .label = "Burn every closing window",
+        .description = "The windows below burn as they close, whatever Animations' Close "
+                       "effect is. Turned off, windows burn only on the events Animations "
+                       "sets to Burn.",
+        .group = "Windows",
+        .type = XD_EFFECT_OPTION_BOOL,
+        .default_value = "true",
+    },
+    {
         .key = "Windows",
         .label = "Windows that burn",
-        .description = "Leave empty for every window, or for example: type=normal",
+        .description = "The closing windows that burn. Leave empty for every window, or for "
+                       "example: type=normal",
         .group = "Windows",
         .type = XD_EFFECT_OPTION_MATCH,
         .default_value = "",
@@ -102,7 +116,8 @@ static const xd_effect_option options[] = {
 const xd_effect_info xd_effect_burn = {
     .id = "Burn",
     .name = "Burn",
-    .description = "Closing windows burn away.",
+    .description = "Closing windows burn away; in Animations, windows can burn as they open "
+                   "and minimize too.",
     /* No fire in the icon theme: a closing window's. */
     .icon = "preferences-system-windows-effect-fade",
     .category = XD_EFFECT_CATEGORY_EFFECTS,

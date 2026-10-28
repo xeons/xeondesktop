@@ -13,7 +13,7 @@ static constexpr double ZOOM_FADE_SHARE = 0.3;
 /* effects.ini's names, by effect. */
 static const char *const effect_names[XD_ANIMATION_EFFECT_COUNT] = {
     "none",   "fade", "zoom",   "glide1",     "glide2", "airplane", "beamup",
-    "domino", "fold", "glide3", "leafspread", "razr",   "skewer",
+    "domino", "fold", "glide3", "leafspread", "razr",   "skewer", "burn", "explode",
 };
 
 xd_animation_effect xd_animation_find_effect(const char *name) {
@@ -25,11 +25,37 @@ xd_animation_effect xd_animation_find_effect(const char *name) {
 }
 
 bool xd_animation_is_addon(xd_animation_effect effect) {
-    return effect >= XD_ANIMATION_AIRPLANE && effect < XD_ANIMATION_EFFECT_COUNT;
+    return effect >= XD_ANIMATION_AIRPLANE && effect <= XD_ANIMATION_SKEWER;
 }
 
 xd_animation_effect xd_animation_get_fallback(xd_animation_effect effect) {
-    return xd_animation_is_addon(effect) ? XD_ANIMATION_ZOOM : effect;
+    return effect >= XD_ANIMATION_AIRPLANE ? XD_ANIMATION_ZOOM : effect;
+}
+
+bool xd_animation_is_appearing(xd_animation_event event) {
+    return event == XD_ANIMATION_EVENT_OPEN || event == XD_ANIMATION_EVENT_UNMINIMIZE;
+}
+
+double xd_animation_step_progress(double progress, double step, bool appearing) {
+    return XD_CLAMP(appearing ? progress - step : progress + step, 0.0, 1.0);
+}
+
+bool xd_animation_has_further(double progress, bool appearing) {
+    return appearing ? progress > 0 : progress < 1;
+}
+
+double xd_animation_get_start_progress(bool appearing) {
+    return appearing ? 1.0 : 0.0;
+}
+
+xd_animation_claim xd_animation_get_claim(xd_animation_effect own, xd_animation_event event,
+                                          bool closing_claimed, bool own_match,
+                                          xd_animation_effect chosen, bool event_match) {
+    if (event == XD_ANIMATION_EVENT_CLOSE && closing_claimed && own_match)
+        return XD_ANIMATION_CLAIM_OWN;
+    if (event < XD_ANIMATION_EVENT_COUNT && chosen == own && event_match)
+        return XD_ANIMATION_CLAIM_EVENT;
+    return XD_ANIMATION_CLAIM_NONE;
 }
 
 double xd_animation_get_presence(bool appearing, double progress) {
@@ -68,6 +94,8 @@ xd_animation_frame xd_animation_get_frame(xd_animation_effect effect, xd_effect_
     case XD_ANIMATION_LEAF_SPREAD:
     case XD_ANIMATION_RAZR:
     case XD_ANIMATION_SKEWER:
+    case XD_ANIMATION_BURN:
+    case XD_ANIMATION_EXPLODE:
     case XD_ANIMATION_EFFECT_COUNT:
         return frame;
     case XD_ANIMATION_FADE:
