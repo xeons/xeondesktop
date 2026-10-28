@@ -15,6 +15,7 @@
 #include <math.h>
 #include <wlr/render/swapchain.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/util/transform.h>
 
 #include "../../core/alloc.h"
 #include "effects.h"
@@ -122,14 +123,24 @@ static void zoom_draw(zoom_output *zoom, struct wlr_scene_output *scene_output, 
     struct wlr_scene_output_state_options options = {.swapchain = zoom->swapchain};
     if (wlr_scene_output_build_state(scene_output, &output_state, &options) &&
         output_state.buffer != nullptr) {
+        /* A rotated or flipped monitor's buffer is drawn turned, as a
+         * program's buffer with that transform would be: the node undoes
+         * it, and the view's box is turned the same way into the buffer's
+         * pixels (as wlr_surface_get_buffer_source_box does). */
         double scale = (double)zoom->output->scale;
+        enum wl_output_transform transform = zoom->output->transform;
         struct wlr_fbox source = {
             .x = (view.x - box.x) * scale,
             .y = (view.y - box.y) * scale,
             .width = view.width * scale,
             .height = view.height * scale,
         };
+        int width = 0, height = 0;
+        wlr_output_transformed_resolution(zoom->output, &width, &height);
+        wlr_fbox_transform(&source, &source, wlr_output_transform_invert(transform), width,
+                           height);
         wlr_scene_buffer_set_buffer(zoom->node, output_state.buffer);
+        wlr_scene_buffer_set_transform(zoom->node, transform);
         wlr_scene_buffer_set_source_box(zoom->node, &source);
         wlr_scene_buffer_set_dest_size(zoom->node, box.width, box.height);
         wlr_scene_node_set_position(&zoom->node->node, box.x, box.y);

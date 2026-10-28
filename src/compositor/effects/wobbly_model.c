@@ -19,8 +19,8 @@ static constexpr double MAX_BACKLOG_SECONDS = 0.2;
 static constexpr double REST_SPEED = 0.02;
 static constexpr double REST_DISTANCE = 0.3;
 
-void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *out_x,
-                              double *out_y) {
+static void wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *out_x,
+                                  double *out_y) {
     int column = index % XD_WOBBLY_SIDE, row = index / XD_WOBBLY_SIDE;
     *out_x = model->rest_x + model->rest_width * column / (XD_WOBBLY_SIDE - 1);
     *out_y = model->rest_y + model->rest_height * row / (XD_WOBBLY_SIDE - 1);
@@ -36,7 +36,7 @@ void xd_wobbly_init(xd_wobbly_model *model, double left, double top, double widt
     };
     xd_wobbly_set_rest(model, left, top, width, height);
     for (int i = 0; i < XD_WOBBLY_POINTS; i++)
-        xd_wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
+        wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
 }
 
 void xd_wobbly_set_rest(xd_wobbly_model *model, double left, double top, double width,
@@ -52,7 +52,7 @@ void xd_wobbly_grab(xd_wobbly_model *model, double pointer_x, double pointer_y) 
     double best = HUGE_VAL;
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         double rest_x = 0, rest_y = 0;
-        xd_wobbly_get_rest_point(model, i, &rest_x, &rest_y);
+        wobbly_get_rest_point(model, i, &rest_x, &rest_y);
         double distance = (rest_x - pointer_x) * (rest_x - pointer_x) +
                           (rest_y - pointer_y) * (rest_y - pointer_y);
         if (distance < best) {
@@ -86,8 +86,8 @@ void xd_wobbly_displace(xd_wobbly_model *model, double from_x, double from_y, do
     xd_wobbly_set_rest(&from, from_x, from_y, from_width, from_height);
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         double now_x = 0, now_y = 0, then_x = 0, then_y = 0;
-        xd_wobbly_get_rest_point(model, i, &now_x, &now_y);
-        xd_wobbly_get_rest_point(&from, i, &then_x, &then_y);
+        wobbly_get_rest_point(model, i, &now_x, &now_y);
+        wobbly_get_rest_point(&from, i, &then_x, &then_y);
         model->points[i].x += (then_x - now_x) * share;
         model->points[i].y += (then_y - now_y) * share;
     }
@@ -97,7 +97,7 @@ static void wobbly_step_once(xd_wobbly_model *model) {
     double force_x[XD_WOBBLY_POINTS] = {0}, force_y[XD_WOBBLY_POINTS] = {0};
     double rest_x[XD_WOBBLY_POINTS], rest_y[XD_WOBBLY_POINTS];
     for (int i = 0; i < XD_WOBBLY_POINTS; i++)
-        xd_wobbly_get_rest_point(model, i, &rest_x[i], &rest_y[i]);
+        wobbly_get_rest_point(model, i, &rest_x[i], &rest_y[i]);
     /* Each spring wants its two masses as far apart as on the window. */
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         int neighbours[2] = {i % XD_WOBBLY_SIDE + 1 < XD_WOBBLY_SIDE ? i + 1 : -1,
@@ -141,7 +141,7 @@ static bool wobbly_is_at_rest(const xd_wobbly_model *model) {
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
         const xd_wobbly_point *point = &model->points[i];
         double rest_x = 0, rest_y = 0;
-        xd_wobbly_get_rest_point(model, i, &rest_x, &rest_y);
+        wobbly_get_rest_point(model, i, &rest_x, &rest_y);
         if (fabs(point->vx) > REST_SPEED || fabs(point->vy) > REST_SPEED ||
             fabs(point->x - rest_x) > REST_DISTANCE || fabs(point->y - rest_y) > REST_DISTANCE)
             return false;
@@ -164,7 +164,7 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds) {
             !isfinite(model->points[i].vx) || !isfinite(model->points[i].vy)) {
             model->grabbed = -1;
             for (int j = 0; j < XD_WOBBLY_POINTS; j++) {
-                xd_wobbly_get_rest_point(model, j, &model->points[j].x, &model->points[j].y);
+                wobbly_get_rest_point(model, j, &model->points[j].x, &model->points[j].y);
                 model->points[j].vx = model->points[j].vy = 0;
             }
             return false;
@@ -173,7 +173,7 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds) {
     if (!wobbly_is_at_rest(model))
         return true;
     for (int i = 0; i < XD_WOBBLY_POINTS; i++) {
-        xd_wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
+        wobbly_get_rest_point(model, i, &model->points[i].x, &model->points[i].y);
         model->points[i].vx = model->points[i].vy = 0;
     }
     return false;

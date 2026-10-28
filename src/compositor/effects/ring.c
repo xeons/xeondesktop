@@ -47,7 +47,10 @@ typedef struct ring_state {
     long position;           /* the window picked, counted on round the ring */
     xd_scale_motion turning; /* x: the ring's turn, in degrees */
     double last_time;
-    xd_output *output;
+    /* The monitor it shows on, and its destroy: unplugged, the switcher
+     * ends (output.c frees its xd_output then). */
+    struct wlr_output *output;
+    struct wl_listener output_destroy;
     struct wlr_scene_tree *overlay;
     struct wlr_scene_rect *darken;
     struct wlr_scene_tree *thumbnail_tree;
@@ -60,8 +63,11 @@ static size_t ring_get_selected(const ring_state *state) {
     return xd_ring_step_index(0, (int)(state->position % (long)state->count), state->count);
 }
 
+/* The current desktop's windows, as Compiz's ring showed the current
+ * viewport's. */
 static bool ring_is_candidate(const ring_state *state, const xd_view *view) {
-    return view->mapped && xd_effects_match_view(state->options.windows, view);
+    return view->mapped && xd_desktops_is_view_shown(view) &&
+           xd_effects_match_view(state->options.windows, view);
 }
 
 static void ring_close(ring_state *state) {
@@ -74,6 +80,8 @@ static void ring_close(ring_state *state) {
     state->overlay = nullptr;
     state->title = nullptr;
     state->title_view = nullptr;
+    xd_unlisten(&state->output_destroy);
+    state->output = nullptr;
     state->active = false;
 }
 
@@ -83,6 +91,11 @@ static void ring_finish(ring_state *state, bool switch_to) {
     if (switch_to && picked != nullptr && picked->mapped)
         xd_view_focus(picked);
     xd_effects_schedule_frames(state->server);
+}
+
+static void ring_handle_output_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    ring_state *state = XD_CONTAINER_OF(listener, ring_state, output_destroy);
+    ring_finish(state, false);
 }
 
 static void ring_begin(ring_state *state, int step, uint32_t held) {
@@ -111,7 +124,8 @@ static void ring_begin(ring_state *state, int step, uint32_t held) {
         window->view = view;
         window->mirror = xd_mirror_create(view, state->thumbnail_tree);
     }
-    state->output = output;
+    state->output = output->wlr_output;
+    XD_LISTEN(&state->output->events.destroy, state, output_destroy, ring_handle_output_destroy);
     state->active = true;
     state->held = held;
     /* The ring starts on the active window and turns from there. */
@@ -138,7 +152,7 @@ static void ring_draw_title(ring_state *state, xd_view *view) {
         title = xd_view_app_id(view);
     if (title == nullptr)
         title = "";
-    double scale = (double)state->output->wlr_output->scale;
+    double scale = (double)state->output->scale;
     xd_theme theme;
     xd_theme_init(&theme, server->config.style, &server->config.scheme, scale);
     xd_text_style style =
@@ -179,6 +193,13 @@ static void ring_handle_frame(xd_server *server, void *data, [[maybe_unused]] xd
     ring_state *state = data;
     if (!state->active)
         return;
+    /* Its monitor turned off: nowhere to show it. */
+    struct wlr_box box;
+    wlr_output_layout_get_box(server->output_layout, state->output, &box);
+    if (!state->output->enabled || wlr_box_empty(&box)) {
+        ring_finish(state, false);
+        return;
+    }
     double milliseconds = state->last_time > 0 ? (now - state->last_time) * 1000.0 : 16.0;
     if (milliseconds <= 0)
         return;
@@ -190,8 +211,6 @@ static void ring_handle_frame(xd_server *server, void *data, [[maybe_unused]] xd
     bool moving = xd_scale_step_motion(&state->turning, target, milliseconds, state->options.speed,
                                        state->options.timestep);
 
-    struct wlr_box box;
-    wlr_output_layout_get_box(server->output_layout, state->output->wlr_output, &box);
     const ring_options *options = &state->options;
     double ring_width = XD_MAX(box.width * options->ring_width - options->thumb_width, 0.0);
     double ring_height = XD_MAX(box.height * options->ring_height - options->thumb_height, 0.0);

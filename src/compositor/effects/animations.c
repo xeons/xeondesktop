@@ -78,18 +78,24 @@ static bool animation_get_event(xd_window_event_kind kind, animation_event *even
     return false;
 }
 
-/* Whether the window's `event` is animated: an effect is set for it and
- * the window is one of its windows. */
+/* Whether the window's `event` is animated: an effect is set for it, the
+ * window is one of its windows, and it's on the current desktop. A
+ * minimized window closing (from its taskbar button) isn't on the screen
+ * to animate, as Magic Lamp and the Add-On have it too. */
 static bool animation_is_wanted(const animations_state *state, animation_event event,
                                 const xd_view *view) {
     const animation_options *options = &state->options[event];
     return options->effect != XD_ANIMATION_NONE && !view->fullscreen &&
+           xd_desktops_is_view_shown(view) &&
+           !(event == ANIMATION_EVENT_CLOSE && view->minimized) &&
            xd_effects_match_view(options->windows, view);
 }
 
 static void animation_free(running_animation *animation) {
     xd_view *view = animation->view;
-    if (animation->hides_view && view != nullptr && view->mapped && !view->minimized)
+    /* The desktop may have changed meanwhile: shown only if it's this one's. */
+    if (animation->hides_view && view != nullptr && view->mapped && !view->minimized &&
+        xd_desktops_is_view_shown(view))
         wlr_scene_node_set_enabled(&view->tree->node, true);
     xd_mirror_destroy(animation->mirror);
     wl_list_remove(&animation->link);
@@ -175,6 +181,12 @@ static void animations_handle_frame(xd_server *server, void *data,
     clock_gettime(CLOCK_MONOTONIC, &when);
     running_animation *animation, *next;
     wl_list_for_each_safe(animation, next, &state->running, link) {
+        /* Its window went to another desktop (switched away from): its
+         * picture would stay on this one. */
+        if (animation->view != nullptr && !xd_desktops_is_view_shown(animation->view)) {
+            animation_free(animation);
+            continue;
+        }
         if (animation->start == 0)
             animation->start = now;
         double progress = (now - animation->start) / XD_MAX(animation->seconds, 0.001);

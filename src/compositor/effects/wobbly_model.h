@@ -59,8 +59,5 @@ bool xd_wobbly_step(xd_wobbly_model *model, double seconds);
  * is drawn. */
 void xd_wobbly_evaluate(const xd_wobbly_model *model, double across, double down,
                         double *out_x, double *out_y);
-/* The rest position of mass `index`. */
-void xd_wobbly_get_rest_point(const xd_wobbly_model *model, int index, double *out_x,
-                              double *out_y);
 
 #endif

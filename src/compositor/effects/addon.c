@@ -90,8 +90,8 @@ typedef struct addon_piece_shader {
     GLint tint, glow_color;
 } addon_piece_shader;
 
-/* Compiled once, for 2D and external textures; they go with the
- * renderer's context, as glfx's own do. */
+/* Compiled once, for 2D and external textures;
+ * xd_glfx_finish destroys them, as glfx's own. */
 static addon_piece_shader piece_shaders[2];
 static bool beam_tried;
 static xd_glfx_shader beam_shader;

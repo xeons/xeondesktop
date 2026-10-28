@@ -42,8 +42,8 @@ static const char shade_vertex[] = "uniform mat4 projection;\n"
 /* How dark a piece's edge is. */
 static constexpr float EDGE_SHADE = 0.45f;
 
-/* Compiled once, for 2D and external textures; they go with the
- * renderer's context, as glfx's own do. */
+/* Compiled once, for 2D and external textures;
+ * xd_glfx_finish destroys them, as glfx's own. */
 typedef struct explode_shader {
     bool tried;
     xd_glfx_shader shader;

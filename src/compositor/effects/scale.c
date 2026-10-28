@@ -72,8 +72,15 @@ typedef struct scale_state {
     bool edge_armed; /* the pointer left the corner since it last fired */
 } scale_state;
 
+/* The windows showing on the current desktop, as Compiz's Scale showed
+ * the current viewport's: another desktop's would be shown here when it
+ * ends. */
+static bool scale_is_shown(const xd_view *view) {
+    return view->mapped && !view->minimized && xd_desktops_is_view_shown(view);
+}
+
 static bool scale_is_candidate(const scale_state *state, const xd_view *view) {
-    return view->mapped && !view->minimized && xd_effects_match_view(state->options.windows, view);
+    return scale_is_shown(view) && xd_effects_match_view(state->options.windows, view);
 }
 
 static xd_effect_rect scale_get_rect(struct wlr_box box) {
@@ -197,7 +204,7 @@ static void scale_finish(scale_state *state) {
     xd_server *server = state->server;
     for (size_t i = 0; i < state->count; i++) {
         scale_thumbnail *thumbnail = &state->thumbnails[i];
-        if (thumbnail->view != nullptr && thumbnail->view->mapped && !thumbnail->view->minimized)
+        if (thumbnail->view != nullptr && scale_is_shown(thumbnail->view))
             wlr_scene_node_set_enabled(&thumbnail->view->tree->node, true);
         xd_mirror_destroy(thumbnail->mirror);
     }

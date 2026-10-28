@@ -29,8 +29,6 @@ void xd_mirror_update(xd_mirror *mirror);
 /* Lets go of the window, keeping its last picture (it's closing). Done
  * by itself when the window's surface goes. */
 void xd_mirror_detach(xd_mirror *mirror);
-/* The window, or nullptr once detached. */
-xd_view *xd_mirror_get_view(const xd_mirror *mirror);
 /* The window's outer box when last updated, layout coordinates. */
 struct wlr_box xd_mirror_get_box(const xd_mirror *mirror);
 struct wlr_scene_tree *xd_mirror_get_tree(const xd_mirror *mirror);

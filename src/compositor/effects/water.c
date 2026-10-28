@@ -63,8 +63,8 @@ static const char water_fragment[] =
     "    gl_FragColor = vec4(color.rgb + light * color.a, color.a) * alpha;\n"
     "}\n";
 
-/* Compiled once, for 2D and external textures; they go with the
- * renderer's context, as glfx's own do. */
+/* Compiled once, for 2D and external textures;
+ * xd_glfx_finish destroys them, as glfx's own. */
 typedef struct water_shader {
     bool tried;
     xd_glfx_shader shader;

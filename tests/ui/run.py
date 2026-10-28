@@ -1648,6 +1648,34 @@ def scale_pick_window(s):
     s.check(active_title(s) == "Control Panel", "and Control Panel stays active")
 
 
+@scenario(setup=effects_setup("[GeneralOptions]\nHorizontalSize=2\n[Scale]\nEnabled=true\n"))
+def scale_two_desktops(s):
+    """Scale with two desktops: on the second, only its own window (Run)
+    is laid out, not the first desktop's Control Panel; Esc puts it back,
+    and Control Panel doesn't turn up on the second desktop."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    before = s.settle("second-desktop")
+    s.inject("key", "shift+alt+Up")
+    grid = s.settle("grid")
+    s.check(darker(grid.pixel(3, 3), empty.pixel(3, 3)), "Scale shows")
+    runs = bright_runs(grid, grid.pixel(3, (HEIGHT - 40) // 2), (HEIGHT - 40) // 2)
+    s.log(f"thumbnails across the middle: {runs}")
+    s.check(len(runs) == 1, f"one thumbnail, the second desktop's window ({runs})")
+    s.inject("key", "Escape")
+    back = s.settle("escaped")
+    s.check(back.differs(before, (0, 0, WIDTH, HEIGHT - 40)) < 0.02,
+            "Esc puts it back, and Control Panel isn't shown here")
+    s.check(s.window(title="Control Panel") is None,
+            "Control Panel stays on the first desktop")
+
+
 def between(pixel, low, high, margin=12):
     """Whether each channel of pixel is between low's and high's, clear of
     both by margin where they differ enough."""
@@ -1727,6 +1755,62 @@ def animations_minimize_zoom(s):
     back = s.settle("restored")
     s.check(back.differs(window, (0, 0, WIDTH, HEIGHT - 40)) < 0.02,
             "restored, the window is itself again")
+
+
+@scenario(setup=effects_setup("[GeneralOptions]\nHorizontalSize=2\n[Animations]\n"
+                              "Enabled=true\nOpenEffect=zoom\nOpenDuration=3000\n"))
+def animations_open_desktop_switch(s):
+    """Animations, a window opening (slowed to three seconds) when the
+    desktop is switched: neither its picture nor the window shows on the
+    second desktop, then or once the animation would have ended; back on
+    the first it's there."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(0.5)
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(0.5)
+    s.check(s.shot("switched").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+            "its picture isn't on the second desktop")
+    time.sleep(3.0)
+    s.check(s.settle("later").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+            "nor the window, once the animation would have ended")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", state="activated")
+    s.check(s.settle("back").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) > 0.02,
+            "back on the first desktop, the window shows")
+
+
+@scenario(setup=effects_setup("[Animations]\nEnabled=true\nMinimizeEffect=none\n"
+                              "CloseEffect=fade\nCloseDuration=4000\n"))
+def animations_close_minimized(s):
+    """Animations, Fade on close (slowed down): a minimized window closed
+    from its taskbar button's menu isn't on the screen, so nothing fades
+    where it was; it's simply gone."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "super+Down")
+    s.wait_window(title="Control Panel", state="minimized")
+    minimized = s.settle("minimized")
+    s.check(minimized.differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01, "it's minimized")
+    button = minimized.changed_box(empty, (150, HEIGHT - 36, WIDTH - 300, 32))
+    s.check(button is not None, f"its taskbar button shows ({button})")
+    s.inject("move", button[0] + button[2] // 2, HEIGHT - 20, "click", "right")
+    wait_change(s, minimized, (0, 0, WIDTH, HEIGHT - 40), "the button's menu", "menu")
+    s.inject("key", "c")
+    s.wait_window(title="Control Panel", gone=True)
+    s.inject("move", WIDTH - 20, 300)
+    # Above the taskbar button's thumbnail, which may linger a moment.
+    above = (0, 0, WIDTH, HEIGHT - 240)
+    for i in range(6):
+        shot = s.shot(f"closing-{i}")
+        s.check(shot.differs(empty, above) < 0.01,
+                f"nothing fades where it was ({i * 0.3:.1f} s)")
+        time.sleep(0.3)
 
 
 def contrasting_points(shot, empty, box, avoid=None):
@@ -1815,6 +1899,38 @@ def ring_switcher_thumbnails(s):
     s.wait(lambda: active_title(s) == "Run", "Super+Tab alone to switch back to Run")
 
 
+@scenario(setup=effects_setup("[RingSwitcher]\nEnabled=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)])  # TWO_MONITORS
+def ring_switcher_output_off(s):
+    """Ring Switcher on the second monitor, which is turned off while it
+    shows: the ring ends without switching (Run stays active), nothing of
+    it is left on the first monitor, and Super+Tab works again after."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    empty = s.settle("desktop")
+    s.inject("move", WIDTH - 20, 300)
+    open_two_windows(s)
+    s.inject("move", WIDTH + 300, 200)
+    held = s.launch(s.tool("xd-inject"), "hold", "super", "key", "Tab", "sleep", "5000",
+                    "release", "super")
+    time.sleep(1.5)
+    second = (WIDTH, 0, round(WIDTH / 1.5), round(HEIGHT / 1.5))
+    ring = s.shot("ring")
+    s.check(darker(ring.pixel(second[0] + 3, 3), empty.pixel(second[0] + 3, 3)),
+            "the ring darkens the second monitor")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-2", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the second monitor turned off ({r.stderr.strip()})")
+    held.wait(timeout=20)
+    s.inject("move", WIDTH - 20, 300)
+    after = s.settle("after")
+    s.check(not darker(after.pixel(3, 3), empty.pixel(3, 3), by=8),
+            "nothing of the ring on the first monitor")
+    s.check(active_title(s) == "Run", f"no switch: Run is still active ({active_title(s)})")
+    s.inject("key", "super+Tab")
+    s.wait(lambda: active_title(s) == "Control Panel", "Super+Tab to switch to Control Panel")
+
+
 def zoomed_match(zoomed, before, x, y, level, radius=150, step=7):
     """Around (x, y): the share of points that show what `before` had
     `level` times closer to (x, y), and the share that changed at all.
@@ -1841,6 +1957,33 @@ def enhanced_zoom_pointer(s):
     zoom the screen in around the pointer: what was near it is twice as
     big and twice as far from it, the point under it staying put; the
     wheel down zooms back out to the screen as it was."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    x, y = 330, 260
+    s.inject("move", x, y)
+    before = s.settle("before")
+    s.inject("hold", "super", "wheel", -1, "release", "super")
+    zoomed = s.settle("zoomed")
+    matched, changed = zoomed_match(zoomed, before, x, y, 2.0)
+    s.log(f"{matched:.2f} of the points show what was half as far from the pointer; "
+          f"{changed:.2f} changed")
+    s.check(changed > 0.3, f"the screen is zoomed ({changed:.2f} of it changed)")
+    s.check(matched > 0.8, f"what's round the pointer is twice the size ({matched:.2f})")
+    s.inject("hold", "super", "wheel", 1, "release", "super")
+    after = s.settle("unzoomed")
+    s.check(after.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.02, "zoomed out, it's as it was")
+
+
+@scenario(setup=effects_setup("[EnhancedZoom]\nEnabled=true\nZoomFactor=2.0\n"))
+def enhanced_zoom_rotated(s):
+    """Enhanced Zoom Desktop on a monitor turned upside down (rotated by
+    180 degrees): the zoomed picture is the right way up, what was near
+    the pointer twice the size round it, as on a monitor the usual way."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--transform", "180"],
+                       capture_output=True, text=True, timeout=10)
+    s.check(r.returncode == 0, f"the monitor turned round ({r.stderr.strip()})")
     s.launch("xd-control")
     s.wait_window(title="Control Panel", state="activated")
     x, y = 330, 260
@@ -1889,6 +2032,34 @@ def annotate_stroke(s):
     s.inject("key", "super+alt+k")
     cleared = s.settle("cleared")
     s.check(cleared.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.01, "Windows+Alt+K clears it")
+
+
+@scenario(setup=effects_setup("[Annotate]\nEnabled=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1)])
+def annotate_output_moved(s):
+    """Annotate on the second of two monitors, the first then turned off,
+    so the second moves to where the first was: the line moves with it,
+    where it was on that monitor."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    s.inject("move", WIDTH + WIDTH - 20, 300)
+    s.settle("before")
+    steps = ["hold", "super", "hold", "alt", "move", WIDTH + 150, 200, "down"]
+    for i in range(1, 11):
+        steps += ["move", WIDTH + 150 + 40 * i, 200 + 20 * i]
+    steps += ["up", "release", "alt", "release", "super", "move", WIDTH + WIDTH - 20, 300]
+    s.inject(*steps)
+    on_line = [(150 + 40 * i, 200 + 20 * i) for i in range(0, 11)]
+    drawn = s.settle("drawn")
+    red = sum(is_red(drawn.pixel(WIDTH + x, y)) for x, y in on_line)
+    s.check(red >= 10, f"a red line on the second monitor ({red} of {len(on_line)} points)")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the first monitor turned off ({r.stderr.strip()})")
+    s.inject("move", WIDTH - 20, 300)
+    moved = s.settle("moved")
+    red = sum(is_red(moved.pixel(x, y)) for x, y in on_line)
+    s.check(red >= 10, f"the line moved with its monitor ({red} of {len(on_line)} points)")
 
 
 @scenario(setup=effects_setup("[ShowMouse]\nEnabled=true\n"))
