@@ -511,6 +511,39 @@ int xd_effects_get_choice(const xd_effects_settings *settings, size_t effect, co
     return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_CHOICE)->choice;
 }
 
+const char *xd_effects_get_choice_name(const xd_effects_settings *settings, size_t effect,
+                                       const char *key) {
+    const xd_effect_info *info = xd_effects_get_info(settings, effect);
+    size_t option = 0;
+    if (!xd_effects_find_option(info, key, &option))
+        return "";
+    int choice = xd_effects_get_choice(settings, effect, key);
+    size_t count = effects_count_choices(&info->options[option]);
+    return choice >= 0 && (size_t)choice < count ? info->options[option].choice_names[choice]
+                                                 : "";
+}
+
+const char *xd_effects_get_choice_requirement(const xd_effect_option *option, int choice) {
+    if (option->type != XD_EFFECT_OPTION_CHOICE || option->choice_requires == nullptr ||
+        choice < 0 || (size_t)choice >= effects_count_choices(option))
+        return nullptr;
+    return option->choice_requires[choice];
+}
+
+bool xd_effects_is_choice_available(const xd_effects_settings *settings, size_t effect,
+                                    size_t option, int choice, bool opengl) {
+    const xd_effect_info *info = xd_effects_get_info(settings, effect);
+    XD_ASSERT(option < info->option_count);
+    const char *needed = xd_effects_get_choice_requirement(&info->options[option], choice);
+    if (needed == nullptr)
+        return true;
+    size_t other = 0;
+    if (!xd_effects_find(settings, needed, &other))
+        return false;
+    return xd_effects_is_enabled(settings, other) &&
+           (!xd_effects_get_info(settings, other)->needs_opengl || opengl);
+}
+
 uint32_t xd_effects_get_edges(const xd_effects_settings *settings, size_t effect,
                               const char *key) {
     return effects_find_value(settings, effect, key, XD_EFFECT_OPTION_EDGE)->edges;

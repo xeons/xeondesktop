@@ -17,6 +17,8 @@ XD_EFFECT_IMPL(wobbly_windows)
 XD_EFFECT_IMPL(magic_lamp)
 XD_EFFECT_IMPL(burn)
 XD_EFFECT_IMPL(explode)
+/* Before Animations, whose events it draws when they're set to its effects. */
+XD_EFFECT_IMPL(animations_addon)
 XD_EFFECT_IMPL(water)
 #endif
 XD_EFFECT_IMPL(scale)

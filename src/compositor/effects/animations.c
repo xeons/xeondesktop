@@ -8,7 +8,9 @@
  * appearing. A closing window's mirror keeps its last picture after the
  * window has gone. Minimizing goes to the window's taskbar button, which
  * the shell tells view.c (as XP's animation in animate.c uses), and when
- * Animations animates it, XP's bar doesn't fly.
+ * Animations animates it, XP's bar doesn't fly. The Animations Add-On's
+ * effects (addon.c) are choices too: the Add-On draws those, and when it
+ * doesn't (off, or no OpenGL), Animations zooms instead.
  */
 #include <time.h>
 
@@ -107,7 +109,9 @@ static void animation_start(animations_state *state, animation_event event, xd_v
     const animation_options *options = &state->options[event];
     running_animation *animation = XD_NEW(running_animation);
     animation->view = view;
-    animation->effect = options->effect;
+    /* An Add-On effect the Add-On (addon.c, before us in the list) didn't
+     * take: it's off, or there's no OpenGL. */
+    animation->effect = xd_animation_get_fallback(options->effect);
     animation->seconds = options->seconds;
     animation->appearing = event == ANIMATION_EVENT_OPEN || event == ANIMATION_EVENT_UNMINIMIZE;
     struct wlr_box box = xd_view_outer_box(view);
@@ -229,10 +233,9 @@ static void animations_configure([[maybe_unused]] xd_server *server, void *data,
         animation_options *options = &state->options[i];
         char key[32];
         snprintf(key, sizeof(key), "%sEffect", animation_event_prefixes[i]);
-        int choice = xd_effects_get_choice(settings, effect, key);
-        options->effect = choice >= 0 && choice <= XD_ANIMATION_GLIDE_2
-                              ? (xd_animation_effect)choice
-                              : XD_ANIMATION_NONE;
+        /* By name: each event lists its own effects. */
+        options->effect =
+            xd_animation_find_effect(xd_effects_get_choice_name(settings, effect, key));
         snprintf(key, sizeof(key), "%sDuration", animation_event_prefixes[i]);
         options->seconds = xd_effects_get_int(settings, effect, key) / 1000.0;
         snprintf(key, sizeof(key), "%sWindows", animation_event_prefixes[i]);
