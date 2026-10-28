@@ -969,6 +969,30 @@ void xd_ui_destroy(xd_ui *ui) {
     }
     xd_free(ui->outputs);
     xd_free(ui->output_infos);
+    /* The globals bound from the registry, then the registry itself:
+     * disconnecting leaves their proxies' memory behind. */
+    if (ui->data_device_manager != nullptr)
+        wl_data_device_manager_destroy(ui->data_device_manager);
+    if (ui->xdg_output_manager != nullptr)
+        zxdg_output_manager_v1_destroy(ui->xdg_output_manager);
+    if (ui->cursor_shape_manager != nullptr)
+        wp_cursor_shape_manager_v1_destroy(ui->cursor_shape_manager);
+    if (ui->viewporter != nullptr)
+        wp_viewporter_destroy(ui->viewporter);
+    if (ui->fractional_manager != nullptr)
+        wp_fractional_scale_manager_v1_destroy(ui->fractional_manager);
+    if (ui->wm_base != nullptr)
+        xdg_wm_base_destroy(ui->wm_base);
+    if (ui->seat != nullptr && wl_seat_get_version(ui->seat) >= WL_SEAT_RELEASE_SINCE_VERSION)
+        wl_seat_release(ui->seat);
+    else if (ui->seat != nullptr)
+        wl_seat_destroy(ui->seat);
+    if (ui->shm != nullptr)
+        wl_shm_destroy(ui->shm);
+    if (ui->compositor != nullptr)
+        wl_compositor_destroy(ui->compositor);
+    if (ui->registry != nullptr)
+        wl_registry_destroy(ui->registry);
     if (ui->display != nullptr)
         wl_display_disconnect(ui->display);
     xd_free(ui);

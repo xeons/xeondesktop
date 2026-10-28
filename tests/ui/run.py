@@ -167,7 +167,11 @@ def leak_check_environment():
     """ASan's options for a session's programs: leaks unchecked, unless
     XD_UI_LEAK_LOG names a directory, where each program that leaks then
     writes its report (lsan.PID) as it exits; the session gets longer to
-    end, for the reports to be written."""
+    end, for the reports to be written. Whole stacks make every program
+    slow: run a few scenarios at a time, as a full parallel suite then
+    times out in places. A report that begins "ptrace appears to be
+    blocked" (the namespace blocks LSan's thread tracer) can count live
+    memory of the program's other threads as leaked."""
     directory = os.environ.get("XD_UI_LEAK_LOG")
     if not directory:
         return {"ASAN_OPTIONS": "detect_leaks=0"}
