@@ -1058,6 +1058,22 @@ static void on_defragment(GtkButton *button, gpointer data) {
     g_free(msg);
 }
 
+/* Disk Benchmark and Health, on this drive. */
+static void on_test_now([[maybe_unused]] GtkButton *button, gpointer data) {
+    tools *tools_tab = data;
+    g_autofree char *path = g_file_get_path(tools_tab->item);
+    const char *argv[] = {"xd-diskbench", "--drive", path, nullptr};
+    GError *error = nullptr;
+    if (path == nullptr ||
+        !g_spawn_async(nullptr, (char **)(void *)argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                       nullptr, nullptr, &error)) {
+        xd_message_box(GTK_WINDOW(tools_tab->dialog), "Disk Benchmark and Health", XD_MB_ERROR,
+                       XD_MB_OK, FALSE,
+                       error != nullptr ? error->message : "This drive isn't a local one.");
+        g_clear_error(&error);
+    }
+}
+
 static void on_backup(GtkButton *button, gpointer data) {
     (void)button;
     tools *tools_tab = data;
@@ -1133,6 +1149,9 @@ GtkWidget *xd_drive_tools_page(GtkWidget *dialog, GFile *item, const char *name,
                "This option will defragment files on the volume.", "_Defragment Now...",
                G_CALLBACK(on_defragment), tools_tab, local,
                "Only local disks can be defragmented.");
+    tool_frame(box, "Performance and health", "drive-harddisk",
+               "This option will test the drive's speed and show its health.", "_Test Now...",
+               G_CALLBACK(on_test_now), tools_tab, local, "Only local disks can be tested.");
     tool_frame(box, "Backup", "document-save", "This option will back up files on the volume.",
                "_Backup Now...", G_CALLBACK(on_backup), tools_tab, tools_tab->backup != nullptr,
                "No backup program is installed (such as Déjà Dup or Pika Backup).");

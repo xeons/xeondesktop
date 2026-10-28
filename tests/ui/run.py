@@ -4939,6 +4939,42 @@ def disk_health(s):
 
 
 @scenario(requires=("dbusmock",))
+def drive_tools_test_now(s):
+    """My Computer's drive (on a dbusmock UDisks2): its Properties' Tools
+    tab has Performance and health, whose Test Now... opens Disk Benchmark
+    and Health."""
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        empty = s.settle("desktop")
+        s.launch("xd-files", "computer:///")
+        s.wait_window(title="My Computer", state="activated")
+        x, y, _, _ = s.settle("my computer").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        # The first of Hard Disk Drives, then its Properties' Tools tab.
+        s.inject("move", x + 264, y + 278, "click", "sleep", 300, "key", "alt+Return")
+        s.wait(lambda: s.window(title="My Computer") is None
+               or "activated" not in s.window(title="My Computer")["states"],
+               "the drive's Properties")  # fmt: skip
+        s.settle("properties")
+        s.inject("key", "ctrl+Tab", "sleep", 300)
+        s.settle("tools")
+        s.inject("key", "alt+t")
+        s.wait_window(title="Disk Benchmark and Health", state="activated")
+        s.log("ok: Test Now... opened Disk Benchmark and Health")
+        s.settle("diskbench")
+        s.inject("key", "alt+F4")
+        s.wait_window(title="Disk Benchmark and Health", gone=True, timeout=10)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(requires=("dbusmock",))
 def disk_management_startup_format(s):
     """Disk Management (on a dbusmock UDisks2): Change Mount Point adds,
     changes and removes the USB stick's /etc/fstab entry through UDisks2's
