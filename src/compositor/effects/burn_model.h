@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Burn's maths: the flame front crossing a closing window, and the fire
- * particles it gives off. Pure, no wlroots or GL, so it's unit-tested;
- * burn.c's shader draws the front the same way (with some noise).
+ * and smoke particles it gives off. Pure, no wlroots or GL, so it's
+ * unit-tested; burn.c's shader draws the front the same way (with some noise).
  */
 #ifndef XD_COMPOSITOR_EFFECTS_BURN_MODEL_H
 #define XD_COMPOSITOR_EFFECTS_BURN_MODEL_H
@@ -62,5 +62,32 @@ bool xd_burn_add_particle(xd_burn_particles *particles, const xd_burn_particle *
 /* Moves each by `seconds`: it rises (fire goes up), slows by `slowdown`
  * a second, and ages; dead ones go. */
 void xd_burn_step_particles(xd_burn_particles *particles, double seconds, double slowdown);
+
+/* ---- smoke ---------------------------------------------------------------------- */
+
+/* Grey puffs rising from the front, drawn behind the sparks: they drift
+ * up, slow, grow and fade, each within `life` seconds, so the last are
+ * gone that long after the fire is. Each is an xd_burn_particle whose
+ * colour is its grey. */
+typedef struct xd_burn_smoke_options {
+    int count;   /* about how many alight at once */
+    double size; /* a new puff's radius, layout units; it grows to 3 times that */
+    double life; /* the longest a puff lasts, seconds */
+} xd_burn_smoke_options;
+
+/* Gives off the puffs owed for `seconds` of burning along the front at
+ * `front` (xd_burn_get_front's) of the window at `box` (x, y, width and
+ * height, layout units); `owed` carries the fraction of a puff over to
+ * the next call. */
+void xd_burn_spawn_smoke(xd_burn_particles *smoke, const xd_burn_smoke_options *options,
+                         xd_burn_direction direction, double front, const double box[4],
+                         double seconds, double *owed);
+/* Moves each by `seconds`: it drifts up more gently than a spark, slows
+ * half as fast (`slowdown` is the sparks'), and ages; dead ones go. */
+void xd_burn_step_smoke(xd_burn_particles *smoke, double seconds, double slowdown);
+/* A puff's radius as it is now (it swells as it ages), and its opacity
+ * (0..1: fading in as it's born and out as it dies). */
+void xd_burn_get_puff(const xd_burn_particle *puff, double size, double *radius,
+                      double *opacity);
 
 #endif
