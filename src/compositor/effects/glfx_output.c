@@ -23,7 +23,8 @@
  * steps of px (llvmpipe and udmabuf). */
 static constexpr int MAX_PX = 8192;
 static constexpr int BUFFER_STEP = 64;
-enum { MAX_OUTPUTS = 16, SYNCED_MAX = 32 };
+/* A capture's swapchains: one a size it's drawn at (each monitor's). */
+enum { MAX_OUTPUTS = 16, CAPTURE_CHAINS = 4 };
 
 /* XD_EFFECTS_TIMING: what whole-output effects cost, logged over this
  * long (glfx.c logs window effects'). */
@@ -88,11 +89,16 @@ static struct wlr_swapchain *output_create_chain(xd_server *server, int width, i
     return chain;
 }
 
+/* Whether a swapchain's buffers suit width x height px. */
+static bool output_does_chain_fit(const struct wlr_swapchain *chain, int width, int height) {
+    return chain != nullptr && chain->width >= width && chain->height >= height &&
+           chain->width < width + 2 * BUFFER_STEP && chain->height < height + 2 * BUFFER_STEP;
+}
+
 /* A swapchain for width x height px, made anew when it doesn't fit. */
 static bool output_ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width,
                                 int height) {
-    if (*chain != nullptr && (*chain)->width >= width && (*chain)->height >= height &&
-        (*chain)->width < width + 2 * BUFFER_STEP && (*chain)->height < height + 2 * BUFFER_STEP)
+    if (output_does_chain_fit(*chain, width, height))
         return true;
     if (*chain != nullptr)
         wlr_swapchain_destroy(*chain);
@@ -110,10 +116,18 @@ typedef struct cached_texture {
     bool used; /* in the last capture */
 } cached_texture;
 
+typedef struct capture_chain {
+    struct wlr_swapchain *chain;
+    uint64_t last_use;
+} capture_chain;
+
 struct xd_glfx_scene_capture {
     struct wl_list link; /* captures */
     xd_server *server;
-    struct wlr_swapchain *chain;
+    /* An effect on monitors of different sizes captures at each one's:
+     * a chain a size, so none is made anew every frame. */
+    capture_chain chains[CAPTURE_CHAINS];
+    uint64_t uses;
     struct wlr_buffer *buffer; /* the last capture's, locked */
     struct wlr_texture *texture;
     cached_texture *cache;
@@ -181,8 +195,10 @@ void xd_glfx_destroy_scene_capture(xd_glfx_scene_capture *capture) {
         wlr_buffer_unlock(capture->cache[i].buffer);
     }
     xd_free(capture->cache);
-    if (capture->chain != nullptr)
-        wlr_swapchain_destroy(capture->chain);
+    for (size_t i = 0; i < CAPTURE_CHAINS; i++) {
+        if (capture->chains[i].chain != nullptr)
+            wlr_swapchain_destroy(capture->chains[i].chain);
+    }
     wl_list_remove(&capture->link);
     xd_free(capture);
     if (wl_list_empty(&captures))
@@ -227,6 +243,27 @@ static void capture_trim_cache(xd_glfx_scene_capture *capture) {
     capture->cache_count = kept;
 }
 
+/* The capture's chain for width x height px: one that fits, else made in
+ * place of the one used longest ago. */
+static struct wlr_swapchain *capture_get_chain(xd_glfx_scene_capture *capture, int width,
+                                               int height) {
+    capture_chain *chosen = &capture->chains[0];
+    for (size_t i = 0; i < CAPTURE_CHAINS; i++) {
+        capture_chain *entry = &capture->chains[i];
+        if (output_does_chain_fit(entry->chain, width, height)) {
+            chosen = entry;
+            break;
+        }
+        if (entry->chain == nullptr ||
+            (chosen->chain != nullptr && entry->last_use < chosen->last_use))
+            chosen = entry;
+    }
+    if (!output_ensure_chain(capture->server, &chosen->chain, width, height))
+        return nullptr;
+    chosen->last_use = ++capture->uses;
+    return chosen->chain;
+}
+
 typedef struct capture_walk {
     xd_glfx_scene_capture *capture;
     struct wlr_render_pass *pass;
@@ -235,8 +272,8 @@ typedef struct capture_walk {
     bool layers;
     xd_glfx_view_filter include_view;
     void *data;
-    struct wlr_linux_drm_syncobj_surface_v1_state *synced[SYNCED_MAX];
-    size_t synced_count;
+    struct wlr_linux_drm_syncobj_surface_v1_state **synced;
+    size_t synced_count, synced_capacity;
 } capture_walk;
 
 /* A box in layout units to the target's px. */
@@ -262,10 +299,14 @@ static void capture_draw_buffer(capture_walk *walk, struct wlr_scene_buffer *buf
     if (scene_surface != nullptr) {
         texture = wlr_surface_get_texture(scene_surface->surface);
         sync = wlr_linux_drm_syncobj_v1_get_surface_state(scene_surface->surface);
-        if (sync != nullptr && walk->synced_count == SYNCED_MAX)
-            return;
-        if (sync != nullptr)
+        if (sync != nullptr) {
+            if (walk->synced_count == walk->synced_capacity) {
+                walk->synced_capacity = XD_MAX(walk->synced_capacity * 2, (size_t)32);
+                walk->synced = xd_realloc_array(walk->synced, walk->synced_capacity,
+                                                sizeof(*walk->synced));
+            }
             walk->synced[walk->synced_count++] = sync;
+        }
     } else {
         if (view != nullptr && buffer == view->frame) {
             capture_keep_frame(view);
@@ -387,10 +428,11 @@ bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, d
     xd_server *server = capture->server;
     int width_px = output_round_up(box.width * scale);
     int height_px = output_round_up(box.height * scale);
-    if (box.width <= 0 || box.height <= 0 ||
-        !output_ensure_chain(server, &capture->chain, width_px, height_px))
+    struct wlr_swapchain *chain =
+        box.width > 0 && box.height > 0 ? capture_get_chain(capture, width_px, height_px) : nullptr;
+    if (chain == nullptr)
         return false;
-    struct wlr_buffer *target = wlr_swapchain_acquire(capture->chain);
+    struct wlr_buffer *target = wlr_swapchain_acquire(chain);
     if (target == nullptr)
         return false;
     /* With explicit sync, the pass signals a point of capture.c's
@@ -434,6 +476,7 @@ bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, d
     for (size_t i = 0; ok && options.signal_timeline != nullptr && i < walk.synced_count; i++)
         wlr_linux_drm_syncobj_v1_state_add_release_point(walk.synced[i], options.signal_timeline,
                                                          options.signal_point, server->loop);
+    xd_free(walk.synced);
     capture_trim_cache(capture);
     struct wlr_texture *texture = ok ? wlr_texture_from_buffer(server->renderer, target) : nullptr;
     if (texture == nullptr) {
@@ -448,8 +491,6 @@ bool xd_glfx_capture_scene(xd_glfx_scene_capture *capture, struct wlr_box box, d
     *out = (xd_glfx_texture){
         .id = attribs.tex,
         .target = attribs.target,
-        .width = width_px,
-        .height = height_px,
         .u_scale = (float)width_px / (float)target->width,
         .v_scale = (float)height_px / (float)target->height,
         .box = {box.x, box.y, box.width, box.height},
@@ -630,7 +671,7 @@ static const char fill_fragment[] = "precision mediump float;\n"
                                     "}\n";
 
 /* Compiled the first time (a pass is running: the context is current);
- * they go with the renderer's context. */
+ * xd_glfx_finish destroys them. */
 static struct {
     bool tried;
     xd_glfx_shader quad_2d, quad_external, fill;

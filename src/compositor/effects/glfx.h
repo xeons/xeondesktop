@@ -44,7 +44,10 @@
  * its texture `uniform XD_SAMPLER texture0;` and samples it with
  * texture2D, and is compiled for 2D textures or external ones (`target`
  * GL_TEXTURE_2D or GL_TEXTURE_EXTERNAL_OES) with XD_SAMPLER defined to
- * match. Compile errors are logged. */
+ * match. Compile errors are logged. A shader lives till
+ * xd_glfx_destroy_shader (inside a pass, or with the context otherwise
+ * current), or till xd_glfx_finish destroys every one left: one in
+ * storage that goes before then is destroyed first. */
 typedef struct xd_glfx_shader {
     GLuint program;
     GLint position, texcoord;
@@ -85,7 +88,6 @@ struct wlr_fbox xd_glfx_get_mesh_bounds(const xd_glfx_mesh *mesh);
 typedef struct xd_glfx_texture {
     GLuint id;
     GLenum target; /* GL_TEXTURE_2D or GL_TEXTURE_EXTERNAL_OES */
-    int width, height; /* device px of the picture */
     /* The picture fills this much of the texture across and down, from
      * its top left (the buffer is bigger): texture coordinates 0..1 over
      * the picture are multiplied by these. */
@@ -109,9 +111,8 @@ void xd_glfx_draw_mesh_with(const xd_glfx_draw *draw, const xd_glfx_mesh *mesh,
                             const xd_glfx_texture *texture, const xd_glfx_shader *shader,
                             float alpha);
 
-/* 4 x 4 matrices, column-major as GL takes them. */
+/* A 4 x 4 matrix, column-major as GL takes it. */
 void xd_glfx_set_ortho(float out[16], struct wlr_box box);
-void xd_glfx_multiply(float out[16], const float left[16], const float right[16]);
 
 /* ---- window effects ------------------------------------------------------------- */
 
@@ -171,7 +172,6 @@ xd_window_effect *xd_glfx_begin_closing_window(xd_view *view, const xd_window_ef
 xd_window_effect *xd_glfx_find_window(xd_view *view, const xd_window_effect_impl *impl);
 /* Ends it now (calls done): the window is drawn as itself again. */
 void xd_glfx_end_window(xd_window_effect *effect);
-bool xd_glfx_has_window_effects(const xd_server *server);
 
 /* effects.c's: the renderer's name in `support`; false without GLES. */
 bool xd_glfx_init(xd_server *server, xd_effects_support *support);
