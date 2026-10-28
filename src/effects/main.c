@@ -120,7 +120,11 @@ static GtkWidget *panel_new_label(const char *text, float xalign) {
 /* A group box, as XP's property sheets have them. */
 static GtkWidget *panel_new_group(const char *title, GtkWidget *child) {
     GtkWidget *frame = gtk_frame_new(title);
-    gtk_container_set_border_width(GTK_CONTAINER(child), 6);
+    /* An entry (the Filter box) isn't a container: it's inset by its margin. */
+    if (GTK_IS_CONTAINER(child))
+        gtk_container_set_border_width(GTK_CONTAINER(child), 6);
+    else
+        g_object_set(child, "margin", 6, nullptr);
     gtk_container_add(GTK_CONTAINER(frame), child);
     return frame;
 }
@@ -1266,6 +1270,8 @@ int main(int argc, char **argv) {
     else
         gtk_widget_grab_focus(app.filter);
     gtk_main();
+    /* The window took the page's notebook with it; only its rows are left. */
+    app.page_notebook = nullptr;
     panel_clear_page(&app);
     xd_free(app.tiles);
     xd_effects_destroy_settings(app.settings);

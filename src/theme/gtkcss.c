@@ -846,9 +846,14 @@ static void combo_lists(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buff
                       "#gtk-combobox-popup-window treeview.view {\n"
                       "  -GtkTreeView-vertical-separator: 0; background-color: %s; color: %s;\n}\n"
                       "#gtk-combobox-popup-window treeview.view:selected {\n"
-                      "  background-color: %s; color: %s;\n}\n",
+                      "  background-color: %s; color: %s;\n}\n"
+                      /* Choices that can't be picked (a cell made insensitive) are
+                       * greyed, as the closed field shows them: the rule above, by ID,
+                       * outranks the general *:disabled. */
+                      "#gtk-combobox-popup-window treeview.view:disabled { color: %s; }\n",
                       H(border), H(toolkit_colors->base), H(toolkit_colors->text),
-                      H(toolkit_colors->selected_bg), H(toolkit_colors->selected_fg));
+                      H(toolkit_colors->selected_bg), H(toolkit_colors->selected_fg),
+                      H(toolkit_colors->disabled));
 }
 
 /* The file chooser as far as CSS reaches XP's Open dialog: the places

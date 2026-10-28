@@ -1235,6 +1235,34 @@ def animations_addon_panel(s):
            "Up from Glide 2 picks Glide 1")
     s.log("ok: the Effect list still works")
     s.check(before is not None, "the page showed")
+    # Dropped down, the list shows them greyed too: Glide 2's row (the
+    # fifth of thirteen) has black text, Airplane's (the sixth) none.
+    closed = s.settle("closed-list")
+    s.inject("key", "alt+Down", "sleep", 500)
+    dropped = s.settle("open-list")
+    changed = dropped.changed_box(closed)
+    s.check(changed is not None, "the list dropped down")
+    # Its lower half is the list alone (Alt also changes the label above);
+    # its top is where its left border ends.
+    cx, cy, cw, ch = changed
+    lx, _, lw, lower = dropped.changed_box(closed, (cx, cy + ch // 2, cw, ch - ch // 2), step=1)
+    bottom = cy + ch // 2 + lower - 1
+    top = bottom
+    while top > 0 and dropped.pixel(lx, top - 1) == dropped.pixel(lx, bottom):
+        top -= 1
+    row_height = (bottom - top - 1) // 13
+
+    def get_darkest(row):
+        row_top = top + 1 + row * row_height
+        return min(sum(dropped.pixel(x, y)) // 3
+                   for y in range(row_top + 2, row_top + row_height - 2)
+                   for x in range(lx + 2, lx + lw - 2))
+
+    enabled, greyed = get_darkest(4), get_darkest(5)
+    s.log(f"darkest text: {enabled} in Glide 2's row, {greyed} in Airplane's")
+    s.check(enabled < 60 and greyed > 90,
+            f"the dropped-down list greys the Add-On's effects ({enabled}, {greyed})")
+    s.inject("key", "Escape", "sleep", 300)
 
     s.inject("key", "alt+F4")
     s.wait_window(title="Desktop Effects", gone=True)

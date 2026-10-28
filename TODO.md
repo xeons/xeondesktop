@@ -1323,16 +1323,12 @@ against mocks or scratch directories; none yet against the real services.
         Fold, Glide 3, Leaf Spread and Skewer, chosen per event on
         Animations' page, their options on their own page; greyed (Zoom
         used instead) while the Add-On is off or can't be drawn. Looks
-        await the user's review; option defaults and some motions (Razr,
-        Fold's folds, Glide 3's away position, the plane's folds) are from
-        memory of Compiz, not checked against it.
-      - [ ] Add-On: in the Classic style, the open drop-down list draws the
-        greyed choices in the normal colour (the closed list and the
-        keyboard skip them correctly). Burn and Explode aren't per-event
-        choices as in CCSM. Compiz's shade and focus events, its "time
-        step for intense effects" and polygon lighting are left out.
-      - [ ] Gtk-CRITICAL at Desktop Effects' startup: panel_new_group()
-        is handed the search entry, not a container (src/effects/main.c).
+        reviewed by the user (2026-10-27); option defaults and some
+        motions (Razr, Fold's folds, Glide 3's away position, the plane's
+        folds) are from memory of Compiz, not checked against it.
+      - [ ] Add-On: Burn and Explode aren't per-event choices as in CCSM.
+        Compiz's shade and focus events, its "time step for intense
+        effects" and polygon lighting are left out.
       - [x] Virtual desktops (General Options' Desktop Size): Ctrl+Alt+
         arrows switch, Ctrl+Alt+Shift+arrows carry the window, window menu
         items, a taskbar pager; Desktop Wall (slide, map, edge flip),
