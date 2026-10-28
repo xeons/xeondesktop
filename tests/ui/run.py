@@ -2034,6 +2034,34 @@ def annotate_stroke(s):
     s.check(cleared.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.01, "Windows+Alt+K clears it")
 
 
+@scenario(setup=effects_setup("[Annotate]\nEnabled=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1)])
+def annotate_output_moved(s):
+    """Annotate on the second of two monitors, the first then turned off,
+    so the second moves to where the first was: the line moves with it,
+    where it was on that monitor."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    s.inject("move", WIDTH + WIDTH - 20, 300)
+    s.settle("before")
+    steps = ["hold", "super", "hold", "alt", "move", WIDTH + 150, 200, "down"]
+    for i in range(1, 11):
+        steps += ["move", WIDTH + 150 + 40 * i, 200 + 20 * i]
+    steps += ["up", "release", "alt", "release", "super", "move", WIDTH + WIDTH - 20, 300]
+    s.inject(*steps)
+    on_line = [(150 + 40 * i, 200 + 20 * i) for i in range(0, 11)]
+    drawn = s.settle("drawn")
+    red = sum(is_red(drawn.pixel(WIDTH + x, y)) for x, y in on_line)
+    s.check(red >= 10, f"a red line on the second monitor ({red} of {len(on_line)} points)")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the first monitor turned off ({r.stderr.strip()})")
+    s.inject("move", WIDTH - 20, 300)
+    moved = s.settle("moved")
+    red = sum(is_red(moved.pixel(x, y)) for x, y in on_line)
+    s.check(red >= 10, f"the line moved with its monitor ({red} of {len(on_line)} points)")
+
+
 @scenario(setup=effects_setup("[ShowMouse]\nEnabled=true\n"))
 def show_mouse_ring(s):
     """Show Mouse: Windows+K switches on a turning ring of glowing dots
