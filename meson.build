@@ -769,6 +769,7 @@ install_data(
   'data/applications/org.xeondesktop.Services.desktop',
   'data/applications/org.xeondesktop.EventViewer.desktop',
   'data/applications/org.xeondesktop.DiskManagement.desktop',
+  'data/applications/org.xeondesktop.DiskBenchmark.desktop',
   'data/applications/org.xeondesktop.AddRemovePrograms.desktop',
   'data/applications/org.xeondesktop.Flatpak.desktop',
   'data/applications/org.xeondesktop.Printers.desktop',
@@ -1166,6 +1167,21 @@ executable(
   install: true,
 )
 
+# Disk Benchmark and Health: a drive's speed (io_uring, through liburing)
+# and its S.M.A.R.T. data (UDisks2).
+liburing_dep = dependency('liburing', include_type: 'system')
+executable(
+  'xd-diskbench',
+  'src/diskbench/main.c',
+  'src/diskbench/health.c',
+  'src/diskbench/benchlib.c',
+  'src/diskbench/engine.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, liburing_dep],
+  install: true,
+)
+
 # Add or Remove Programs: PackageKit and Flatpak.
 packagekit_dep = dependency('packagekit-glib2', include_type: 'system')
 executable(
@@ -1500,6 +1516,8 @@ test_exe = executable(
   'src/joy/joyinfo.c',
   'src/netconn/netconn.c',
   'src/admin/admin.c',
+  'src/diskbench/benchlib.c',
+  'src/diskbench/engine.c',
   'src/appwiz/programs.c',
   'src/wuaucpl/updlib.c',
   'src/wuaucpl/state.c',
@@ -1550,7 +1568,8 @@ test_exe = executable(
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
-                 sane_dep.partial_dependency(compile_args: true), lcms2_dep, archive_dep],
+                 sane_dep.partial_dependency(compile_args: true), lcms2_dep, archive_dep,
+                 liburing_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE',
            '-DXD_VERSION="' + meson.project_version() + '"',
            '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')] + lcms2_args,
@@ -1675,7 +1694,7 @@ configure_file(
 install_man(
   'man/xd-access.1', 'man/xd-admintools.1', 'man/xd-appwiz.1', 'man/xd-bluetooth.1',
   'man/xd-choose-file.1', 'man/xd-color.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
-  'man/xd-diskmgmt.1', 'man/xd-effects.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1',
+  'man/xd-diskbench.1', 'man/xd-diskmgmt.1', 'man/xd-effects.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1',
   'man/xd-files.1',
   'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',

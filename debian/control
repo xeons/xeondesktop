@@ -72,6 +72,7 @@ Build-Depends:
  libgles-dev,
  libpixman-1-dev,
  liblcms2-dev,
+ liburing-dev,
  fonts-dejavu-core <!nocheck>,
 Standards-Version: 4.7.2
 Homepage: https://github.com/xeons/xeondesktop
@@ -93,6 +94,7 @@ Depends:
  fonts-adobe-sourcesans3,
  fonts-roboto-unhinted,
  fonts-open-sans,
+ liburing2,
 Recommends:
  xwayland,
  xdg-desktop-portal,

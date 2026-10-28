@@ -4769,6 +4769,175 @@ def disk_management_menu(s):
         DBusTestCase.tearDownClass()
 
 
+def diskbench_settings(s, runs, measure_seconds, size_mib):
+    """xd-diskbench's settings: a short run, without the wait between tests."""
+    with open(os.path.join(s.config, "diskbench.ini"), "w") as f:
+        f.write(f"[Benchmark]\nRuns={runs}\nMeasureSeconds={measure_seconds}\n"
+                f"IntervalSeconds=0\nTestSize={size_mib * 1024 * 1024}\n")
+
+
+def diskbench_copy(s):
+    """Edit > Copy in xd-diskbench (Ctrl+C), and the clipboard's text."""
+    s.inject("key", "ctrl+c", "sleep", 300)
+    r = subprocess.run([s.tool("xd-paste"), "text/plain;charset=utf-8"],
+                       stdout=subprocess.PIPE, timeout=10)  # fmt: skip
+    return r.stdout.decode(errors="replace") if r.returncode == 0 else ""
+
+
+def diskbench_cells(text):
+    """The results table of Copy's text: {test: (read, write)}."""
+    cells = {}
+    for line in text.splitlines():
+        if line.startswith(("Sequential, ", "Random, ", "Mixed ")) and ":" not in line:
+            name, _, rest = line.partition(" thread")
+            values = rest.split()
+            cells[name + " thread"] = (" ".join(values[0:2]), " ".join(values[2:4]))
+    return cells
+
+
+@scenario()
+def disk_benchmark_all(s):
+    """Disk Benchmark and Health's All, on a 16 MiB test file in a scratch
+    folder (one 1-second run each): every test's read and write get a
+    result, Copy has them with the folder, size and settings, and the test
+    file and its hidden folder are gone afterwards."""
+    folder = os.path.join(s.home, "bench")
+    os.makedirs(folder)
+    diskbench_settings(s, 1, 1, 16)
+    s.launch("xd-diskbench", "--folder", folder)
+    s.wait_window(title="Disk Benchmark and Health", state="activated")
+    s.settle("benchmark")
+    s.inject("key", "alt+a")
+
+    def finished():
+        cells = diskbench_cells(diskbench_copy(s))
+        values = [v for pair in cells.values() for v in pair]
+        return len(values) == 8 and all(v.endswith(" MB/s") for v in values)
+
+    s.wait(finished, "every test's read and write result", timeout=90)
+    s.wait(lambda: os.listdir(folder) == [], "the test file and its folder to be deleted")
+    text = diskbench_copy(s)
+    s.check(f"Drive: bench ({folder})" in text and "Test size: 16 MiB, best of 1 run" in text
+            and "Test data: Random" in text and "Profile: Default" in text,
+            "Copy names the folder, the test size and the settings")  # fmt: skip
+    cells = diskbench_cells(text)
+    s.check(all(float(v.split()[0]) > 0 for pair in cells.values() for v in pair),
+            f"all eight results are numbers above 0 ({cells})")  # fmt: skip
+    s.check("Sequential, 1 MiB blocks, queue depth 8, 1 thread" in cells
+            and "Random, 4 KiB blocks, queue depth 1, 1 thread" in cells,
+            "the default tests, by name")  # fmt: skip
+    s.settle("finished")
+    # Settings... (Alt+S once nothing runs), and Cancel (Escape).
+    def bench_active():
+        w = s.window(title="Disk Benchmark and Health")
+        return w is not None and "activated" in w["states"]
+
+    s.inject("key", "alt+s")
+    s.wait(lambda: not bench_active(), "the Settings dialog")
+    s.settle("settings")
+    s.inject("key", "Escape")
+    s.wait(bench_active, "the Settings dialog to close")
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Disk Benchmark and Health", gone=True, timeout=10)
+
+
+@scenario()
+def disk_benchmark_stop(s):
+    """Disk Benchmark and Health: Stop in the middle of a run deletes the
+    test file, and so does closing the window while a test runs."""
+    folder = os.path.join(s.home, "bench")
+    os.makedirs(folder)
+    work = os.path.join(folder, ".xd-diskbench")
+    diskbench_settings(s, 3, 5, 32)
+    s.launch("xd-diskbench", "--folder", folder)
+    s.wait_window(title="Disk Benchmark and Health", state="activated")
+    s.settle("benchmark")
+
+    def test_file():
+        return os.path.isdir(work) and any(n.endswith(".tmp") for n in os.listdir(work))
+
+    # All, then Stop (Alt+S, as the All button reads while it runs).
+    s.inject("key", "alt+a")
+    s.wait(test_file, "the test file")
+    s.inject("sleep", 1500, "key", "alt+s")
+    s.wait(lambda: os.listdir(folder) == [], "Stop to delete the test file", timeout=15)
+    s.check(s.window(title="Disk Benchmark and Health") is not None, "the window stays open")
+    s.log("ok: stopped mid-run, the test file is gone")
+
+    s.inject("key", "alt+a")
+    s.wait(test_file, "the test file again")
+    s.inject("sleep", 1000, "key", "alt+F4")
+    s.wait_window(title="Disk Benchmark and Health", gone=True, timeout=15)
+    s.wait(lambda: os.listdir(folder) == [], "closing to delete the test file", timeout=15)
+    s.log("ok: closed mid-run, the test file is gone")
+
+
+@scenario(requires=("dbusmock",))
+def disk_health(s):
+    """Disk Benchmark and Health's Health tab on a dbusmock UDisks2 with
+    S.M.A.R.T. data: the healthy ATA drive is Good, the one with pending
+    sectors Caution, the stick without S.M.A.R.T. Unknown, the NVMe drive
+    Good with its health log; Refresh (F5) asks UDisks2 for SmartUpdate."""
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {"smart": True}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        udisks = DBusTestCase.get_dbus(system_bus=True).get_object(
+            "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2"
+        )
+        s.launch("xd-diskbench", "--page", "1")
+        s.wait_window(title="Disk Benchmark and Health", state="activated")
+        s.settle("health")
+
+        def drive_text(model):
+            def copied():
+                text = diskbench_copy(s)
+                return text if f"Drive: {model}" in text and "Reading" not in text else ""
+
+            return s.wait(copied, f"{model}'s health on the clipboard")
+
+        text = drive_text("VBOX HARDDISK")
+        s.check("Health status: Good" in text and "Temperature: 36 °C" in text
+                and "05\tReallocated sector count\t100\t100\t36\t0 sectors" in text
+                and "Rotation rate: 7200 RPM" in text and "Power-on hours: 7321 hours" in text,
+                "the healthy ATA drive is Good, with its attributes")  # fmt: skip
+        s.settle("ata-good")
+        # The drive list (Alt+R), down a drive at a time.
+        s.inject("key", "alt+r", "sleep", 300, "key", "Down", "sleep", 500)
+        text = drive_text("QEMU HARDDISK")
+        s.check("Health status: Caution" in text and "(C5)" in text
+                and "C5\tCurrent pending sector\t100\t100\t0\t8 sectors" in text,
+                "the drive with pending sectors is Caution")  # fmt: skip
+        s.settle("ata-caution")
+        s.inject("key", "Down", "sleep", 300, "key", "Down", "sleep", 500)
+        text = drive_text("SanDisk Cruzer")
+        s.check("Health status: Unknown" in text and "USB drives" in text
+                and "Interface: USB" in text,
+                "the USB stick is Unknown, with the reason")  # fmt: skip
+        s.inject("key", "Down", "sleep", 500)
+        text = drive_text("Samsung SSD 980 PRO 1TB")
+        s.check("Health status: Good" in text and "Health log" in text
+                and "Available spare: 100%" in text and "Data written: 31.9 TB" in text
+                and "Unsafe shutdowns: 41" in text and "Rotation rate: SSD" in text,
+                "the NVMe drive is Good, with its health log")  # fmt: skip
+        s.settle("nvme")
+        s.inject("key", "F5")
+        nvme = "/org/freedesktop/UDisks2/drives/Samsung_SSD_980_PRO_1TB_nvme0"
+        s.wait(lambda: f"SmartUpdate {nvme}" in [str(c) for c in
+                                                  udisks.MockCalls(dbus_interface=MOCK_IFACE)],
+               "Refresh to call SmartUpdate")  # fmt: skip
+        s.log("ok: F5 asked UDisks2 to read the NVMe drive again")
+        s.inject("key", "alt+F4")
+        s.wait_window(title="Disk Benchmark and Health", gone=True, timeout=10)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 @scenario(requires=("dbusmock",))
 def disk_management_startup_format(s):
     """Disk Management (on a dbusmock UDisks2): Change Mount Point adds,

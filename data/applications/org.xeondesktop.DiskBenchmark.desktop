@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Disk Benchmark and Health
+Comment=Measures a drive's read and write speed and shows its S.M.A.R.T. health
+Exec=xd-diskbench
+Icon=drive-harddisk
+Terminal=false
+NoDisplay=true
+Categories=System;GTK;
+X-XeonDesktop-AdminTool=true
+StartupWMClass=org.xeondesktop.DiskBenchmark
