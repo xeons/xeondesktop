@@ -2138,6 +2138,103 @@ def window_opacity_saturation_wobbly(s):
     s.check(spread <= 6, f"dropped, it's grey ({spread})")
 
 
+def column_runs(shot, background, x, tolerance=24):
+    """As bright_runs, down column x."""
+    runs, start = [], None
+    for y in range(HEIGHT + 1):
+        on = y < HEIGHT and max(abs(a - b) for a, b in
+                                zip(shot.pixel(x, y), background)) > tolerance
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if y - start >= 20:
+                runs.append((start, y - 1))
+            start = None
+    return runs
+
+
+@scenario(setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nBrightnessRule1Windows=title=Control Panel\n"
+    "BrightnessRule1Value=0\nSaturationRule1Windows=title=Control Panel\n"
+    "SaturationRule1Value=0\n[Scale]\nEnabled=true\nOpacity=50\n"), fx=True)
+def window_opacity_scale(s):
+    """Window Opacity with Scale (xd-compositor-fx): Control Panel, made
+    black by a brightness rule (and grey by a saturation one), is a black
+    thumbnail in Scale's layout too, at the 50% Scale gives windows not
+    under the pointer: the darkened desktop shows through at half its
+    brightness and nothing else, so no copy of the window's own coloured
+    buffers is drawn under the picture."""
+    require_opengl_effects(s)
+    empty = settle_shell_desktop(s)
+    s.inject("move", WIDTH - 20, 300)
+    box = open_control_panel(s, empty)
+    s.check(max(max(s.settle("window").pixel(x, y)) for x, y in
+                [(box[0] + 40, box[1] + 40), (box[0] + box[2] // 2, box[1] + box[3] // 2)]) <= 2,
+            "Control Panel is black")  # fmt: skip
+    s.inject("key", "shift+alt+Up", "move", 3, HEIGHT // 2)
+    grid = s.settle("grid")
+    dark = grid.pixel(3, 3)
+    s.check(darker(dark, empty.pixel(3, 3)), f"Scale shows ({dark})")
+    middle = (HEIGHT - 40) // 2
+    runs = bright_runs(grid, dark, middle, tolerance=10)
+    s.check(len(runs) == 1, f"one thumbnail ({runs})")
+    x0, x1 = runs[0]
+    rows = [r for r in column_runs(grid, dark, (x0 + x1) // 2, tolerance=10)
+            if r[0] <= middle <= r[1]]
+    s.check(len(rows) == 1, f"the thumbnail's rows ({rows})")
+    y0, y1 = rows[0]
+    worst = max(max(abs(a - b / 2) for a, b in zip(grid.pixel(x, y), dark))
+                for y in range(y0 + 3, y1 - 3, 5) for x in range(x0 + 3, x1 - 3, 7))
+    s.log(f"thumbnail {(x0, y0, x1, y1)}: at most {worst:.0f} off half the desktop's colour")
+    s.check(worst <= 6, f"the thumbnail is the black picture alone, at 50% ({worst:.0f})")
+    s.inject("key", "Escape")
+    s.settle("escaped")
+
+
+@scenario(AERO_INI, setup=effects_setup(
+    "[WindowOpacity]\nEnabled=true\nSaturationRule1Windows=title=Control Panel\n"
+    "SaturationRule1Value=0\n"), fx=True)
+def window_opacity_saturation_taskbar(s):
+    """Window Opacity's saturation in Aero (xd-compositor-fx): Control
+    Panel, given saturation 0 by a rule, has a grey thumbnail above its
+    taskbar button, as it looks, where without the rule its icons are
+    coloured."""
+    require_opengl_effects(s)
+    bar = (0, HEIGHT - 40, WIDTH, 40)
+    s.inject("move", WIDTH // 2, 300)
+    before = settle_shell_desktop(s)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    after = s.settle("window")
+    button = after.changed_box(before, bar)
+    s.check(button is not None, f"its taskbar button ({button})")
+    cx = button[0] + button[2] // 2
+
+    popups = []
+
+    def thumbnail_spread(label, base):
+        s.inject("move", cx, HEIGHT - 20, "sleep", 1000)
+        shown = s.settle(label)
+        # The first time's place: the window behind changes colour too.
+        popup = popups[0] if popups else shown.changed_box(base, (0, HEIGHT - 240, WIDTH, 200))
+        s.check(popup is not None, f"its thumbnail shows ({popup})")
+        popups.append(popup)
+        x, y, w, h = popup
+        spread = channel_spread(shown, (x + w // 4, y + h // 3, w // 2, h // 2), step=2)
+        s.log(f"thumbnail {popup}: channels at most {spread} apart in its middle")
+        s.inject("move", WIDTH // 2, 300, "sleep", 800)
+        return spread
+
+    spread = thumbnail_spread("grey-thumbnail", after)
+    s.check(spread <= 8, f"the thumbnail is grey ({spread})")
+    with open(os.path.join(s.config, "effects.ini"), "w") as f:
+        f.write("[WindowOpacity]\nEnabled=true\n")
+    s.wait(lambda: channel_spread(s.shot("coloured"), (300, 180, 300, 120)) > 40,
+           "Control Panel coloured again")
+    spread = thumbnail_spread("coloured-thumbnail", s.settle("without-rule"))
+    s.check(spread > 40, f"without the rule, it's coloured ({spread})")
+
+
 @scenario()
 def window_opacity_plain_greys(s):
     """Under the plain compositor, Window Opacity's page in Desktop

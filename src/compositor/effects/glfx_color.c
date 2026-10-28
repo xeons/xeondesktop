@@ -47,6 +47,9 @@ typedef struct color_window {
     struct wlr_swapchain *picture_chain;
     struct wlr_swapchain *adjust_chain; /* window effects' captures, coloured */
     uint64_t signature;                 /* what the picture shows */
+    /* The picture, held for the window's other pictures (mirrors,
+     * thumbnails): the scene graph lets go of it once it has a texture. */
+    xd_glfx_window_picture picture;
     bool drawn;                         /* the node has a picture */
     bool stale; /* drawn before a window effect: draw it again */
 } color_window;
@@ -263,7 +266,7 @@ static void color_show(color_window *window) {
         return;
     wlr_scene_node_set_enabled(&window->node->node, true);
     opacity_change change = {window->node, 0.0f};
-    wlr_scene_node_for_each_buffer(&view->tree->node, color_set_opacity, &change);
+    glfx_for_each_window_buffer(view, color_set_opacity, &change);
     if (!view->server->peeking)
         wlr_scene_buffer_set_opacity(window->node, window->opacity);
 }
@@ -282,8 +285,13 @@ static void color_drop(color_window *window) {
      * while it shows the window. */
     if (window->drawn && color_is_peek_shown(view)) {
         opacity_change change = {nullptr, view->server->peeking ? 1.0f : window->opacity};
-        wlr_scene_node_for_each_buffer(&view->tree->node, color_set_opacity, &change);
+        glfx_for_each_window_buffer(view, color_set_opacity, &change);
     }
+    if (window->picture.buffer != nullptr)
+        wlr_buffer_unlock(window->picture.buffer);
+    /* The taskbar's thumbnail as the window is now. */
+    if (window->drawn)
+        xd_capture_view_committed(view);
     xd_window_effect *context = &window->context;
     glfx_release_capture(context);
     if (context->frame_texture != nullptr)
@@ -349,8 +357,9 @@ static void color_hash_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, v
 static uint64_t color_get_signature(const color_window *window) {
     signature_walk walk = {.window = window, .hash = FNV_OFFSET};
     xd_view *view = window->view;
-    wlr_scene_node_coords(&view->tree->node, &walk.origin_x, &walk.origin_y);
-    wlr_scene_node_for_each_buffer(&view->tree->node, color_hash_buffer, &walk);
+    walk.origin_x = view->tree->node.x;
+    walk.origin_y = view->tree->node.y;
+    glfx_for_each_window_buffer(view, color_hash_buffer, &walk);
     color_mix_double(&walk.hash, xd_view_scale(view));
     color_mix_double(&walk.hash, (double)window->brightness);
     color_mix_double(&walk.hash, (double)window->saturation);
@@ -386,13 +395,26 @@ static bool color_redraw(color_window *window) {
     }
     struct wlr_scene_buffer *node = window->node;
     wlr_scene_buffer_set_buffer(node, picture);
-    wlr_buffer_unlock(picture); /* the scene holds its own lock */
-    wlr_scene_buffer_set_source_box(node, &(struct wlr_fbox){0, 0, width, height});
+    struct wlr_fbox source = {0, 0, width, height};
+    wlr_scene_buffer_set_source_box(node, &source);
     wlr_scene_buffer_set_dest_size(node, (int)box.width, (int)box.height);
-    int origin_x = 0, origin_y = 0;
-    wlr_scene_node_coords(&view->tree->node, &origin_x, &origin_y);
-    wlr_scene_node_set_position(&node->node, (int)box.x - origin_x, (int)box.y - origin_y);
+    int x = (int)box.x - view->tree->node.x, y = (int)box.y - view->tree->node.y;
+    wlr_scene_node_set_position(&node->node, x, y);
     wlr_scene_node_raise_to_top(&node->node);
+    if (window->picture.buffer != nullptr)
+        wlr_buffer_unlock(window->picture.buffer);
+    window->picture = (xd_glfx_window_picture){
+        .buffer = picture, /* our lock, from the swapchain */
+        .source = source,
+        .box = {x, y, (int)box.width, (int)box.height},
+        .serial = window->picture.serial + 1,
+    };
+    /* The window's other pictures: its taskbar thumbnail, and its mirrors
+     * (Scale's), which take the picture on the next frame; a hidden
+     * window's new picture damages nothing to bring one. */
+    xd_capture_view_committed(view);
+    if (!view->tree->node.enabled)
+        xd_effects_schedule_frames(server);
     return true;
 }
 
@@ -417,6 +439,14 @@ bool xd_glfx_set_window_color(xd_view *view, float opacity, float brightness,
     if (!window->drawn || xd_glfx_find_window(view, nullptr) != nullptr)
         return false;
     color_show(window);
+    return true;
+}
+
+bool xd_glfx_get_window_picture(const xd_view *view, xd_glfx_window_picture *picture) {
+    const color_window *window = color_find(view);
+    if (window == nullptr || !window->drawn || window->picture.buffer == nullptr)
+        return false;
+    *picture = window->picture;
     return true;
 }
 
