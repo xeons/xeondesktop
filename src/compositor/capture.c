@@ -206,14 +206,22 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int widt
 }
 
 /* The picture's size: the window's at its output's scale, scaled down to
- * fit THUMB_MAX. */
+ * fit THUMB_MAX, in whole blocks of THUMB_BLOCK px. Mesa's software
+ * renderer, llvmpipe, draws in 4 x 4 blocks and reads a block's every row
+ * and column, past the end of a buffer it's given that doesn't end on a
+ * whole block: past its memory, a crash when nothing is mapped after it.
+ * The window is stretched by at most 3 px to fill the blocks. */
+static constexpr uint32_t THUMB_BLOCK = 4;
+
 static void capture_size(xd_view *view, uint32_t *width, uint32_t *height) {
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = xd_view_scale(view);
     double dw = XD_MAX(outer.width, 1) * scale, dh = XD_MAX(outer.height, 1) * scale;
     double fit = XD_MIN(1.0, (double)THUMB_MAX / XD_MAX(dw, dh));
-    *width = (uint32_t)XD_MAX(1.0, dw * fit + 0.5);
-    *height = (uint32_t)XD_MAX(1.0, dh * fit + 0.5);
+    uint32_t exact_width = (uint32_t)XD_MAX(1.0, dw * fit + 0.5);
+    uint32_t exact_height = (uint32_t)XD_MAX(1.0, dh * fit + 0.5);
+    *width = (exact_width + THUMB_BLOCK - 1) / THUMB_BLOCK * THUMB_BLOCK;
+    *height = (exact_height + THUMB_BLOCK - 1) / THUMB_BLOCK * THUMB_BLOCK;
 }
 
 /* ---- the capture source -------------------------------------------------------- */
