@@ -2897,7 +2897,12 @@ static gboolean folder_view_drag_motion(GtkWidget *widget, GdkDragContext *ctx, 
             folder_view->drag_requested = TRUE;
             gtk_drag_get_data(widget, ctx, target, time);
         }
-        gdk_drag_status(ctx, NO_ACTION, time);
+        /* Meanwhile, files from another program are a copy, as when their
+         * list comes empty (drop_action): a drop before the list is here
+         * isn't refused. VirtualBox's host sends it only at the drop, and
+         * GTK answers its offer again (vboxdnd) from what we said last. */
+        gdk_drag_status(ctx, protocol_action(ctx, drop_action(folder_view, ctx, nullptr, dest)),
+                        time);
         return TRUE;
     }
     gdk_drag_status(

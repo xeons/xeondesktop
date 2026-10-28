@@ -164,6 +164,7 @@ static gboolean drop_timed_out(gpointer data) {
     dnd_relay *relay = data;
     relay->drop_timeout = 0;
     /* It never said: drop anyway (it may take it, or the drag just ends). */
+    note("the program under the drop didn't take the data in time; dropped anyway");
     drop_now(relay);
     return G_SOURCE_REMOVE;
 }
