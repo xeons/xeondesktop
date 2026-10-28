@@ -1131,6 +1131,130 @@ def explode_close(s):
            "the pieces gone", timeout=10)
 
 
+def addon_setup(animations, addon="Enabled=true\n"):
+    """effects.ini with Animations (its events as given) and the
+    Animations Add-On on."""
+    return effects_setup("[Animations]\nEnabled=true\n" + animations +
+                         "[AnimationsAddOn]\n" + addon)
+
+
+@scenario(setup=addon_setup("CloseEffect=beamup\nCloseDuration=4000\n"), fx=True)
+def animations_addon_beam_up_close(s):
+    """Animations Add-On (xd-compositor-fx), Beam Up on close slowed to
+    4 s: midway the closed window is drawn in to a column of light, so
+    its left and right edges show the desktop and its bottom is gone,
+    while its top middle still shows; then it's all gone."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 2300)
+    mid = s.shot("midway")
+    sides = max(mid.differs(empty, (x, y, w // 10, h), step=2),
+                mid.differs(empty, (x + w - w // 10, y, w // 10, h), step=2))
+    bottom = mid.differs(empty, (x, y + h - 40, w, 40), step=2)
+    top = mid.differs(empty, (x + w // 3, y, w // 3, h // 3), step=2)
+    s.log(f"midway: sides {sides:.2f}, bottom {bottom:.2f}, top middle {top:.2f}")
+    s.check(sides < 0.1, f"midway it's drawn in from its sides ({sides:.2f})")
+    s.check(bottom < 0.1, f"midway its bottom is gone ({bottom:.2f})")
+    s.check(top > 0.3, f"midway its top middle still shows ({top:.2f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window beamed away", timeout=10)
+
+
+@scenario(setup=addon_setup("OpenEffect=glide3\nOpenDuration=4000\n"), fx=True)
+def animations_addon_glide_open(s):
+    """Animations Add-On (xd-compositor-fx), Glide 3 on open slowed to 4 s:
+    midway the opening window is there but tipped back in perspective, not
+    yet where it will be (its title bar's row isn't), and at the end it's
+    itself: the same as once it has settled."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel")
+    time.sleep(1.2)
+    mid = s.shot("midway")
+    final = s.settle("opened")
+    box = final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the window shows once it has opened")
+    x, y, w, h = box
+    drawn = mid.differs(empty, (x, y, w, h), step=2)
+    title = mid.differs(final, (x, y, w, 20), step=2)
+    s.log(f"midway: {drawn:.2f} of its box drawn, {title:.2f} of its title row unlike the end")
+    s.check(drawn > 0.05, f"midway something of it is drawn ({drawn:.2f})")
+    s.check(title > 0.5, f"midway it isn't yet where it will be ({title:.2f})")
+    time.sleep(1.0)
+    s.check(s.shot("still").differs(final, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+            "once opened it stays itself")
+
+
+@scenario(setup=addon_setup("CloseEffect=skewer\nCloseDuration=4000\n"))
+def animations_addon_fallback_zoom(s):
+    """Under the plain compositor (pixman) the Animations Add-On can't be
+    drawn, so a window set to close with Skewer zooms (Animations' Zoom)
+    instead of not animating: midway its picture is smaller, still centred
+    on where the window was; then it's gone."""
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(2.0)
+    mid = s.shot("zooming")
+    now = mid.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"window {(x, y, w, h)}, mid-zoom {now}")
+    s.check(now is not None and now[2] < w - 20 and now[3] < h - 20,
+            "midway its picture is smaller (Zoom)")
+    s.check(abs(now[0] + now[2] / 2 - (x + w / 2)) < 20 and
+            abs(now[1] + now[3] / 2 - (y + h / 2)) < 20,
+            "centred on where the window was")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window zoomed away", timeout=10)
+
+
+@scenario(setup=effects_setup("[Animations]\nEnabled=true\nCloseEffect=glide2\n"), fx=True)
+def animations_addon_panel(s):
+    """Desktop Effects on xd-compositor-fx: on Animations' Close tab the
+    Add-On's effects are listed but greyed while the Animations Add-On is
+    off, so Down from Glide 2 picks none of them; the Animations Add-On's
+    page turns it on and its Fold tab's Grid width (Alt+G) is saved."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-effects", "--effect", "Animations")
+    s.wait_window(title="Desktop Effects", state="activated")
+    s.settle("animations")
+    # The Close tab (the second, right of Open at the page's top left),
+    # its Effect list.
+    s.inject("move", 296, 52, "click", "sleep", 300, "key", "alt+e", "sleep", 300)
+    before = s.settle("close-tab")
+    s.inject("key", "Down", "sleep", 500)
+    s.settle("after-down")
+    s.check(effects_ini_value(s, "Animations", "CloseEffect") == "glide2",
+            "Down from Glide 2 skips the greyed Add-On effects")
+    s.inject("key", "Up", "sleep", 500)
+    s.wait(lambda: effects_ini_value(s, "Animations", "CloseEffect") == "glide1",
+           "Up from Glide 2 picks Glide 1")
+    s.log("ok: the Effect list still works")
+    s.check(before is not None, "the page showed")
+
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Desktop Effects", gone=True)
+    s.launch("xd-effects", "--effect", "AnimationsAddOn")
+    s.wait_window(title="Desktop Effects", state="activated")
+    page = s.settle("addon-page")
+    s.inject("key", "space")
+    s.wait(lambda: effects_ini_value(s, "AnimationsAddOn", "Enabled") == "true",
+           "the Animations Add-On turned on in effects.ini")
+    s.log("ok: Use this effect turned the Add-On on")
+    # Its Fold tab, the fifth (after Airplane, Beam Up, Domino and Razr).
+    x, y, w, h = page.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("move", x + 444, y + 41, "click", "sleep", 300)
+    s.settle("fold-tab")
+    s.inject("key", "alt+g", "sleep", 200, "key", "ctrl+a", "type", "5", "key", "Tab")
+    s.wait(lambda: effects_ini_value(s, "AnimationsAddOn", "FoldGridWidth") == "5",
+           "FoldGridWidth=5 in effects.ini")
+    s.log("ok: Grid width saved")
+
+
 @scenario(setup=effects_setup("[Water]\nEnabled=true\n"), fx=True)
 def water_ripple(s):
     """Water Effect (xd-compositor-fx): Shift+Windows+click starts a

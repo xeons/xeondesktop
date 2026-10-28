@@ -12181,6 +12181,8 @@ static void test_wobbly_model(void) {
 }
 
 #include "test_effects_gl.c"
+/* The Animations Add-On. */
+#include "test_effects_addon.c"
 /* The scene-graph Desktop Effects' maths. */
 #include "test_effects_scene.c"
 
@@ -12306,6 +12308,7 @@ int main(void) {
     test_effects_support();
     test_wobbly_model();
     test_effects_gl();
+    test_effects_addon();
     test_effects_scene();
     test_desktops();
     printf("%d checks, %d failures\n", checks, failures);
