@@ -64,4 +64,32 @@ const char *xd_fwupd_hsi_result_text(unsigned result);
  * name we know for its AppstreamId, else its Name, else the id. */
 const char *xd_fwupd_attr_title(const char *appstream_id, const char *title, const char *name);
 
+/* ---- why an install failed --------------------------------------------- */
+
+/* What a failed PackageKit transaction said: its error code and details,
+ * from the GError packagekit-glib2 makes of it (PK_CLIENT_ERROR, the code
+ * at 0xff + PkErrorEnum) or else the results' ErrorCode. A GError of
+ * another kind (D-Bus, polkit) gives PK_ERROR_ENUM_INTERNAL_ERROR and its
+ * message. False (and nothing set) when the transaction didn't fail. */
+bool xd_update_get_failure(const GError *error, PkResults *results, PkErrorEnum *code,
+                           char **details);
+
+/* What went wrong, in one or two plain sentences, for the error box;
+ * nullptr for a cancelled transaction, which needs no box. only_some: the
+ * user unticked some updates (a partial upgrade). g_free it. */
+char *xd_update_get_error_summary(PkErrorEnum code, bool only_some);
+
+/* The details one item a line: backends join the packages or files
+ * involved with ", " (alpm: "a (/usr/x), b (/usr/y): conflicting files"),
+ * which become the message and then the items. g_free it. */
+char *xd_update_format_error_details(const char *details);
+
+/* The packages or files the details name, readable ("/usr/x (a)",
+ * "b needs libc>=2"); empty when they name none. g_ptr_array_unref it. */
+GPtrArray *xd_update_get_error_items(const char *details);
+
+/* Bullets for the first `max` items, then "and N more."; "" for none.
+ * g_free it. */
+char *xd_update_list_error_items(const GPtrArray *items, unsigned max);
+
 #endif

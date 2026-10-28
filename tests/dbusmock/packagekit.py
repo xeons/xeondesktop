@@ -10,9 +10,16 @@ Parameters:
     AppsDir     where installed packages' .desktop files are written (and
                 removed again), so programs appear and disappear as on a
                 real system; SearchFiles matches these paths
+    Backend     the BackendName ("mock"; "alpm" as on Arch Linux)
     Delay       milliseconds between the steps of installs and removals
                 (default 400), so the progress dialog can be watched
     Deny        true: installs and removals fail as if polkit said no
+    Fail        an error's name ("file-conflicts", "cannot-get-lock", ...;
+                see FAILURES): UpdatePackages installs fail with it, and
+                with alpm's kind of details naming FailCount files or
+                packages (default 200); FailDownload: downloads too.
+                SetFailure(name, count, download) on
+                org.xeondesktop.PackageKitMock changes them ("" for none)
     packages    a list of packages replacing the built-in ones (see
                 PACKAGES)
     Log         a file that gets a line per RefreshCache and UpdatePackages
@@ -69,6 +76,26 @@ EXIT_SUCCESS, EXIT_FAILED, EXIT_CANCELLED, EXIT_NEED_UNTRUSTED = 1, 2, 3, 8
 ERROR_PACKAGE_NOT_INSTALLED, ERROR_PACKAGE_NOT_FOUND = 7, 8
 ERROR_DEP_RESOLUTION_FAILED, ERROR_TRANSACTION_CANCELLED = 13, 17
 ERROR_MISSING_GPG_SIGNATURE, ERROR_NOT_AUTHORIZED = 31, 48
+# Errors Fail can choose (pk_error_enum_to_string's names), and the details
+# PackageKit's alpm backend gives with them: its lists joined with ", ",
+# then alpm's own message (pk-alpm-transaction.c).
+FAILURES = {
+    "gpg-failure": (5, lambda n: "invalid or corrupted package (PGP signature)"),
+    "package-download-failed": (10, lambda n: "failed to retrieve some files"),
+    "dep-resolution-failed": (13, lambda n: ", ".join(
+        f"libxdtest{i}>=2 <- xdtest-editor" for i in range(1, n + 1))
+        + ": could not satisfy dependencies"),
+    "transaction-error": (16, lambda n: "failed to commit transaction (transaction aborted)"),
+    "cannot-get-lock": (26, lambda n: "unable to lock database"),
+    "file-conflicts": (35, lambda n: ", ".join(
+        f"xdtest-kernel (/usr/lib/xdtest/module-{i:03d}.ko)" for i in range(1, n + 1))
+        + ": conflicting files"),
+    "package-conflicts": (36, lambda n: ", ".join(
+        f"xdtest-kernel <-> xdtest-oldkernel{i}" for i in range(1, n + 1))
+        + ": conflicting dependencies"),
+    "no-space-on-device": (46, lambda n: "not enough free disk space"),
+}
+MOCK_IFACE = "org.xeondesktop.PackageKitMock"
 FILTER_INSTALLED, FILTER_NOT_INSTALLED = 1 << 2, 1 << 3
 FLAG_ONLY_TRUSTED, FLAG_SIMULATE = 1 << 1, 1 << 2
 GROUPS = {"accessories": 2, "games": 11, "graphics": 12, "office": 19, "other": 20,
@@ -112,7 +139,8 @@ PACKAGES = [
      "requires": []},
 ]
 
-state = {"packages": [], "apps_dir": None, "delay": 400, "deny": False, "next": 1, "log": None}
+state = {"packages": [], "apps_dir": None, "delay": 400, "deny": False, "next": 1, "log": None,
+         "fail": "", "fail_count": 200, "fail_download": False}
 
 
 def log(line):
@@ -174,6 +202,8 @@ def load(mock, parameters):
     state["delay"] = int(parameters.get("Delay", 400))
     state["deny"] = bool(parameters.get("Deny", False))
     state["log"] = parameters.get("Log")
+    set_failure(parameters.get("Fail", ""), int(parameters.get("FailCount", 200)),
+                bool(parameters.get("FailDownload", False)))
     if state["apps_dir"]:
         os.makedirs(state["apps_dir"], exist_ok=True)
         for p in state["packages"]:
@@ -186,7 +216,7 @@ def load(mock, parameters):
                 "VersionMajor": dbus.UInt32(1),
                 "VersionMinor": dbus.UInt32(4),
                 "VersionMicro": dbus.UInt32(0),
-                "BackendName": "mock",
+                "BackendName": parameters.get("Backend", "mock"),
                 "BackendDescription": "python-dbusmock",
                 "BackendAuthor": "XeonDesktop",
                 "Roles": dbus.UInt64(ROLES),
@@ -530,10 +560,20 @@ def tx_update_packages(self, flags, ids):
         run.error(ERROR_PACKAGE_NOT_FOUND, "There is no such update")
         run.start()
         return
+    download = flags & FLAG_ONLY_DOWNLOAD
+    if state["fail"] and not simulate and (state["fail_download"] or not download):
+        # As alpm does: it gets as far as resolving what's needed.
+        if not download:
+            run.status(STATUS_WAITING_FOR_AUTH)
+        run.status(STATUS_DEP_RESOLVE, 101)
+        code, details = FAILURES[state["fail"]]
+        run.error(code, details(state["fail_count"]))
+        run.start()
+        return
     if simulate:
         for p in targets:
             emit_package(run, INFO_UPDATING, update_id(p), p["summary"])
-    elif flags & FLAG_ONLY_DOWNLOAD:
+    elif download:
         # Into the package cache only: no permission needed, nothing changes.
         run.status(STATUS_DOWNLOAD, 0)
         for n, p in enumerate(targets):
@@ -560,6 +600,17 @@ def tx_update_packages(self, flags, ids):
 
 def tx_cancel(self):
     self.cancelled = True
+
+
+def set_failure(name, count, download):
+    if name and name not in FAILURES:
+        raise ValueError(f"unknown failure {name}")
+    state["fail"], state["fail_count"], state["fail_download"] = name, count, download
+
+
+@dbus.service.method(MOCK_IFACE, in_signature="sub", out_signature="")
+def SetFailure(self, name, count, download):
+    set_failure(str(name), int(count), bool(download))
 
 
 TX_METHODS = [

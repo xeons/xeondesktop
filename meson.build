@@ -1197,6 +1197,7 @@ executable(
   'src/wuaucpl/main.c',
   'src/wuaucpl/software.c',
   'src/wuaucpl/firmware.c',
+  'src/wuaucpl/failures.c',
   'src/wuaucpl/updlib.c',
   'src/wuaucpl/state.c',
   'src/appwiz/programs.c',

@@ -17,6 +17,8 @@
  *   Device Security    fwupd's Host Security ID and what it's made of
  *
  *   xd-wuaucpl [--page N]   the Nth tab, from 0 (Automatic Updates)
+ *   xd-wuaucpl --history    Software Updates with the installation history
+ *                           over it (the shell's balloon after a failure)
  *   xd-wuaucpl --check      no window: refresh, count what's waiting and,
  *                           in Download mode and off metered connections,
  *                           download it; for the shell's schedule
@@ -49,6 +51,8 @@ GtkWidget *xd_wuau_frame(const char *title, GtkWidget *child) {
 }
 
 void xd_wuau_error(wuau *applet, const char *what, const char *detail) {
+    fprintf(stderr, "xd-wuaucpl: %s%s%s\n", what, detail != nullptr ? " " : "",
+            detail != nullptr ? detail : "");
     char *text = detail != nullptr && detail[0] != '\0' ? g_strdup_printf("%s\n\n%s", what, detail)
                                                         : g_strdup(what);
     xd_message_box(GTK_WINDOW(applet->window), XD_WUAU_TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
@@ -398,21 +402,41 @@ static void on_backend(GObject *src, GAsyncResult *res, gpointer data) {
     xd_wuau_software_load(applet);
 }
 
+static gboolean show_history_later(gpointer data) {
+    xd_wuau_show_history(data);
+    return G_SOURCE_REMOVE;
+}
+
+/* --history: over the window once it's on screen; before, it would be a
+ * window of its own rather than its dialog. */
+static gboolean on_mapped([[maybe_unused]] GtkWidget *window, [[maybe_unused]] GdkEvent *event,
+                          gpointer data) {
+    static bool shown = false;
+    if (!shown)
+        g_idle_add(show_history_later, data);
+    shown = true;
+    return FALSE;
+}
+
 int main(int argc, char **argv) {
     int page = 0;
-    bool check = false;
+    bool check = false, history = false;
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--check") == 0)
+        if (strcmp(argv[i], "--check") == 0) {
             check = true;
-        else if (strcmp(argv[i], "--page") == 0 && i + 1 < argc)
+        } else if (strcmp(argv[i], "--history") == 0) {
+            history = true;
+            page = XD_WUAU_PAGE_SOFTWARE;
+        } else if (strcmp(argv[i], "--page") == 0 && i + 1 < argc) {
             page = atoi(argv[++i]);
-        /* The shell's --style and --scheme overrides: desktop.ini is read
-         * here anyway. */
-        else if ((strcmp(argv[i], "--style") == 0 || strcmp(argv[i], "--scheme") == 0) &&
-                 i + 1 < argc)
+        } else if ((strcmp(argv[i], "--style") == 0 || strcmp(argv[i], "--scheme") == 0) &&
+                   i + 1 < argc) {
+            /* The shell's --style and --scheme overrides: desktop.ini is
+             * read here anyway. */
             i++;
-        else
+        } else {
             fprintf(stderr, "xd-wuaucpl: ignoring %s\n", argv[i]);
+        }
     }
     if (check)
         return xd_wuau_check();
@@ -457,6 +481,8 @@ int main(int argc, char **argv) {
     xd_gtk_notebook_ctrl_tab(applet.window, GTK_NOTEBOOK(applet.notebook));
     g_signal_connect(applet.window, "response", G_CALLBACK(on_response), &applet);
     g_signal_connect(applet.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    if (history)
+        g_signal_connect_after(applet.window, "map-event", G_CALLBACK(on_mapped), &applet);
     gtk_widget_show_all(applet.window);
     gtk_notebook_set_current_page(
         GTK_NOTEBOOK(applet.notebook),

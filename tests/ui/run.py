@@ -9607,16 +9607,17 @@ def files_previous_versions_seven(s):
         DBusTestCase.tearDownClass()
 
 
-def mock_updates(s):
+def mock_updates(s, packagekit=None):
     """Before the compositor starts: a private system bus with the PackageKit
     and fwupd mocks (tests/dbusmock), logging what they're asked to change;
     empty Flatpak installations of the session's own; and the shell's first
-    scheduled check two seconds after logon, not five minutes."""
+    scheduled check two seconds after logon, not five minutes. packagekit:
+    more of the PackageKit mock's parameters."""
     from dbusmock import DBusTestCase
 
     DBusTestCase.start_system_bus()
     mocks = (
-        ("packagekit", {"Log": os.path.join(s.base, "pk.log"), "Delay": 100}),
+        ("packagekit", {"Log": os.path.join(s.base, "pk.log"), "Delay": 100, **(packagekit or {})}),
         ("fwupd", {"CabDir": os.path.join(s.base, "cabs"), "Log": os.path.join(s.base, "fw.log"),
                    "Delay": 150}),
     )  # fmt: skip
@@ -9744,6 +9745,205 @@ def automatic_updates(s):
            "Mode=notify saved")  # fmt: skip
     s.settle("options")
     s.log("ok: notify only saved in [Updates]")
+
+
+# The shell doesn't check on its own: the scenario installs by hand.
+UPDATES_OFF_INI = LUNA_INI + "\n[Updates]\nMode=off\n"
+
+
+def mock_failing_updates(**packagekit):
+    """mock_updates with the PackageKit mock's Fail... parameters."""
+    return lambda s: mock_updates(s, packagekit)
+
+
+def set_update_failure(name, count=200, download=False):
+    """Changes how the PackageKit mock's installs fail ("" for not at all)."""
+    subprocess.run(["gdbus", "call", "--system", "--dest", "org.freedesktop.PackageKit",
+                    "--object-path", "/org/freedesktop/PackageKit", "--method",
+                    "org.xeondesktop.PackageKitMock.SetFailure", name, str(count),
+                    "true" if download else "false"],
+                   stdout=subprocess.DEVNULL, check=True, timeout=10)  # fmt: skip
+
+
+def clipboard_text(s):
+    r = subprocess.run([s.tool("xd-paste"), "text/plain;charset=utf-8"], stdout=subprocess.PIPE,
+                       timeout=10)  # fmt: skip
+    return r.stdout.decode(errors="replace") if r.returncode == 0 else ""
+
+
+def update_history(s):
+    path = os.path.join(os.environ["XDG_STATE_HOME"], "xeondesktop", "update-history.ini")
+    c = configparser.ConfigParser(interpolation=None)
+    c.optionxform = str
+    c.read(path)
+    return [dict(c[g]) for g in c.sections()]
+
+
+@scenario(UPDATES_OFF_INI, requires=("dbusmock",),
+          setup=mock_failing_updates(Backend="alpm", Fail="file-conflicts"))  # fmt: skip
+def update_failure_details(s):
+    """An install that fails (dbusmock PackageKit with Arch's alpm backend)
+    explains itself: unticking an update first brings the warning that
+    Arch can't install only some; the file conflicts' box has a sentence,
+    the first ten of 200 files and "and 190 more", Details >> lists them
+    all one a line and Copy copies them; Ctrl+C copies the box as Windows'
+    message boxes do. A busy package manager has its own sentence, and the
+    history keeps both."""
+    pk_log = os.path.join(s.base, "pk.log")
+    desk = s.settle("desktop")
+    s.launch(s.tool("xd-wuaucpl"), "--page", "1")
+    s.wait_window(title="Automatic Updates", state="activated")
+    center = (WIDTH // 2 - 150, HEIGHT // 2 - 60, 300, 120)
+
+    def green(shot, point):
+        r, g, b = shot.pixel(*point)
+        return g > r + 60 and g > b + 60  # a check box's green tick
+
+    def window_box():
+        shot = s.shot("window")
+        box = shot.changed_box(desk, (0, 0, WIDTH, 600))
+        # Once both updates are listed: the second row's tick shows.
+        return box if box and green(shot, (box[0] + 33, box[1] + 156)) else None
+
+    x, y, _, _ = s.wait(window_box, "the updates listed")
+    kernel_tick = (x + 33, y + 156)
+
+    def ticked(label):
+        return green(s.shot(label), kernel_tick)
+
+    def installs():
+        try:
+            with open(pk_log) as f:
+                return [l for l in f.read().splitlines()
+                        if l.startswith("update-packages") and not int(l.split()[1]) & 8]
+        except OSError:
+            return []
+
+    def untick_kernel():
+        s.wait(lambda: ticked("listed"), "the updates listed, all ticked")
+        s.inject("move", *kernel_tick, "click")
+        s.wait(lambda: not ticked("unticked"), "the kernel unticked")
+        return s.settle("software-updates")
+
+    # Untick the kernel: Install warns that Arch can't install only some.
+    listed = untick_kernel()
+    s.inject("key", "alt+i")
+    warning = s.settle("partial-warning")
+    s.check(warning.differs(listed, center) > 0.1, "Install warned about a partial upgrade")
+    s.inject("key", "alt+s")  # Install Selected
+    s.wait(installs, "the install")
+    s.check("xdtest-kernel" not in installs()[-1] and "xdtest-editor" in installs()[-1],
+            f"Install Selected installed only the ticked one ({installs()[-1]})")  # fmt: skip
+
+    # The box: a sentence, ten files and "and 190 more"; Ctrl+C copies it.
+    s.wait(lambda: s.shot("failure").differs(listed, center) > 0.1, "the error box")
+    collapsed = s.settle("failure-collapsed")
+    s.inject("key", "ctrl+c", "sleep", 300)
+    text = s.wait(lambda: clipboard_text(s), "the box's text on the clipboard")
+    s.check("Some files in the updates already belong to other packages" in text,
+            "the box says what went wrong in a sentence")  # fmt: skip
+    bullets = [l for l in text.splitlines() if l.startswith("• ")]
+    s.check(len(bullets) == 10 and bullets[0] == "• /usr/lib/xdtest/module-001.ko (xdtest-kernel)",
+            f"it lists the first ten files ({bullets[:2]}...)")  # fmt: skip
+    s.check("and 190 more" in text and "module-011" not in text, "then \"and 190 more\"")
+    s.check("Details >>" in text, "and has Details >>")
+
+    # Details >>: every file, one a line; Copy copies them.
+    s.inject("key", "alt+d")
+    expanded = s.settle("failure-details")
+    s.check(expanded.differs(collapsed, (0, 0, WIDTH, HEIGHT)) > 0.02, "Details >> opened")
+    s.inject("key", "alt+c", "sleep", 300)
+    copied = s.wait(lambda: (lambda t: t if t != text else "")(clipboard_text(s)),
+                    "the details on the clipboard")  # fmt: skip
+    lines = copied.splitlines()
+    s.check(len(lines) == 201 and lines[0] == "conflicting files:" and
+            lines[200] == "xdtest-kernel (/usr/lib/xdtest/module-200.ko)",
+            f"Copy copied all 200 files, one a line ({len(lines)} lines)")  # fmt: skip
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("closed").differs(expanded, center) > 0.1, "the box to close")
+
+    # A busy package manager: Install All this time, then its own sentence.
+    set_update_failure("cannot-get-lock")
+    reloaded = untick_kernel()
+    s.inject("key", "alt+i")
+    s.settle("partial-warning-again")
+    count = len(installs())
+    s.inject("key", "alt+a")  # Install All
+    s.wait(lambda: len(installs()) > count, "the second install")
+    s.check("xdtest-kernel" in installs()[-1] and "xdtest-editor" in installs()[-1],
+            f"Install All installed both ({installs()[-1]})")  # fmt: skip
+    s.wait(lambda: s.shot("lock").differs(reloaded, center) > 0.1, "the second error box")
+    s.settle("failure-lock")
+    s.inject("key", "ctrl+c", "sleep", 300)
+    text = s.wait(lambda: (lambda t: t if "Another program" in t else "")(clipboard_text(s)),
+                  "the second box's text")  # fmt: skip
+    s.check("Another program is installing or removing software. Close it and try again." in text,
+            "a busy package manager has its sentence")  # fmt: skip
+    s.inject("key", "Return")
+    s.settle("closed-again")
+
+    history = update_history(s)
+    s.check(len(history) == 2 and history[0]["Error"] == "cannot-get-lock" and
+            history[1]["Error"] == "file-conflicts" and
+            all(h["Result"] == "failed" and h["Action"] == "install" for h in history),
+            f"the history keeps both failures ({[h.get('Error') for h in history]})")  # fmt: skip
+    before = s.settle("before-history")
+    s.inject("key", "alt+h")
+    s.wait(lambda: s.shot("history").differs(before, (x, y, 500, 400)) > 0.1, "the history")
+    history_window_closes(s, s.settle("history"), (x, y, 500, 400))
+    s.log("ok: View Installation History opened")
+
+
+def history_window_closes(s, shown, region):
+    """Escape closes the Installation History dialog shown, leaving
+    Automatic Updates open (without the dialog on top, Escape would close
+    Automatic Updates itself)."""
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("history-closed").differs(shown, region) > 0.05, "the history to close")
+    time.sleep(0.5)
+    s.check(s.window(title="Automatic Updates") is not None,
+            "the history was a dialog over Automatic Updates")  # fmt: skip
+
+
+@scenario(LUNA_INI, requires=("dbusmock",),
+          setup=mock_failing_updates(Fail="dep-resolution-failed", FailCount=3,
+                                     FailDownload=True))  # fmt: skip
+def update_history_scheduled(s):
+    """The shell's scheduled check, whose download fails (dbusmock
+    PackageKit can't resolve the dependencies): the failure is in the
+    installation history with PackageKit's code and details, and the
+    balloon, "Updates could not be downloaded", opens that history."""
+    state_path = os.path.join(os.environ["XDG_STATE_HOME"], "xeondesktop", "updates.ini")
+
+    def failed_download():
+        return [h for h in update_history(s) if h.get("Action") == "download"]
+
+    entry = s.wait(failed_download, "the failed download in the history", 40)[0]
+    s.check(entry["Result"] == "failed" and entry["Error"] == "dep-resolution-failed",
+            f"the history has the failed download ({entry.get('Result')}, {entry.get('Error')})")  # fmt: skip
+    s.check("xdtest-editor 2.4.2-1" in entry["Updates"] and "xdtest-kernel" in entry["Updates"],
+            f"with the updates' names ({entry['Updates']})")  # fmt: skip
+    s.check("libxdtest3>=2 <- xdtest-editor" in entry["Details"] and
+            entry["Summary"].startswith("The updates need packages that conflict"),
+            "and what went wrong")  # fmt: skip
+    c = configparser.ConfigParser(interpolation=None)
+    c.read(state_path)
+    s.check(c["Updates"]["Error"].startswith("Downloading the updates: The updates need"),
+            "the state says the check didn't finish, in words")  # fmt: skip
+
+    near_tray = (WIDTH - 460, HEIGHT - 130, 460, 100)
+
+    def balloon():
+        box, n = info_window_box(s.shot("balloon"), near_tray)
+        return box if n > 300 else None
+
+    box = s.wait(balloon, "the failure balloon")
+    s.settle("failure-balloon")
+    s.inject("move", box[0] + 40, box[1] + box[3] // 2 + 6, "click")
+    s.wait_window(title="Automatic Updates")
+    shown = s.settle("scheduled-history")
+    history_window_closes(s, shown, (0, 0, WIDTH, 600))
+    s.log("ok: the balloon opened the installation history")
 
 
 # ---- touchscreens, drawing tablets, touchpad gestures (xd-test-input-v1) ------------

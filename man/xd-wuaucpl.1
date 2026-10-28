@@ -8,6 +8,9 @@ xd\-wuaucpl \- Automatic Updates
 .SY xd\-wuaucpl
 .B \-\-check
 .YS
+.SY xd\-wuaucpl
+.B \-\-history
+.YS
 .SH DESCRIPTION
 .B xd\-wuaucpl
 is Windows XP's Automatic Updates (Control Panel), with the updates
@@ -28,6 +31,13 @@ needed.
 Check the ones to install, then click Install; PackageKit and Flatpak ask
 for an administrator's password where needed.
 Check for Updates refreshes the lists first.
+When an install fails, the error box says why in a sentence or two, lists
+the packages or files involved, and Details shows everything the package
+manager reported.
+On Arch Linux (PackageKit's alpm backend), which upgrades the whole system
+or nothing, Install asks before installing only some of the updates.
+View Installation History lists what was installed, downloaded or failed,
+and why.
 .TP
 .B Firmware
 The devices fwupd knows, their firmware versions and the updates the Linux
@@ -45,6 +55,8 @@ checks on the schedule chosen (running
 .BR "xd\-wuaucpl \-\-check" ),
 and once a check finds updates shows an icon in the notification area
 and XP's balloon; a click on either opens Software Updates.
+When the check fails (a download, say), its balloon opens the
+installation history, which says why.
 A check missed while the computer was off runs a few minutes after the
 next log on.
 .SH OPTIONS
@@ -60,7 +72,11 @@ password, count the updates waiting (packages, Flatpaks and firmware) and,
 in the download mode and off metered connections, download the software
 updates without installing them (PackageKit's only-download, Flatpak's
 no-deploy).
-What it found goes to the state file below.
+What it found goes to the state file below, and its failures to the
+installation history and standard error.
+.TP
+.B \-\-history
+Open Software Updates with the installation history over it.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
@@ -72,6 +88,10 @@ and
 .TP
 .I $XDG_STATE_HOME/xeondesktop/updates.ini
 What the last check found, which the shell's icon shows.
+.TP
+.I $XDG_STATE_HOME/xeondesktop/update-history.ini
+The installation history: the last 100 installs, and the scheduled
+check's failures, with what went wrong.
 .SH SEE ALSO
 .BR xd\-shell (1),
 .BR xd\-appwiz (1),
