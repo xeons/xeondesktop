@@ -31,6 +31,7 @@
  *                     fingers held still, a hold gesture)
  *   swipe update DX DY, pinch update DX DY SCALE DEGREES
  *   swipe|pinch|rest end [cancel]
+ *   unplug NAME       the monitor NAME (HEADLESS-2...) is unplugged
  *
  * Example: xd-inject move 20 728 click sleep 500 type alacritty key Return
  */
@@ -67,7 +68,7 @@ typedef struct inject {
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct xd_window_arranger_v1 *arranger; /* for the lid, which has no virtual device */
     struct xd_test_input_v1 *test_input; /* touch, pens, gestures: bound only for those */
-    uint32_t test_input_name;
+    uint32_t test_input_name, test_input_version;
     double pen_pressure, pen_tilt_x, pen_tilt_y;
     struct zwlr_virtual_pointer_v1 *pointer;
     struct zwp_virtual_keyboard_v1 *keyboard;
@@ -157,6 +158,7 @@ static void global(void *data, struct wl_registry *reg, uint32_t name, const cha
                                         XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION);
     } else if (xd_str_eq(interface, xd_str_from_cstr(xd_test_input_v1_interface.name))) {
         in->test_input_name = name;
+        in->test_input_version = version;
     } else if (xd_str_eq(interface, xd_str_from_cstr(wl_output_interface.name)) &&
                in->output_count < XD_ARRAY_LEN(in->outputs)) {
         in->outputs[in->output_count++].wl = wl_registry_bind(reg, name, &wl_output_interface, 1);
@@ -479,7 +481,8 @@ static bool parse_num(const char *text, double *out) {
 
 /* ---- touch, pen and touchpad (xd-test-input-v1) ----------------------------------- */
 
-static const char *const test_input_steps[] = {"touch", "pen", "pad", "swipe", "pinch", "rest"};
+static const char *const test_input_steps[] = {"touch", "pen",  "pad",   "swipe",
+                                                "pinch", "rest", "unplug"};
 
 static bool is_test_input_step(const char *cmd) {
     for (size_t i = 0; i < XD_ARRAY_LEN(test_input_steps); i++) {
@@ -512,7 +515,13 @@ static bool test_input_step(inject *in, int argc, char **argv, int *argument_ind
            parse_num(argv[first + count], &numbers[count]))
         count++;
     int used = 0;
-    if (strcmp(cmd, "touch") == 0) {
+    if (strcmp(cmd, "unplug") == 0) {
+        if (what[0] == '\0' ||
+            wl_proxy_get_version((struct wl_proxy *)test_input) <
+                XD_TEST_INPUT_V1_UNPLUG_OUTPUT_SINCE_VERSION)
+            return false;
+        xd_test_input_v1_unplug_output(test_input, what);
+    } else if (strcmp(cmd, "touch") == 0) {
         int32_t id = (int32_t)numbers[0];
         if ((strcmp(what, "down") == 0 || strcmp(what, "move") == 0) && count >= 3) {
             if (what[0] == 'd')
@@ -707,7 +716,8 @@ int main(int argc, char **argv) {
                             "touchpad (start xd-compositor with --allow-virtual-input)\n");
             return EXIT_FAILURE;
         }
-        in.test_input = wl_registry_bind(reg, in.test_input_name, &xd_test_input_v1_interface, 1);
+        in.test_input = wl_registry_bind(reg, in.test_input_name, &xd_test_input_v1_interface,
+                                         XD_MIN(in.test_input_version, 2u));
     }
     in.pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(in.pointer_manager, in.seat);
     in.keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(in.keyboard_manager,
