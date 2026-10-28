@@ -73,6 +73,7 @@ struct xd_constraints {
      * surface (compared, never used): until it's clicked or gets the
      * keyboard again, it constrains nothing and takes no shortcuts. */
     struct wlr_surface *released;
+    struct wl_listener released_destroy; /* a new surface could reuse its address */
     bool inhibited; /* last seen, for the log */
     xd_release_chord chord;
     struct wl_listener new_constraint;
@@ -372,6 +373,19 @@ static void handle_new_constraint(struct wl_listener *listener, void *data) {
 
 /* ---- giving the input back --------------------------------------------------------- */
 
+static void handle_released_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_constraints *cs = XD_CONTAINER_OF(listener, xd_constraints, released_destroy);
+    xd_unlisten(&cs->released_destroy);
+    cs->released = nullptr;
+}
+
+static void set_released(xd_constraints *cs, struct wlr_surface *surface) {
+    xd_unlisten(&cs->released_destroy);
+    cs->released = surface;
+    if (surface != nullptr)
+        XD_LISTEN(&surface->events.destroy, cs, released_destroy, handle_released_destroy);
+}
+
 void xd_constraints_release(xd_server *server) {
     xd_constraints *cs = server->constraints;
     if (cs == nullptr)
@@ -380,7 +394,7 @@ void xd_constraints_release(xd_server *server) {
     if (focus == nullptr || (cs->active == nullptr && !inhibited_now(cs)))
         return; /* nothing taken */
     wlr_log(WLR_INFO, "the pointer and shortcuts are the desktop's until the window is clicked");
-    cs->released = focus;
+    set_released(cs, focus);
     deactivate(cs);
     update_inhibitors(cs);
 }
@@ -399,7 +413,7 @@ void xd_constraints_click(xd_server *server) {
     if (seat->pointer_state.focused_surface != cs->released ||
         seat->keyboard_state.focused_surface != cs->released)
         return;
-    cs->released = nullptr;
+    set_released(cs, nullptr);
     update_inhibitors(cs);
     xd_constraints_update(server);
 }
@@ -410,7 +424,7 @@ static void handle_keyboard_focus(struct wl_listener *listener, void *data) {
     /* Another window has the keyboard: what was released is forgiven, for
      * when it comes back. */
     if (seat_keyboard_focus_change_event->new_surface != cs->released)
-        cs->released = nullptr;
+        set_released(cs, nullptr);
     update_inhibitors(cs);
     xd_constraints_update(cs->server);
 }
@@ -557,6 +571,7 @@ void xd_constraints_finish(xd_server *server) {
     xd_unlisten(&cs->new_inhibitor);
     xd_unlisten(&cs->keyboard_focus);
     xd_unlisten(&cs->pointer_focus);
+    xd_unlisten(&cs->released_destroy);
     server->constraints = nullptr;
     xd_free(cs);
 }

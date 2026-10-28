@@ -19,7 +19,7 @@
     real device reports them.
   </description>
 
-  <interface name="xd_test_input_v1" version="1">
+  <interface name="xd_test_input_v1" version="2">
     <request name="destroy" type="destructor">
       <description summary="removes the devices"/>
     </request>
@@ -113,6 +113,14 @@
     </request>
     <request name="hold_end">
       <arg name="cancelled" type="uint"/>
+    </request>
+
+    <request name="unplug_output" since="2">
+      <description summary="a monitor is unplugged">
+        The output of that name (HEADLESS-2...) is destroyed, as a monitor
+        unplugged is, while the session runs. Unknown names are ignored.
+      </description>
+      <arg name="name" type="string"/>
     </request>
   </interface>
 </protocol>

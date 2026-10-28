@@ -3,12 +3,18 @@
  * it, a line each: the pointer's buttons, touches (wl_touch), the pen and
  * pad (tablet-v2) and touchpad gestures (pointer-gestures).
  *
- *   xd-test-input LOG [--title TITLE] [--no-touch] [--no-tablet] [--drag]
+ *   xd-test-input LOG [--title TITLE] [--no-touch] [--no-tablet] [--drag] [--dnd]
+ *                     [--maximized] [--maximized-late]
  *
  * --no-touch and --no-tablet leave out wl_touch or tablet-v2, as programs
  * that know nothing of them do: the compositor then works their pointer.
  * --drag moves the window when a finger lands on it, as a header bar
  * does (xdg_toplevel.move with the touch's serial).
+ * --dnd starts drag and drop when a finger lands on it (start_drag with
+ * the touch's serial) and logs the drag over its own window.
+ * --maximized asks to be maximized before its first commit, as GTK 3
+ * does; --maximized-late between its first configure and its first
+ * buffer.
  * The window is a plain orange 360x240 box with the compositor's frame;
  * closing it (its Close button, Alt+F4) logs "close" and exits.
  */
@@ -42,8 +48,11 @@ typedef struct app {
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
     struct wl_buffer *buffer;
+    struct wl_data_device_manager *data_device_manager;
+    struct wl_data_device *data_device;
+    struct wl_data_offer *offer; /* the drag's, over our window */
     FILE *log;
-    bool no_touch, no_tablet, drag;
+    bool no_touch, no_tablet, drag, dnd, maximized, maximized_late, configured;
     bool quit;
 } app;
 
@@ -134,6 +143,103 @@ static void hold_end(void *data, [[maybe_unused]] struct zwp_pointer_gesture_hol
 }
 static const struct zwp_pointer_gesture_hold_v1_listener hold_listener = {hold_begin, hold_end};
 
+/* ---- drag and drop (--dnd) ------------------------------------------------------------ */
+
+static void source_target(void *data, [[maybe_unused]] struct wl_data_source *source,
+                          const char *mime_type) {
+    say(data, "dnd target %s", mime_type != nullptr ? mime_type : "none");
+}
+static void source_send([[maybe_unused]] void *data,
+                        [[maybe_unused]] struct wl_data_source *source,
+                        [[maybe_unused]] const char *mime_type, int32_t fd) {
+    close(fd);
+}
+static void source_cancelled(void *data, struct wl_data_source *source) {
+    say(data, "dnd cancelled");
+    wl_data_source_destroy(source);
+}
+static void source_drop_performed(void *data,
+                                  [[maybe_unused]] struct wl_data_source *source) {
+    say(data, "dnd drop performed");
+}
+static void source_finished(void *data, struct wl_data_source *source) {
+    say(data, "dnd finished");
+    wl_data_source_destroy(source);
+}
+static void source_action([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_data_source *source,
+                          [[maybe_unused]] uint32_t action) {}
+static const struct wl_data_source_listener source_listener = {
+    .target = source_target,
+    .send = source_send,
+    .cancelled = source_cancelled,
+    .dnd_drop_performed = source_drop_performed,
+    .dnd_finished = source_finished,
+    .action = source_action,
+};
+
+static void device_data_offer([[maybe_unused]] void *data,
+                              [[maybe_unused]] struct wl_data_device *device,
+                              [[maybe_unused]] struct wl_data_offer *offer) {}
+static void device_enter(void *data, [[maybe_unused]] struct wl_data_device *device,
+                         uint32_t serial, [[maybe_unused]] struct wl_surface *surface,
+                         wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *offer) {
+    app *client = data;
+    say(client, "dnd enter %d %d", wl_fixed_to_int(x), wl_fixed_to_int(y));
+    client->offer = offer;
+    if (offer == nullptr)
+        return;
+    wl_data_offer_accept(offer, serial, "text/plain");
+    wl_data_offer_set_actions(offer, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+                              WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+}
+static void device_leave(void *data, [[maybe_unused]] struct wl_data_device *device) {
+    app *client = data;
+    say(client, "dnd leave");
+    if (client->offer != nullptr)
+        wl_data_offer_destroy(client->offer);
+    client->offer = nullptr;
+}
+static void device_motion(void *data, [[maybe_unused]] struct wl_data_device *device,
+                          [[maybe_unused]] uint32_t time, wl_fixed_t x, wl_fixed_t y) {
+    say(data, "dnd motion %d %d", wl_fixed_to_int(x), wl_fixed_to_int(y));
+}
+static void device_drop(void *data, [[maybe_unused]] struct wl_data_device *device) {
+    app *client = data;
+    say(client, "dnd drop");
+    if (client->offer != nullptr) {
+        wl_data_offer_finish(client->offer);
+        wl_data_offer_destroy(client->offer);
+    }
+    client->offer = nullptr;
+}
+static void device_selection([[maybe_unused]] void *data,
+                             [[maybe_unused]] struct wl_data_device *device,
+                             struct wl_data_offer *offer) {
+    if (offer != nullptr)
+        wl_data_offer_destroy(offer);
+}
+static const struct wl_data_device_listener data_device_listener = {
+    .data_offer = device_data_offer,
+    .enter = device_enter,
+    .leave = device_leave,
+    .motion = device_motion,
+    .drop = device_drop,
+    .selection = device_selection,
+};
+
+static void start_drag(app *client, uint32_t serial) {
+    if (client->data_device == nullptr)
+        return;
+    struct wl_data_source *source =
+        wl_data_device_manager_create_data_source(client->data_device_manager);
+    wl_data_source_add_listener(source, &source_listener, client);
+    wl_data_source_offer(source, "text/plain");
+    wl_data_source_set_actions(source, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+    wl_data_device_start_drag(client->data_device, source, client->surface, nullptr, serial);
+    say(client, "dnd start");
+}
+
 /* ---- touch -------------------------------------------------------------------------- */
 
 static void touch_down(void *data, [[maybe_unused]] struct wl_touch *touch, uint32_t serial,
@@ -143,6 +249,8 @@ static void touch_down(void *data, [[maybe_unused]] struct wl_touch *touch, uint
     say(client, "touch down %d %d %d", id, wl_fixed_to_int(x), wl_fixed_to_int(y));
     if (client->drag)
         xdg_toplevel_move(client->toplevel, client->seat, serial);
+    if (client->dnd)
+        start_drag(client, serial);
 }
 static void touch_up(void *data, [[maybe_unused]] struct wl_touch *touch,
                      [[maybe_unused]] uint32_t serial, [[maybe_unused]] uint32_t time, int32_t id) {
@@ -435,16 +543,26 @@ static const struct xdg_wm_base_listener wm_listener = {wm_ping};
 static void xdg_configure(void *data, struct xdg_surface *xs, uint32_t serial) {
     app *client = data;
     xdg_surface_ack_configure(xs, serial);
+    /* Asked for before the window has a buffer (mapped). */
+    if (client->maximized_late && !client->configured)
+        xdg_toplevel_set_maximized(client->toplevel);
+    client->configured = true;
     wl_surface_attach(client->surface, client->buffer, 0, 0);
     wl_surface_damage(client->surface, 0, 0, WIDTH, HEIGHT);
     wl_surface_commit(client->surface);
 }
 static const struct xdg_surface_listener xdg_surface_listener = {xdg_configure};
 
-static void toplevel_configure([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct xdg_toplevel *toplevel,
-                               [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height,
-                               [[maybe_unused]] struct wl_array *states) {}
+static void toplevel_configure(void *data, [[maybe_unused]] struct xdg_toplevel *toplevel,
+                               int32_t width, int32_t height, struct wl_array *states) {
+    bool maximized = false;
+    uint32_t *state;
+    wl_array_for_each(state, states) {
+        if (*state == XDG_TOPLEVEL_STATE_MAXIMIZED)
+            maximized = true;
+    }
+    say(data, "configure %d %d%s", width, height, maximized ? " maximized" : "");
+}
 static void toplevel_close(void *data, [[maybe_unused]] struct xdg_toplevel *toplevel) {
     app *client = data;
     say(client, "close");
@@ -500,6 +618,9 @@ static void global_add(void *data, struct wl_registry *reg, uint32_t name, const
         client->seat = wl_registry_bind(reg, name, &wl_seat_interface, version < 3 ? version : 3);
     else if (strcmp(iface, zwp_tablet_manager_v2_interface.name) == 0 && !client->no_tablet)
         client->tablet_manager = wl_registry_bind(reg, name, &zwp_tablet_manager_v2_interface, 1);
+    else if (strcmp(iface, wl_data_device_manager_interface.name) == 0 && version >= 3)
+        client->data_device_manager =
+            wl_registry_bind(reg, name, &wl_data_device_manager_interface, 3);
     else if (strcmp(iface, zwp_pointer_gestures_v1_interface.name) == 0)
         client->gestures = wl_registry_bind(reg, name, &zwp_pointer_gestures_v1_interface,
                                             version < 3 ? version : 3);
@@ -521,19 +642,25 @@ int main(int argc, char **argv) {
             client.no_tablet = true;
         else if (strcmp(argv[i], "--drag") == 0)
             client.drag = true;
+        else if (strcmp(argv[i], "--dnd") == 0)
+            client.dnd = true;
+        else if (strcmp(argv[i], "--maximized") == 0)
+            client.maximized = true;
+        else if (strcmp(argv[i], "--maximized-late") == 0)
+            client.maximized_late = true;
         else if (strcmp(argv[i], "--title") == 0 && i + 1 < argc)
             title = argv[++i];
         else if (log == nullptr && argv[i][0] != '-')
             log = argv[i];
         else {
             fprintf(stderr, "usage: xd-test-input LOG [--title TITLE] [--no-touch] "
-                            "[--no-tablet] [--drag]\n");
+                            "[--no-tablet] [--drag] [--dnd] [--maximized] [--maximized-late]\n");
             return EXIT_FAILURE;
         }
     }
     if (log == nullptr) {
         fprintf(stderr, "usage: xd-test-input LOG [--title TITLE] [--no-touch] [--no-tablet] "
-                        "[--drag]\n");
+                        "[--drag] [--dnd] [--maximized] [--maximized-late]\n");
         return EXIT_FAILURE;
     }
     client.log = fopen(log, "ae");
@@ -556,6 +683,11 @@ int main(int argc, char **argv) {
     }
     xdg_wm_base_add_listener(client.wm_base, &wm_listener, &client);
     wl_seat_add_listener(client.seat, &seat_listener, &client);
+    if (client.data_device_manager != nullptr) {
+        client.data_device =
+            wl_data_device_manager_get_data_device(client.data_device_manager, client.seat);
+        wl_data_device_add_listener(client.data_device, &data_device_listener, &client);
+    }
     if (client.tablet_manager != nullptr) {
         struct zwp_tablet_seat_v2 *ts =
             zwp_tablet_manager_v2_get_tablet_seat(client.tablet_manager, client.seat);
@@ -573,6 +705,8 @@ int main(int argc, char **argv) {
     xdg_toplevel_add_listener(client.toplevel, &toplevel_listener, &client);
     xdg_toplevel_set_title(client.toplevel, title);
     xdg_toplevel_set_app_id(client.toplevel, "org.xeondesktop.TestInput");
+    if (client.maximized)
+        xdg_toplevel_set_maximized(client.toplevel);
     wl_surface_commit(client.surface);
     say(&client, "ready");
     while (!client.quit && wl_display_dispatch(client.display) != -1) {

@@ -103,6 +103,10 @@ static void handle_surface_destroy(struct wl_listener *listener, [[maybe_unused]
     wl_list_remove(&ls->link);
     xd_unlisten(&ls->map);
     xd_unlisten(&ls->destroy);
+    /* The role goes before the wl_surface (and with the lock), so the
+     * surface's tree would otherwise stay in layer_lock until the client
+     * destroys the surface, and twice over if it locks again with it. */
+    wlr_scene_node_destroy(&ls->tree->node);
     xd_free(ls);
 }
 
@@ -259,6 +263,7 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
         xd_switcher_hide(server);
         xd_outline_hide(server);
         xd_ime_lock_changed(server);
+        xd_tablet_lock_changed(server);
         wlr_log(WLR_INFO, "session locked");
     }
     update_cover(server);

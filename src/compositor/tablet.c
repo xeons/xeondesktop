@@ -19,7 +19,9 @@
  */
 #include <linux/input-event-codes.h>
 #include <math.h>
+#include <time.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_tablet_pad.h>
 #include <wlr/types/wlr_tablet_tool.h>
 #include <wlr/types/wlr_tablet_v2.h>
@@ -132,10 +134,30 @@ static void pad_find_tablet(xd_tablets *ts, pad *tablet_pad) {
     }
 }
 
+/* While the session is locked the pad is the locker's alone, as the
+ * keyboard is: a program behind the lock gets nothing from it. */
+static bool is_pad_blocked(const pad *tablet_pad) {
+    return tablet_pad->owner->server->locked &&
+           (tablet_pad->focus == nullptr ||
+            wlr_session_lock_surface_v1_try_from_wlr_surface(tablet_pad->focus) == nullptr);
+}
+
+void xd_tablet_lock_changed(xd_server *server) {
+    xd_tablets *ts = server->tablets;
+    if (ts == nullptr || !server->locked)
+        return;
+    XD_LIST_FOR_EACH(tablet_pad, &ts->pads, pad, link) {
+        if (is_pad_blocked(tablet_pad))
+            pad_set_focus(tablet_pad, nullptr);
+    }
+}
+
 static void handle_pad_button(struct wl_listener *listener, void *data) {
     pad *tablet_pad = XD_CONTAINER_OF(listener, pad, button);
     const struct wlr_tablet_pad_button_event *tablet_pad_button_event = data;
     xd_idle_activity(tablet_pad->owner->server);
+    if (is_pad_blocked(tablet_pad))
+        return;
     /* A mode switch button changes the group's mode first. */
     if (tablet_pad_button_event->group < XD_ARRAY_LEN(tablet_pad->modes) &&
         tablet_pad->modes[tablet_pad_button_event->group] != tablet_pad_button_event->mode) {
@@ -155,6 +177,8 @@ static void handle_pad_ring(struct wl_listener *listener, void *data) {
     pad *tablet_pad = XD_CONTAINER_OF(listener, pad, ring);
     const struct wlr_tablet_pad_ring_event *tablet_pad_ring_event = data;
     xd_idle_activity(tablet_pad->owner->server);
+    if (is_pad_blocked(tablet_pad))
+        return;
     wlr_tablet_v2_tablet_pad_notify_ring(
         tablet_pad->v2, tablet_pad_ring_event->ring, tablet_pad_ring_event->position,
         tablet_pad_ring_event->source == WLR_TABLET_PAD_RING_SOURCE_FINGER,
@@ -165,6 +189,8 @@ static void handle_pad_strip(struct wl_listener *listener, void *data) {
     pad *tablet_pad = XD_CONTAINER_OF(listener, pad, strip);
     const struct wlr_tablet_pad_strip_event *tablet_pad_strip_event = data;
     xd_idle_activity(tablet_pad->owner->server);
+    if (is_pad_blocked(tablet_pad))
+        return;
     wlr_tablet_v2_tablet_pad_notify_strip(
         tablet_pad->v2, tablet_pad_strip_event->strip, tablet_pad_strip_event->position,
         tablet_pad_strip_event->source == WLR_TABLET_PAD_STRIP_SOURCE_FINGER,
@@ -202,11 +228,41 @@ void xd_tablet_add_pad(xd_server *server, struct wlr_input_device *device) {
             tablet_pad->wlr_pad->ring_count, tablet_pad->wlr_pad->strip_count);
 }
 
+/* ---- the pointer buttons a pen holds ------------------------------------------ */
+
+static uint32_t now_msec(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)((uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u);
+}
+
+/* The pen is gone (out of reach, or unplugged with its tablet): whatever
+ * it held as the pointer is let go, else a drag or a move it started
+ * would never end. */
+static void release_pointer_buttons(tool *tablet_tool, uint32_t time_msec) {
+    uint32_t held = tablet_tool->pointer_buttons;
+    tablet_tool->pointer_buttons = 0;
+    if (!tablet_tool->emulating)
+        return;
+    for (uint32_t bit = 0; bit < 32; bit++) {
+        if (held & (1u << bit))
+            xd_input_button(tablet_tool->owner->server, time_msec, BTN_LEFT + bit,
+                            WL_POINTER_BUTTON_STATE_RELEASED);
+    }
+}
+
 /* ---- tablets ------------------------------------------------------------------- */
 
 static void handle_tablet_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     tablet *tablet_device = XD_CONTAINER_OF(listener, tablet, destroy);
     xd_tablets *ts = tablet_device->owner;
+    /* Its pens go with it. */
+    XD_LIST_FOR_EACH(tablet_tool, &ts->tools, tool, link) {
+        if (tablet_tool->tablet == tablet_device) {
+            release_pointer_buttons(tablet_tool, now_msec());
+            tablet_tool->tip_down = false;
+        }
+    }
     XD_LIST_FOR_EACH(tablet_pad, &ts->pads, pad, link) {
         if (tablet_pad->tablet == tablet_device) {
             pad_set_focus(tablet_pad, nullptr);
@@ -260,7 +316,9 @@ static void tool_free(tool *tablet_tool) {
 }
 
 static void handle_tool_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    tool_free(XD_CONTAINER_OF(listener, tool, tool_destroy));
+    tool *tablet_tool = XD_CONTAINER_OF(listener, tool, tool_destroy);
+    release_pointer_buttons(tablet_tool, now_msec());
+    tool_free(tablet_tool);
 }
 
 /* The program under a tablet-v2 pen sets its cursor. */
@@ -366,16 +424,9 @@ static void handle_proximity(struct wl_listener *listener, void *data) {
         return;
     }
     /* Out of reach: whatever the pen held is let go. */
-    if (tablet_tool->emulating) {
-        for (uint32_t bit = 0; bit < 32; bit++) {
-            if (tablet_tool->pointer_buttons & (1u << bit))
-                xd_input_button(server, tablet_tool_proximity_event->time_msec, BTN_LEFT + bit,
-                                WL_POINTER_BUTTON_STATE_RELEASED);
-        }
-    } else {
+    if (!tablet_tool->emulating)
         wlr_tablet_v2_tablet_tool_notify_proximity_out(tablet_tool->v2);
-    }
-    tablet_tool->pointer_buttons = 0;
+    release_pointer_buttons(tablet_tool, tablet_tool_proximity_event->time_msec);
     tablet_tool->tip_down = false;
     tablet_tool->emulating = false;
     /* The mouse has the pointer again where the pen left it. */

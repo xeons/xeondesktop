@@ -62,8 +62,8 @@ static void place(xd_view *view, struct wlr_box box, bool tiled) {
         xd_view_set_outer_box(view, box);
 }
 
-static void arrange_output(xd_server *server, struct wlr_box area, xd_view **views,
-                           size_t view_count, uint32_t mode) {
+static void arrange_output(struct wlr_box area, xd_view **views, size_t view_count,
+                           uint32_t mode) {
     if (view_count == 0)
         return;
     if (mode == XD_WINDOW_ARRANGER_V1_MODE_CASCADE) {
@@ -78,7 +78,6 @@ static void arrange_output(xd_server *server, struct wlr_box area, xd_view **vie
             place(view, (struct wlr_box){area.x + off, area.y + off, width, height}, false);
             wlr_scene_node_raise_to_top(&view->tree->node);
         }
-        (void)server;
         return;
     }
     /* Tiling: one row (or column) per window up to three, then a grid. */
@@ -149,7 +148,7 @@ static void arrange_selection(xd_server *server, uint32_t mode, const selection 
             remember(view);
             views[count++] = view;
         }
-        arrange_output(server, out->usable, views, count, mode);
+        arrange_output(out->usable, views, count, mode);
         xd_free(views);
     }
 }
@@ -344,16 +343,7 @@ void xd_window_menu_show(xd_view *view, double lx, double ly, bool keyboard) {
     xd_output *out = xd_output_at(server, lx, ly);
     if (res == nullptr || out == nullptr)
         return;
-    /* The shell's wl_output for this output. */
-    struct wl_client *client = wl_resource_get_client(res);
-    struct wl_resource *output_res = nullptr;
-    struct wl_resource *resource;
-    wl_resource_for_each(resource, &out->wlr_output->resources) {
-        if (wl_resource_get_client(resource) == client) {
-            output_res = resource;
-            break;
-        }
-    }
+    struct wl_resource *output_res = shell_output(res, out);
     if (output_res == nullptr)
         return;
     struct wlr_box box;

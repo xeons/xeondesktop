@@ -5,3 +5,13 @@ leak:libpangoft2-1.0.so
 leak:libharfbuzz.so
 leak:libglib-2.0.so
 leak:libgobject-2.0.so
+
+# Mesa keeps its EGL and Gallium display state for the process's life,
+# past eglTerminate; reported from SceneFX's renderer creation.
+leak:libEGL_mesa.so
+leak:libgallium-*.so
+
+# wlroots 0.20 bug: wlr_tablet_pad_create callocs pad->groups
+# (types/tablet_v2/wlr_tablet_v2_pad.c:381) and handle_wlr_tablet_pad_destroy
+# (line 342) frees the pad without it.
+leak:wlr_tablet_pad_create

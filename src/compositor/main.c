@@ -408,7 +408,9 @@ static bool server_init(xd_server *server) {
     xd_trust_privileged(server, server->output_manager->global);
     xd_trust_privileged(server, server->layer_shell->global);
     xd_trust_privileged(server, server->virtual_keyboards->global);
-    xd_trust_privileged(server, server->ext_toplevels->global);
+    /* nullptr when window capture couldn't start (capture.c). */
+    if (server->ext_toplevels != nullptr)
+        xd_trust_privileged(server, server->ext_toplevels->global);
     xd_trust_privileged(server, server->arranger);
     return true;
 }
@@ -448,6 +450,16 @@ static void server_finish(xd_server *server) {
         xd_unlisten(listeners[i]);
     if (server->sigchld != nullptr)
         wl_event_source_remove(server->sigchld);
+    if (server->ping_timer != nullptr)
+        wl_event_source_remove(server->ping_timer);
+    if (server->lock_shown_timer != nullptr)
+        wl_event_source_remove(server->lock_shown_timer);
+    server->ping_timer = server->lock_shown_timer = nullptr;
+    /* Their clients are gone, and the windows a peek reordered. */
+    XD_FREE(&server->arranger_clients);
+    server->arranger_clients_n = server->arranger_clients_cap = 0;
+    XD_FREE(&server->peek_order);
+    server->peek_order_n = 0;
     if (server->zooms.next != nullptr)
         xd_animate_finish(server);
     xd_snap_finish(server);
@@ -864,25 +876,31 @@ int main(int argc, char **argv) {
                     qt1[] = "QT_QPA_PLATFORMTHEME", qt2[] = "QT_STYLE_OVERRIDE",
                     qt3[] = "QT_GUI_GTK_JSON", portal1[] = "GTK_USE_PORTAL",
                     portal2[] = "GDK_DEBUG";
-        char *update[18 + XD_IM_ENV_VARS] = {sh, flag, script, arg0, v1, v2, v3,
-                                             v4, v5, v6, v7, v8, v9};
-        size_t count = 13;
+        char *fixed[] = {sh, flag, script, arg0, v1, v2, v3, v4, v5, v6, v7, v8, v9};
+        char *portal[] = {portal1, portal2};
+        char *qt[] = {qt1, qt2, qt3};
+        /* Sized from its parts, plus the terminator, so a new variable
+         * can't overrun it. */
+        char *update[XD_ARRAY_LEN(fixed) + XD_ARRAY_LEN(portal) + XD_ARRAY_LEN(qt) +
+                     XD_IM_ENV_VARS + 1];
+        size_t count = 0;
+        for (size_t i = 0; i < XD_ARRAY_LEN(fixed); i++)
+            update[count++] = fixed[i];
         if (use_portal_set)
-            update[count++] = portal1;
+            update[count++] = portal[0];
         if (debug_set)
-            update[count++] = portal2;
+            update[count++] = portal[1];
         /* The Qt variables only if they're ours: the user's own setup
          * (environment.d) is the user manager's already. */
-        if (xd_qt_env_ours(qt1))
-            update[count++] = qt1;
-        if (xd_qt_env_ours(qt2))
-            update[count++] = qt2;
-        if (xd_qt_env_ours(qt3))
-            update[count++] = qt3;
+        for (size_t i = 0; i < XD_ARRAY_LEN(qt); i++) {
+            if (xd_qt_env_ours(qt[i]))
+                update[count++] = qt[i];
+        }
         for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
             if (xd_qt_env_ours(xd_im_env_vars[i]))
                 update[count++] = (char *)(uintptr_t)xd_im_env_vars[i];
         }
+        XD_ASSERT(count < XD_ARRAY_LEN(update));
         update[count] = nullptr;
         xd_spawn_argv(update);
     }

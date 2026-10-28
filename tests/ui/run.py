@@ -9748,6 +9748,85 @@ def pen_without_tablet_support(s):
 
 
 @scenario()
+def pen_unplugged_mid_drag(s):
+    """A tablet unplugged while its pen drags a caption (the pen's tip
+    working the left button) lets the button go: the move ends there, and
+    the mouse moves only the pointer afterwards."""
+    log, (x, y, w, h) = input_window(s, "--no-tablet")
+    cx, cy = x + w // 3, y - 11
+    # xd-inject exits with the tip still down: its tablet and pen go.
+    s.inject("pen", "in", cx, cy, "pen", "down", "sleep", 100, "pen", "move", cx + 40, cy + 30,
+             "sleep", 100, "pen", "move", cx + 60, cy + 50, "sleep", 300)  # fmt: skip
+    mx, my, _, _ = input_window_box(s)
+    s.check(abs(mx - (x + 60)) <= 2 and abs(my - (y + 50)) <= 2,
+            f"the pen dragged the caption ({mx},{my}, expected {x + 60},{y + 50})")
+    s.inject("move", cx + 200, cy + 150, "sleep", 100, "move", cx + 260, cy + 190)
+    nx, ny, _, _ = input_window_box(s)
+    s.check((nx, ny) == (mx, my),
+            f"unplugged, the move ended: the mouse doesn't drag it ({nx},{ny})")  # fmt: skip
+
+
+@scenario()
+def touch_drag_and_drop(s):
+    """A program may start drag and drop from a finger (as from a held
+    button): the drag follows the finger and drops where it lifts."""
+    log, (x, y, w, h) = input_window(s, "--dnd")
+    s.inject("touch", "down", 1, x + 50, y + 40, "sleep", 100,
+             "touch", "move", 1, x + 120, y + 90, "sleep", 100,
+             "touch", "move", 1, x + 200, y + 150, "sleep", 100, "touch", "up", 1)  # fmt: skip
+    wait_logged(s, log, "dnd start", "the drag to start")
+    wait_logged(s, log, "dnd drop performed", "the drop")
+    got = logged(log)
+    s.check("dnd cancelled" not in got, "the drag wasn't refused")
+    s.check("dnd motion 200 150" in got, "it followed the finger over the window")
+    s.check("dnd drop" in got, "and dropped where the finger lifted")
+
+
+def opens_maximized(s, option, title):
+    log = os.path.join(s.base, f"{title.replace(' ', '-')}.log")
+    s.launch(s.tool("xd-test-input"), log, "--title", title, option)
+    s.wait_window(title=title, state="maximized")
+    box = orange_box(s.settle("maximized"))
+    s.check(box is not None and box[0] < 10 and box[1] < 40,
+            f"{option}: it opened maximized, at the work area's corner ({box})")
+    s.inject("key", "super+Down")
+    s.wait(lambda: "maximized" not in s.window(title=title)["states"], "restore")
+    restored = orange_box(s.settle("restored"))
+    s.check(restored is not None and restored[2] == 360 and restored[3] == 240 and
+            restored[0] > 0 and restored[1] > 0,
+            f"{option}: restored, it's where it was placed ({restored})")  # fmt: skip
+    s.inject("key", "alt+F4")
+    s.wait_window(title=title, gone=True)
+
+
+@scenario()
+def open_maximized(s):
+    """A window that asks to be maximized before it's shown (GTK 3 asks
+    before its first commit; others between their first configure and
+    their first buffer) opens maximized, and restores to where it was
+    placed."""
+    opens_maximized(s, "--maximized", "Early")
+    opens_maximized(s, "--maximized-late", "Late")
+
+
+@scenario(outputs=TWO_MONITORS)
+def monitor_unplugged(s):
+    """A monitor unplugged while the session runs: its windows come over to
+    the one left, and the desktop goes on."""
+    s.inject("move", SECOND_X + 300, 200)
+    log = os.path.join(s.base, "unplug.log")
+    s.launch(s.tool("xd-test-input"), log, "--title", "Unplug test")
+    s.wait_window(title="Unplug test", state="activated")
+    s.check(orange_box(s.settle("on-second")) is None, "the window opened on the second monitor")
+    s.inject("unplug", "HEADLESS-2")
+    s.wait(lambda: orange_box(s.shot("unplugged")) is not None, "the window on the first monitor")
+    s.check(s.window(title="Unplug test") is not None, "the session goes on, the window with it")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.log("ok: a new window opens on the monitor left")
+
+
+@scenario()
 def touchpad_pinch(s):
     """Touchpad gestures go to the program under the pointer: a pinch (and
     a two-finger swipe and a hold) reach it with their fingers and scale;

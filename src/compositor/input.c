@@ -898,15 +898,25 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
  * changed: it's put on the session's layout, if it has it. Clients get
  * the keymap after us (from the seat), so they hear of the layout with
  * the next key. */
+static void update_seat_caps(xd_server *server);
+
 static void handle_keymap(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, keymap);
-    if (!kb->server->kb_group_syncing)
-        sync_group(kb->server, kb->server->kb_group, nullptr);
+    xd_server *server = kb->server;
+    if (!server->kb_group_syncing)
+        sync_group(server, server->kb_group, nullptr);
     kb->resend_layout = true;
+    /* A virtual keyboard's first keymap: with no other keyboard it's the
+     * seat's now, so programs that take the keyboard capability get this
+     * keymap (and their focus) at once. */
+    if (!kb->physical && wlr_seat_get_keyboard(server->seat) == nullptr)
+        wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
+    update_seat_caps(server);
 }
 
 static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, destroy);
+    xd_server *server = kb->server;
     xd_access_keyboard_gone(kb);
     xd_unlisten(&kb->modifiers);
     xd_unlisten(&kb->keymap);
@@ -914,10 +924,12 @@ static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused
     xd_unlisten(&kb->destroy);
     wl_list_remove(&kb->link);
     xd_free(kb);
+    /* The last one unplugged: programs stop expecting keys. */
+    update_seat_caps(server);
 }
 
 static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
-                                      struct wlr_input_device *device);
+                                      struct wlr_input_device *device, bool physical);
 
 /* The keymap [Keyboard] asks for; empty names fall back to XKB_DEFAULT_*
  * and then the system default. A bad layout falls back the same way. */
@@ -990,20 +1002,25 @@ static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     }
     configure_keyboard(server, wlr_kb, keymap);
     xkb_keymap_unref(keymap);
-    register_keyboard(server, wlr_kb, device)->physical = true;
+    register_keyboard(server, wlr_kb, device, true);
     adopt_group(server);
 }
 
 static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
-                                      struct wlr_input_device *device) {
+                                      struct wlr_input_device *device, bool physical) {
     xd_keyboard *kb = XD_NEW(xd_keyboard);
     kb->server = server;
     kb->wlr_keyboard = wlr_kb;
+    kb->physical = physical;
     XD_LISTEN(&wlr_kb->events.modifiers, kb, modifiers, handle_modifiers);
     XD_LISTEN(&wlr_kb->events.key, kb, key, handle_key);
     XD_LISTEN(&wlr_kb->events.keymap, kb, keymap, handle_keymap);
     XD_LISTEN(&device->events.destroy, kb, destroy, handle_keyboard_destroy);
-    wlr_seat_set_keyboard(server->seat, wlr_kb);
+    /* A virtual keyboard has no keymap until its client sends one: clients
+     * would get an empty one. It becomes the seat's with its keymap
+     * (handle_keymap) or its first key. */
+    if (physical)
+        wlr_seat_set_keyboard(server->seat, wlr_kb);
     wl_list_insert(&server->keyboards, &kb->link);
     return kb;
 }
@@ -1170,10 +1187,14 @@ static void add_switch(xd_server *server, struct wlr_input_device *device) {
     XD_LISTEN(&device->events.destroy, sw, destroy, handle_switch_destroy);
 }
 
+/* The keyboard capability counts keyboards with a keymap: a program that
+ * takes it before then would get none, and no focus with it. */
 static void update_seat_caps(xd_server *server) {
     uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
-    if (!wl_list_empty(&server->keyboards))
-        caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+    XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
+        if (kb->wlr_keyboard->keymap != nullptr)
+            caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+    }
     if (xd_touch_present(server))
         caps |= WL_SEAT_CAPABILITY_TOUCH;
     wlr_seat_set_capabilities(server->seat, caps);
@@ -1219,7 +1240,7 @@ static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data
     /* The client supplies its own keymap. The configured repeat, so a
      * held key (xd-inject's press) repeats as a real one would. */
     apply_repeat(server, &vk->keyboard);
-    register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
+    register_keyboard(server, &vk->keyboard, &vk->keyboard.base, false);
     adopt_group(server);
     update_seat_caps(server);
     wlr_log(WLR_INFO, "virtual keyboard connected");
@@ -1633,6 +1654,7 @@ static void begin_frame_action(xd_server *server, pick *picked, uint32_t button,
     }
     if (button != BTN_LEFT)
         return;
+    server->grab_button = button;
 
     if (xd_frame_part_is_button(picked->part)) {
         server->mode = XD_CURSOR_BUTTON;
@@ -1767,6 +1789,11 @@ static bool seat_has_button(const struct wlr_seat *seat, uint32_t button) {
     return false;
 }
 
+uint32_t xd_input_get_held_button(const xd_server *server) {
+    const struct wlr_seat *seat = server->seat;
+    return seat->pointer_state.button_count > 0 ? seat->pointer_state.grab_button : 0;
+}
+
 /* MouseKeys moves the pointer as a mouse would. */
 void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec) {
     constrained_motion(server, nullptr, dx, dy, dx, dy, time_msec);
@@ -1848,6 +1875,16 @@ static void process_button(xd_server *server,
     }
     if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->mode != XD_CURSOR_PASSTHROUGH) {
+            /* Only the button that started the move or size ends it, as
+             * in Windows' move/size loop; another one's release still
+             * reaches the program that had its press. */
+            if (server->grab_button != 0 && pointer_button_event->button != server->grab_button) {
+                if (seat_has_button(server->seat, pointer_button_event->button))
+                    wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                                   pointer_button_event->button,
+                                                   pointer_button_event->state);
+                return;
+            }
             end_grab(server);
             /* A client that asked for the move or resize had the press:
              * it must get the release too, or it keeps waiting for it and
@@ -1987,20 +2024,39 @@ static void handle_request_start_drag(struct wl_listener *listener, void *data) 
     if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
         xd_relay_start_drag(server, seat_request_start_drag_event->drag))
         return;
-    /* Only for a button held over the client that asks. */
-    if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
+    /* Only for a button held, or a finger down, on the client that asks. */
+    struct wlr_touch_point *point = nullptr;
+    bool allowed = !server->locked && server->mode == XD_CURSOR_PASSTHROUGH;
+    if (allowed &&
         wlr_seat_validate_pointer_grab_serial(server->seat, seat_request_start_drag_event->origin,
                                               seat_request_start_drag_event->serial))
         wlr_seat_start_pointer_drag(server->seat, seat_request_start_drag_event->drag,
                                     seat_request_start_drag_event->serial);
+    else if (allowed &&
+             wlr_seat_validate_touch_grab_serial(server->seat,
+                                                 seat_request_start_drag_event->origin,
+                                                 seat_request_start_drag_event->serial, &point) &&
+             point != nullptr)
+        wlr_seat_start_touch_drag(server->seat, seat_request_start_drag_event->drag,
+                                  seat_request_start_drag_event->serial, point);
     else
         wlr_data_source_destroy(seat_request_start_drag_event->drag->source);
 }
 
-static void place_drag_icon(xd_server *server) {
+static bool is_touch_drag(const xd_server *server) {
+    const struct wlr_drag *drag = server->seat->drag;
+    return drag != nullptr && drag->grab_type == WLR_DRAG_GRAB_KEYBOARD_TOUCH;
+}
+
+void xd_input_place_drag_icon(xd_server *server, double lx, double ly) {
     if (server->drag_icon != nullptr)
-        wlr_scene_node_set_position(&server->drag_icon->node, (int)server->cursor->x,
-                                    (int)server->cursor->y);
+        wlr_scene_node_set_position(&server->drag_icon->node, (int)lx, (int)ly);
+}
+
+/* A finger's drag has its icon under the finger (touch.c moves it). */
+static void place_drag_icon(xd_server *server) {
+    if (!is_touch_drag(server))
+        xd_input_place_drag_icon(server, server->cursor->x, server->cursor->y);
 }
 
 void xd_input_pointer_moved(xd_server *server) {
@@ -2026,7 +2082,11 @@ static void handle_start_drag(struct wl_listener *listener, void *data) {
     struct wlr_drag *drag = data;
     if (drag->icon != nullptr) {
         server->drag_icon = wlr_scene_drag_icon_create(server->layer_drag, drag->icon);
-        place_drag_icon(server);
+        double lx = 0, ly = 0;
+        if (!is_touch_drag(server))
+            place_drag_icon(server);
+        else if (xd_touch_get_position(server, drag->touch_id, &lx, &ly))
+            xd_input_place_drag_icon(server, lx, ly);
     }
     XD_LISTEN(&drag->events.destroy, server, drag_destroy, handle_drag_destroy);
     xd_relay_drag_started(server, drag);

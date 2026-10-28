@@ -4,9 +4,11 @@
  * gestures for the UI tests, which run headless where there are none.
  * Each is a real wlroots device, added as the backend adds libinput's, so
  * the tests go through the same code as real hardware; only the events
- * come from xd-inject.
+ * come from xd-inject. And a monitor unplugged (unplug_output), which the
+ * headless backend can't do by itself.
  */
 #include <linux/input-event-codes.h>
+#include <string.h>
 #include <time.h>
 #include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/interfaces/wlr_tablet_pad.h>
@@ -344,6 +346,20 @@ static void hold_end(struct wl_client *client, struct wl_resource *res, uint32_t
     wl_signal_emit_mutable(&pointer->events.hold_end, &pointer_hold_end_event);
 }
 
+/* ---- monitors ------------------------------------------------------------------- */
+
+static void unplug_output([[maybe_unused]] struct wl_client *client, struct wl_resource *res,
+                          const char *name) {
+    test_input *ti = from_resource(res);
+    XD_LIST_FOR_EACH(out, &ti->server->outputs, xd_output, link) {
+        if (strcmp(out->wlr_output->name, name) == 0) {
+            wlr_output_destroy(out->wlr_output);
+            return;
+        }
+    }
+    wlr_log(WLR_ERROR, "test input: no output '%s' to unplug", name);
+}
+
 static void destroy_request([[maybe_unused]] struct wl_client *client, struct wl_resource *res) {
     wl_resource_destroy(res);
 }
@@ -369,6 +385,7 @@ static const struct xd_test_input_v1_interface test_input_impl = {
     .pinch_end = pinch_end,
     .hold_begin = hold_begin,
     .hold_end = hold_end,
+    .unplug_output = unplug_output,
 };
 
 /* The client is done: its devices are unplugged. */
@@ -406,6 +423,6 @@ static void bind_test_input(struct wl_client *client, void *data, uint32_t versi
 }
 
 void xd_test_input_init(xd_server *server) {
-    wl_global_create(server->display, &xd_test_input_v1_interface, 1, server, bind_test_input);
+    wl_global_create(server->display, &xd_test_input_v1_interface, 2, server, bind_test_input);
     wlr_log(WLR_INFO, "test touchscreen, tablet and touchpad available (testing only)");
 }
