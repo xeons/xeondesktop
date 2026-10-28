@@ -163,6 +163,26 @@ def session_pids(runtime):
     return pids
 
 
+def leak_check_environment():
+    """ASan's options for a session's programs: leaks unchecked, unless
+    XD_UI_LEAK_LOG names a directory, where each program that leaks then
+    writes its report (lsan.PID) as it exits; the session gets longer to
+    end, for the reports to be written."""
+    directory = os.environ.get("XD_UI_LEAK_LOG")
+    if not directory:
+        return {"ASAN_OPTIONS": "detect_leaks=0"}
+    os.makedirs(directory, exist_ok=True)
+    suppressions = os.path.join(SOURCE_ROOT, "tests", "lsan.supp")
+    return {
+        # The slow unwinder: whole stacks, through libraries built without
+        # frame pointers, so a leak shows which of our calls made it.
+        "ASAN_OPTIONS": "detect_leaks=1:fast_unwind_on_malloc=0:log_path="
+        + os.path.join(directory, "lsan"),
+        # A leak is reported, not made a failure (exit status 0).
+        "LSAN_OPTIONS": f"suppressions={suppressions}:print_suppressions=0:exitcode=0",
+    }
+
+
 def end_session(runtime, grace):
     """Ends every process of the session, politely first if grace > 0."""
     for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2.0)):
@@ -320,7 +340,7 @@ def run_scenario(name, build, keep, keep_all=False):
             **{k: os.path.join(home, d) for k, d in XDG_DIRS.items()},
             "GIO_USE_VFS": "local",
             "NO_AT_BRIDGE": "1",
-            "ASAN_OPTIONS": "detect_leaks=0",
+            **leak_check_environment(),
             # Never the real system bus (polkit, UDisks, NetworkManager...):
             # a scenario that needs one starts a dbusmock bus of its own.
             "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=" + os.path.join(runtime, "no-system-bus"),
@@ -408,7 +428,8 @@ def run_scenario(name, build, keep, keep_all=False):
         if proc is not None and proc.poll() is None:
             proc.kill()
             proc.wait()
-        left = end_session(runtime, grace=3.0 if passed else 1.0)
+        grace = 3.0 if passed else 1.0
+        left = end_session(runtime, grace=20.0 if os.environ.get("XD_UI_LEAK_LOG") else grace)
         if left:
             print(f"run.py: processes {left} wouldn't end; leaving {base}", file=sys.stderr)
         else:
