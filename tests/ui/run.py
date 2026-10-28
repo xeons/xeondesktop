@@ -1815,6 +1815,38 @@ def ring_switcher_thumbnails(s):
     s.wait(lambda: active_title(s) == "Run", "Super+Tab alone to switch back to Run")
 
 
+@scenario(setup=effects_setup("[RingSwitcher]\nEnabled=true\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)])  # TWO_MONITORS
+def ring_switcher_output_off(s):
+    """Ring Switcher on the second monitor, which is turned off while it
+    shows: the ring ends without switching (Run stays active), nothing of
+    it is left on the first monitor, and Super+Tab works again after."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    empty = s.settle("desktop")
+    s.inject("move", WIDTH - 20, 300)
+    open_two_windows(s)
+    s.inject("move", WIDTH + 300, 200)
+    held = s.launch(s.tool("xd-inject"), "hold", "super", "key", "Tab", "sleep", "5000",
+                    "release", "super")
+    time.sleep(1.5)
+    second = (WIDTH, 0, round(WIDTH / 1.5), round(HEIGHT / 1.5))
+    ring = s.shot("ring")
+    s.check(darker(ring.pixel(second[0] + 3, 3), empty.pixel(second[0] + 3, 3)),
+            "the ring darkens the second monitor")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-2", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the second monitor turned off ({r.stderr.strip()})")
+    held.wait(timeout=20)
+    s.inject("move", WIDTH - 20, 300)
+    after = s.settle("after")
+    s.check(not darker(after.pixel(3, 3), empty.pixel(3, 3), by=8),
+            "nothing of the ring on the first monitor")
+    s.check(active_title(s) == "Run", f"no switch: Run is still active ({active_title(s)})")
+    s.inject("key", "super+Tab")
+    s.wait(lambda: active_title(s) == "Control Panel", "Super+Tab to switch to Control Panel")
+
+
 def zoomed_match(zoomed, before, x, y, level, radius=150, step=7):
     """Around (x, y): the share of points that show what `before` had
     `level` times closer to (x, y), and the share that changed at all.
