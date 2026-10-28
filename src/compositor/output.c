@@ -111,9 +111,12 @@ static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]]
     xd_unlisten(&out->destroy);
     if (out->background != nullptr)
         wlr_scene_node_destroy(&out->background->node);
+    out->background = nullptr;
     xd_server *server = out->server;
-    wlr_output_layout_remove(server->output_layout, out->wlr_output);
+    /* Removing it from the layout emits the layout's change, whose handler
+     * walks server->outputs: this one must be gone from there first. */
     wl_list_remove(&out->link);
+    wlr_output_layout_remove(server->output_layout, out->wlr_output);
     xd_free(out);
     /* The others close up from 0,0. */
     xd_output_place_all(server);
