@@ -496,9 +496,14 @@ slides up and down), zooming out half-way; Rotate Cube's binding
 (Ctrl+Alt+Button1) drags it round and tilts it, and let go it settles on
 the nearest desktop face and switches there without animating again.
 
-**Expo** (`expo.c`): every desktop as a wall (Compiz's expo, flat), each a
+**Expo** (`expo.c`): every desktop as a wall (Compiz's expo), each a
 scene capture at about the size it's drawn, zoomed from the current one
-(`xd_expo_get_cell()`). Its key (Win+W) or corner (top left) shows it;
+(`xd_expo_get_cell()`), and deformed as it zooms out by its Deformation:
+None, Tilt (leaned back about its middle, the default) or Curve (bent round
+a vertical axis in front, drawn in strips). `xd_expo_get_point()` puts a
+point of the flat wall in 3D for the camera; `xd_expo_find_point()`
+inverts it (a ray against the plane or the cylinder), so clicks and drags
+land on the desktop drawn under the pointer. Its key (Win+W) or corner (top left) shows it;
 while it shows, the pointer and clicks are its: a click zooms in to that
 desktop (switched to at once, with the highest animator priority so
 nothing else animates it), a press on a window and a drag carries it (a

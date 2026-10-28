@@ -196,6 +196,106 @@ static void test_expo_layout(void) {
     CHECK(near_value(y, 0, 1e-6) && near_value(height, 768, 1e-6));
 }
 
+/* Desktop `desktop`'s point (across, down: 0..1) of a 2 x 2 wall, drawn
+ * and picked again: the same desktop and point. */
+static bool expo_picks_back(const xd_expo_layout *layout, int desktop, double across,
+                            double down) {
+    xd_camera camera;
+    xd_camera_init(&camera, layout->width, layout->height);
+    double x = 0, y = 0, width = 0, height = 0;
+    xd_expo_get_cell(layout, desktop % layout->columns, desktop / layout->columns, 1.0, &x, &y,
+                     &width, &height);
+    xd_vec3 point = xd_expo_get_point(layout, 1.0, x + across * width, y + down * height);
+    double screen_x = 0, screen_y = 0;
+    if (!xd_camera_project_to_screen(&camera, point, &screen_x, &screen_y))
+        return false;
+    double found_across = 0, found_down = 0;
+    return xd_expo_find_desktop(layout, screen_x, screen_y, &found_across, &found_down) ==
+               desktop &&
+           near_value(found_across, across, 1e-6) && near_value(found_down, down, 1e-6);
+}
+
+/* Desktop (column, row)'s corners on the screen, at full zoom-out. */
+static void expo_get_screen_corners(const xd_expo_layout *layout, int column, int row,
+                                    double screen[4][2]) {
+    xd_camera camera;
+    xd_camera_init(&camera, layout->width, layout->height);
+    double x = 0, y = 0, width = 0, height = 0;
+    xd_expo_get_cell(layout, column, row, 1.0, &x, &y, &width, &height);
+    const double corners[4][2] = {{x, y}, {x + width, y}, {x + width, y + height},
+                                  {x, y + height}};
+    for (int i = 0; i < 4; i++) {
+        xd_vec3 point = xd_expo_get_point(layout, 1.0, corners[i][0], corners[i][1]);
+        CHECK(point.z <= 1e-9);
+        CHECK(xd_camera_project_to_screen(&camera, point, &screen[i][0], &screen[i][1]));
+    }
+}
+
+static void test_expo_deformation(void) {
+    xd_expo_layout layout = {.columns = 2, .rows = 2, .current_column = 1, .width = 2560,
+                             .height = 1440, .spacing = 10, .curve = 0.5};
+    const xd_expo_deformation deformations[] = {XD_EXPO_FLAT, XD_EXPO_TILT, XD_EXPO_CURVE};
+    for (size_t i = 0; i < XD_ARRAY_LEN(deformations); i++) {
+        layout.deformation = deformations[i];
+        /* Zoomed in, nothing's deformed: the current desktop is the screen. */
+        double x = 0, y = 0, width = 0, height = 0;
+        xd_expo_get_cell(&layout, 1, 0, 0.0, &x, &y, &width, &height);
+        xd_vec3 corner = xd_expo_get_point(&layout, 0.0, x + width, y + height);
+        CHECK(near_value(corner.x, 2560, 1e-6) && near_value(corner.y, 1440, 1e-6) &&
+              near_value(corner.z, 0, 1e-6));
+        double found_x = 0, found_y = 0;
+        CHECK(xd_expo_find_point(&layout, 0.0, 300, 200, &found_x, &found_y) &&
+              near_value(found_x, 300, 1e-6) && near_value(found_y, 200, 1e-6));
+        /* Each desktop, anywhere in it, is picked where it's drawn. */
+        for (int desktop = 0; desktop < 4; desktop++) {
+            CHECK(expo_picks_back(&layout, desktop, 0.5, 0.5));
+            CHECK(expo_picks_back(&layout, desktop, 0.1, 0.9));
+            CHECK(expo_picks_back(&layout, desktop, 0.95, 0.05));
+        }
+        /* Half-way, too: the inverse holds while it zooms. */
+        xd_camera camera;
+        xd_camera_init(&camera, 2560, 1440);
+        xd_vec3 point = xd_expo_get_point(&layout, 0.5, 700, 900);
+        double screen_x = 0, screen_y = 0;
+        CHECK(xd_camera_project_to_screen(&camera, point, &screen_x, &screen_y));
+        CHECK(xd_expo_find_point(&layout, 0.5, screen_x, screen_y, &found_x, &found_y) &&
+              near_value(found_x, 700, 1e-6) && near_value(found_y, 900, 1e-6));
+        /* The gap between the columns is no desktop. */
+        double across = 0, down = 0;
+        double top[4][2], bottom[4][2];
+        expo_get_screen_corners(&layout, 0, 0, top);
+        expo_get_screen_corners(&layout, 0, 1, bottom);
+        double right_top[4][2];
+        expo_get_screen_corners(&layout, 1, 0, right_top);
+        CHECK(xd_expo_find_desktop(&layout, (top[1][0] + right_top[0][0]) / 2.0,
+                                   (top[1][1] + top[2][1]) / 2.0, &across, &down) == -1);
+        double top_width = top[1][0] - top[0][0];
+        double bottom_width = bottom[2][0] - bottom[3][0];
+        switch (layout.deformation) {
+        case XD_EXPO_FLAT:
+            CHECK(near_value(top_width, bottom_width, 1e-6));
+            CHECK(near_value(top[0][1], top[1][1], 1e-6));
+            break;
+        case XD_EXPO_TILT:
+            /* Leaned back: a trapezoid, the top row narrower than the
+             * bottom, each desktop narrower at its top. */
+            CHECK(top_width < bottom_width * 0.95);
+            CHECK(bottom[2][0] - bottom[3][0] > (bottom[1][0] - bottom[0][0]));
+            CHECK(near_value(top[0][1], top[1][1], 1e-6));
+            break;
+        case XD_EXPO_CURVE:
+            /* Bent round: the outer edges nearer, so taller than the
+             * middle, and the rows the same width. */
+            CHECK(near_value(top_width, bottom_width, 1e-6));
+            CHECK(top[3][1] - top[0][1] > top[2][1] - top[1][1]);
+            CHECK(xd_expo_count_strips(&layout, 1.0, width / 2.0) > 4);
+            break;
+        }
+        if (layout.deformation != XD_EXPO_CURVE)
+            CHECK(xd_expo_count_strips(&layout, 1.0, width) == 1);
+    }
+}
+
 static void test_shift_layout(void) {
     /* Cover: the selected window in the middle, facing; the next to the
      * right turned away and farther back; fading out past five. */
@@ -231,5 +331,6 @@ static void test_desktops(void) {
     test_wall_slide();
     test_cube_projection();
     test_expo_layout();
+    test_expo_deformation();
     test_shift_layout();
 }

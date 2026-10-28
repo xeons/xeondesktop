@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: MIT
  * Expo (xd-compositor-fx): every desktop at once as a wall, Compiz's expo
- * plugin flat. Its key or its corner zooms out from the current desktop
- * (viewport_model.h's xd_expo_get_cell, unit-tested) to the whole wall;
- * a click on a desktop zooms in to it and shows it, Escape or the key
- * again back to the current one. A window dragged from one desktop to
- * another follows the pointer, and goes to that desktop where it's let
- * go.
+ * plugin. Its key or its corner zooms out from the current desktop
+ * (viewport_model.h's xd_expo_get_cell, unit-tested) to the whole wall,
+ * flat, leaned back (Tilt) or bent round the viewer (Curve) as it goes
+ * (xd_expo_get_point; xd_expo_find_point finds what's under the
+ * pointer); a click on a desktop zooms in to it and shows it, Escape or
+ * the key again back to the current one. A window dragged from one
+ * desktop to another follows the pointer, and goes to that desktop where
+ * it's let go.
  *
  * A whole-output effect (glfx.h): each desktop is a scene capture, at
  * about the size it's drawn so the wall stays cheap on software
@@ -46,6 +48,8 @@ typedef struct expo_options {
     uint32_t edges;
     double zoom_seconds;
     double spacing;
+    xd_expo_deformation deformation;
+    double curve; /* 0..1 */
 } expo_options;
 
 typedef struct expo_state {
@@ -100,6 +104,8 @@ static xd_expo_layout expo_get_layout(const expo_state *state, struct wlr_box bo
         .width = box.width,
         .height = box.height,
         .spacing = state->options.spacing,
+        .deformation = state->options.deformation,
+        .curve = state->options.curve,
     };
     xd_desktop_grid_get_cell(grid, state->focus, &layout.current_column, &layout.current_row);
     return layout;
@@ -128,6 +134,30 @@ static bool expo_is_drag_view(const xd_view *view, void *data) {
     return view == data;
 }
 
+/* Whether any of a rectangle of the flat wall shows, deformed: its edges'
+ * points (enough of them round a curve) against the screen. */
+static bool expo_is_on_screen(const xd_expo_layout *layout, double progress, double x, double y,
+                              double width, double height) {
+    xd_camera camera;
+    xd_camera_init(&camera, layout->width, layout->height);
+    int strips = xd_expo_count_strips(layout, progress, width);
+    double left = HUGE_VAL, top = HUGE_VAL, right = -HUGE_VAL, bottom = -HUGE_VAL;
+    for (int i = 0; i <= strips; i++) {
+        double across = x + width * i / strips;
+        for (int edge = 0; edge < 2; edge++) {
+            xd_vec3 point = xd_expo_get_point(layout, progress, across, y + height * edge);
+            double screen_x = 0, screen_y = 0;
+            if (!xd_camera_project_to_screen(&camera, point, &screen_x, &screen_y))
+                continue;
+            left = fmin(left, screen_x);
+            right = fmax(right, screen_x);
+            top = fmin(top, screen_y);
+            bottom = fmax(bottom, screen_y);
+        }
+    }
+    return left < layout->width && top < layout->height && right > 0 && bottom > 0;
+}
+
 static void expo_capture(expo_state *state, xd_output *output) {
     xd_server *server = state->server;
     struct wlr_box box = expo_get_output_box(server, output);
@@ -143,7 +173,7 @@ static void expo_capture(expo_state *state, xd_output *output) {
         xd_expo_get_cell(&layout, column, row, state->progress, &x, &y, &width, &height);
         state->captured[desktop] = false;
         /* Off the screen while zoomed in: not drawn. */
-        if (x >= box.width || y >= box.height || x + width <= 0 || y + height <= 0)
+        if (!expo_is_on_screen(&layout, state->progress, x, y, width, height))
             continue;
         if (state->captures[desktop] == nullptr)
             state->captures[desktop] = xd_glfx_create_scene_capture(server);
@@ -162,16 +192,28 @@ static void expo_capture(expo_state *state, xd_output *output) {
     }
 }
 
-/* A rectangle (output units) as a flat quad in clip space. */
-static void expo_get_quad(struct wlr_box box, double x, double y, double width, double height,
-                          float quad[4][4]) {
-    const double corners[4][2] = {{x, y}, {x + width, y}, {x + width, y + height},
-                                  {x, y + height}};
-    for (int i = 0; i < 4; i++) {
-        quad[i][0] = (float)(corners[i][0] / box.width * 2.0 - 1.0);
-        quad[i][1] = (float)(corners[i][1] / box.height * 2.0 - 1.0);
-        quad[i][2] = 0.0f;
-        quad[i][3] = 1.0f;
+/* A picture on a rectangle of the flat wall (output units), deformed as
+ * the wall is: one quad in perspective, or strips round a curve. */
+static void expo_draw_rect(const xd_glfx_draw *draw, const xd_expo_layout *layout,
+                           double progress, const xd_glfx_texture *texture, double x, double y,
+                           double width, double height, float alpha, float brightness) {
+    xd_camera camera;
+    xd_camera_init(&camera, layout->width, layout->height);
+    int strips = xd_expo_count_strips(layout, progress, width);
+    for (int i = 0; i < strips; i++) {
+        double from = (double)i / strips, to = (double)(i + 1) / strips;
+        double left = x + width * from, right = x + width * to;
+        const xd_vec3 corners[4] = {
+            xd_expo_get_point(layout, progress, left, y),
+            xd_expo_get_point(layout, progress, right, y),
+            xd_expo_get_point(layout, progress, right, y + height),
+            xd_expo_get_point(layout, progress, left, y + height),
+        };
+        float quad[4][4];
+        for (int corner = 0; corner < 4; corner++)
+            xd_camera_project(&camera, corners[corner], quad[corner]);
+        const float part[4] = {(float)from, 0.0f, (float)to, 1.0f};
+        xd_glfx_draw_quad_part(draw, texture, quad, part, alpha, brightness);
     }
 }
 
@@ -193,24 +235,29 @@ static void expo_draw(xd_output_effect *effect, [[maybe_unused]] xd_output *outp
         double x = 0, y = 0;
         xd_expo_get_cell(&layout, column, row, state->progress, &x, &y, &cell_width,
                          &cell_height);
-        float quad[4][4];
-        expo_get_quad(box, x, y, cell_width, cell_height, quad);
         bool lit = state->phase != EXPO_SHOWN ? desktop == state->focus
                                               : desktop == state->hover;
         float brightness =
             lit ? 1.0f : 1.0f - (1.0f - INACTIVE_BRIGHTNESS) * (float)state->progress;
-        xd_glfx_draw_quad(draw, &state->textures[desktop], quad, 1.0f, brightness);
+        expo_draw_rect(draw, &layout, state->progress, &state->textures[desktop], x, y,
+                       cell_width, cell_height, 1.0f, brightness);
     }
-    /* The dragged window, at the wall's scale, held where it was taken. */
+    /* The dragged window, at the wall's scale, held where it was taken:
+     * on the wall where the pointer is, leaning or bending with it. */
     if (state->dragging && state->drag_captured && state->drag_view != nullptr) {
         struct wlr_box outer = xd_view_outer_box(state->drag_view);
         double scale = cell_width / box.width;
         double pointer_x = state->server->cursor->x - draw->bounds.x;
         double pointer_y = state->server->cursor->y - draw->bounds.y;
-        float quad[4][4];
-        expo_get_quad(box, pointer_x - state->grab_x * scale, pointer_y - state->grab_y * scale,
-                      outer.width * scale, outer.height * scale, quad);
-        xd_glfx_draw_quad(draw, &state->drag_texture, quad, 0.9f, 1.0f);
+        double wall_x = pointer_x, wall_y = pointer_y;
+        if (!xd_expo_find_point(&layout, state->progress, pointer_x, pointer_y, &wall_x,
+                                &wall_y)) {
+            wall_x = pointer_x;
+            wall_y = pointer_y;
+        }
+        expo_draw_rect(draw, &layout, state->progress, &state->drag_texture,
+                       wall_x - state->grab_x * scale, wall_y - state->grab_y * scale,
+                       outer.width * scale, outer.height * scale, 0.9f, 1.0f);
     }
 }
 
@@ -508,6 +555,18 @@ static void expo_configure([[maybe_unused]] xd_server *server, void *data,
     options->edges = xd_effects_get_edges(settings, effect, "ExpoEdge");
     options->zoom_seconds = xd_effects_get_double(settings, effect, "ZoomTime");
     options->spacing = xd_effects_get_int(settings, effect, "Spacing");
+    switch (xd_effects_get_choice(settings, effect, "Deformation")) {
+    case 1:
+        options->deformation = XD_EXPO_TILT;
+        break;
+    case 2:
+        options->deformation = XD_EXPO_CURVE;
+        break;
+    default:
+        options->deformation = XD_EXPO_FLAT;
+        break;
+    }
+    options->curve = xd_effects_get_double(settings, effect, "Curve");
 }
 
 const xd_effect_impl xd_effect_impl_expo = {

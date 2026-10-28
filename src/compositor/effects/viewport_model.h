@@ -85,22 +85,48 @@ int xd_cube_get_front_face(int faces, double angle);
 
 /* ---- Expo ------------------------------------------------------------------------- */
 
+/* Compiz's expo deformations: the wall flat on the screen, leaned back
+ * (its top farther away, as a wall seen from below and in front), or
+ * bent round the viewer (its sides nearer). */
+typedef enum xd_expo_deformation : unsigned char {
+    XD_EXPO_FLAT,
+    XD_EXPO_TILT,
+    XD_EXPO_CURVE,
+} xd_expo_deformation;
+
 /* Where desktop (column, row) shows in Expo's wall of `columns` x `rows`,
  * on an output `width` x `height`, `spacing` output units between them and
  * round the edge, at `progress` 0 (the current one filling the screen) to
- * 1 (the whole wall in view, centred). */
+ * 1 (the whole wall in view, centred). The wall is deformed `progress` of
+ * the way too; `curve` (0..1) is how far Curve bends it. */
 typedef struct xd_expo_layout {
     int columns, rows;
     int current_column, current_row;
     double width, height, spacing;
+    xd_expo_deformation deformation;
+    double curve;
 } xd_expo_layout;
 
+/* Desktop (column, row)'s place on the wall before it's deformed: the
+ * flat wall's, in output units. */
 void xd_expo_get_cell(const xd_expo_layout *layout, int column, int row, double progress,
                       double *x, double *y, double *width, double *height);
-/* The desktop under (x, y) at full zoom-out, and where within it (0..1
- * across and down); -1 for none (the gaps). */
-int xd_expo_find_desktop(const xd_expo_layout *layout, double x, double y, double *across,
-                         double *down);
+/* A point of the flat wall (output units, as xd_expo_get_cell gives) on
+ * the deformed one, in front of the camera of xd_camera_init(width,
+ * height): never nearer than the screen (z <= 0). */
+xd_vec3 xd_expo_get_point(const xd_expo_layout *layout, double progress, double x, double y);
+/* The inverse, through that camera: the point of the flat wall drawn at
+ * (screen_x, screen_y); false if the deformed wall's surface isn't
+ * there. */
+bool xd_expo_find_point(const xd_expo_layout *layout, double progress, double screen_x,
+                        double screen_y, double *x, double *y);
+/* How many strips across a piece of the flat wall `width` wide is drawn
+ * in, so a curved wall looks round (1 when it's flat or tilted). */
+int xd_expo_count_strips(const xd_expo_layout *layout, double progress, double width);
+/* The desktop drawn at (x, y) on the screen at full zoom-out, and where
+ * within it (0..1 across and down); -1 for none (the gaps). */
+int xd_expo_find_desktop(const xd_expo_layout *layout, double screen_x, double screen_y,
+                         double *across, double *down);
 
 /* ---- Shift Switcher --------------------------------------------------------------- */
 

@@ -2311,9 +2311,10 @@ def rotate_cube_drag(s):
     s.check(done.differs(empty, whole, step=8) < 0.02, "it settled on the second desktop")
 
 
-@scenario(setup=effects_setup(TWO_DESKTOPS + "[Expo]\nEnabled=true\n"), fx=True)
+@scenario(setup=effects_setup(TWO_DESKTOPS + "[Expo]\nEnabled=true\nDeformation=none\n"),
+          fx=True)
 def expo_wall(s):
-    """Expo (xd-compositor-fx): Win+W shows the two desktops side by side,
+    """Expo (xd-compositor-fx), flat: Win+W shows the two desktops side by side,
     the window small on the first, a dark gap between them; a window
     dragged from the first desktop to the second goes there; a click on
     the second desktop shows it, with the window."""
@@ -2340,6 +2341,80 @@ def expo_wall(s):
             "the second desktop shows, with the window dropped on it")
     s.inject("key", "ctrl+alt+Left")
     s.wait_window(title="Control Panel", gone=True)
+
+
+FOUR_DESKTOPS = "[GeneralOptions]\nHorizontalSize=2\nVerticalSize=2\n"
+
+
+def wall_row_extent(shot, y):
+    """The leftmost and rightmost x of row y that aren't Expo's dark
+    backdrop (the wall's edges there), or None."""
+    xs = [x for x in range(0, WIDTH, 2) if max(shot.pixel(x, y)) > 50]
+    return (xs[0], xs[-1]) if xs else None
+
+
+@scenario(setup=effects_setup(FOUR_DESKTOPS + "[Expo]\nEnabled=true\nDeformation=tilt\n"),
+          fx=True)
+def expo_tilt(s):
+    """Expo (xd-compositor-fx) tilted, with four desktops two by two: the
+    wall leans back, a trapezoid whose top row is narrower than its bottom
+    one. A window dragged on the tilted wall from the bottom right desktop
+    to the bottom left one goes there, and a click on that desktop shows
+    it, with the window; the one to its right doesn't have it any more."""
+    require_opengl_effects(s)
+    settle_and_open_control_panel(s)
+    # The pointer off the wall, so no desktop is lit and two walls compare.
+    s.inject("move", WIDTH // 2, 3, "key", "super+w")
+    before = s.settle("wall-before")
+    s.inject("key", "Escape")
+    s.settle("back")
+
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    s.inject("key", "ctrl+alt+Down")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(title="Documents", state="activated")
+    s.settle("fourth-desktop")
+    s.inject("key", "ctrl+alt+Up")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel")
+    s.settle("first-desktop")
+
+    s.inject("move", WIDTH // 2, 3, "key", "super+w")
+    wall = s.settle("wall")
+    top_y, bottom_y = int(HEIGHT * 0.3), int(HEIGHT * 0.7)
+    top, bottom = wall_row_extent(wall, top_y), wall_row_extent(wall, bottom_y)
+    s.log(f"the wall's edges: {top} at y {top_y}, {bottom} at y {bottom_y}")
+    s.check(top is not None and bottom is not None, "the wall shows")
+    top_width, bottom_width = top[1] - top[0], bottom[1] - bottom[0]
+    s.check(top_width < bottom_width - 40,
+            f"a trapezoid: the top row narrower than the bottom ({top_width} < {bottom_width})")
+    s.check(top[0] > bottom[0] + 20 and top[1] < bottom[1] - 20,
+            "narrower on both sides, centred")
+    s.check(max(wall.pixel(WIDTH // 2, bottom_y)) < 50, "a dark gap between the columns")
+
+    # The window on the bottom right desktop, small on the tilted wall.
+    right = (WIDTH // 2 + 10, HEIGHT // 2 + 10, WIDTH // 2 - 20, int(HEIGHT * 0.3))
+    box = wall.changed_box(before, right)
+    s.log(f"the window on the wall at {box}")
+    s.check(box is not None and box[2] > 40, "the bottom right desktop has the window")
+    start_x, start_y = box[0] + box[2] // 2, box[1] + min(box[3] // 2, 30)
+    target_x = bottom[0] + (bottom[1] - bottom[0]) // 4
+    steps = ["move", start_x, start_y, "down", "sleep", 100]
+    for i in range(1, 11):
+        steps += ["move", start_x + (target_x - start_x) * i // 10,
+                  start_y + (bottom_y - start_y) * i // 10]
+    s.inject(*steps, "sleep", 300, "up")
+    dropped = s.settle("dropped")
+    s.check(dropped.differs(before, (bottom[0] + 10, HEIGHT // 2 + 10, WIDTH // 2 - 40,
+                                     int(HEIGHT * 0.3)), step=4) > 0.05,
+            "dropped, the window shows on the bottom left desktop")
+    s.inject("move", target_x, bottom_y + 60, "click", "left")
+    s.wait_window(title="Documents", state="activated")
+    s.wait_window(title="Control Panel", gone=True)
+    s.settle("third-desktop")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Documents", gone=True)
 
 
 def count_reddish(shot, box, step=2):

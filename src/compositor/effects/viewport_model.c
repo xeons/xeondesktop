@@ -209,8 +209,151 @@ void xd_expo_get_cell(const xd_expo_layout *layout, int column, int row, double 
     *height = model_lerp(cell_height * zoom, cell_height, progress);
 }
 
-int xd_expo_find_desktop(const xd_expo_layout *layout, double x, double y, double *across,
-                         double *down) {
+/* Tilt: how far the wall leans back, zoomed out (Compiz's 10 degrees, as
+ * well as can be remembered). */
+static constexpr double TILT_ANGLE = 10.0 * M_PI / 180.0;
+/* Curve at full strength: the wall's edges this far round from its
+ * middle (a quarter of a cylinder across); Compiz's default half of it
+ * bends it gently. */
+static constexpr double CURVE_MAX_ANGLE = M_PI / 4.0;
+/* Curve's strips: each this much of the arc, at most. */
+static constexpr double STRIP_ANGLE = M_PI / 64.0;
+static constexpr double MAX_STRIPS = 64.0;
+
+/* The deformed wall at a progress: Tilt turns it `angle` about the
+ * horizontal line through its middle; Curve wraps it round a vertical
+ * axis `radius` in front of it, its edges `angle` round. Either is then
+ * pushed back so its nearest points are on the screen. */
+typedef struct expo_surface {
+    xd_expo_deformation deformation;
+    double centre_x, centre_y;
+    double angle, radius, push;
+} expo_surface;
+
+static expo_surface expo_get_surface(const xd_expo_layout *layout, double progress) {
+    progress = model_clamp(progress, 0.0, 1.0);
+    double left = 0, top = 0, right = 0, bottom = 0, width = 0, height = 0;
+    xd_expo_get_cell(layout, 0, 0, progress, &left, &top, &width, &height);
+    xd_expo_get_cell(layout, layout->columns - 1, layout->rows - 1, progress, &right, &bottom,
+                     &width, &height);
+    right += width;
+    bottom += height;
+    expo_surface surface = {
+        .deformation = layout->deformation,
+        .centre_x = (left + right) / 2.0,
+        .centre_y = (top + bottom) / 2.0,
+    };
+    switch (layout->deformation) {
+    case XD_EXPO_TILT:
+        surface.angle = TILT_ANGLE * progress;
+        surface.push = (bottom - surface.centre_y) * sin(surface.angle);
+        break;
+    case XD_EXPO_CURVE:
+        surface.angle = CURVE_MAX_ANGLE * model_clamp(layout->curve, 0.0, 1.0) * progress;
+        if (surface.angle < 1e-6 || right <= left) {
+            surface.deformation = XD_EXPO_FLAT;
+            break;
+        }
+        surface.radius = (right - left) / 2.0 / surface.angle;
+        surface.push = surface.radius * (1.0 - cos(surface.angle));
+        break;
+    case XD_EXPO_FLAT:
+        break;
+    }
+    return surface;
+}
+
+xd_vec3 xd_expo_get_point(const xd_expo_layout *layout, double progress, double x, double y) {
+    expo_surface surface = expo_get_surface(layout, progress);
+    switch (surface.deformation) {
+    case XD_EXPO_TILT: {
+        double from_middle = y - surface.centre_y; /* above it: negative, so farther */
+        return (xd_vec3){x, surface.centre_y + from_middle * cos(surface.angle),
+                         from_middle * sin(surface.angle) - surface.push};
+    }
+    case XD_EXPO_CURVE: {
+        /* As far round the arc as along the flat wall. */
+        double angle = (x - surface.centre_x) / surface.radius;
+        return (xd_vec3){surface.centre_x + surface.radius * sin(angle), y,
+                         surface.radius * (1.0 - cos(angle)) - surface.push};
+    }
+    case XD_EXPO_FLAT:
+        break;
+    }
+    return (xd_vec3){x, y, 0};
+}
+
+bool xd_expo_find_point(const xd_expo_layout *layout, double progress, double screen_x,
+                        double screen_y, double *x, double *y) {
+    expo_surface surface = expo_get_surface(layout, progress);
+    xd_camera camera;
+    xd_camera_init(&camera, layout->width, layout->height);
+    /* The ray from the camera through the screen point: 1 along it is on
+     * the screen (z = 0). */
+    xd_vec3 eye = {camera.width / 2.0, camera.height / 2.0, camera.distance};
+    xd_vec3 ray = {screen_x - eye.x, screen_y - eye.y, -camera.distance};
+    switch (surface.deformation) {
+    case XD_EXPO_TILT: {
+        double cos_angle = cos(surface.angle), sin_angle = sin(surface.angle);
+        /* The plane through (any, centre_y, -push), along (0, cos, sin). */
+        double normal_y = -sin_angle, normal_z = cos_angle;
+        double facing = normal_y * ray.y + normal_z * ray.z;
+        if (fabs(facing) < 1e-9)
+            return false;
+        double along =
+            (normal_y * (surface.centre_y - eye.y) + normal_z * (-surface.push - eye.z)) / facing;
+        if (along <= 0)
+            return false;
+        double hit_y = eye.y + along * ray.y, hit_z = eye.z + along * ray.z;
+        double from_middle =
+            (hit_y - surface.centre_y) * cos_angle + (hit_z + surface.push) * sin_angle;
+        *x = eye.x + along * ray.x;
+        *y = surface.centre_y + from_middle;
+        return true;
+    }
+    case XD_EXPO_CURVE: {
+        /* The cylinder's axis, in front of the wall's middle; seen across
+         * the top, the ray meets it where this quadratic is 0. */
+        double axis_z = surface.radius - surface.push;
+        double offset_x = eye.x - surface.centre_x, offset_z = eye.z - axis_z;
+        double squared = ray.x * ray.x + ray.z * ray.z;
+        double linear = 2.0 * (offset_x * ray.x + offset_z * ray.z);
+        double constant =
+            offset_x * offset_x + offset_z * offset_z - surface.radius * surface.radius;
+        double discriminant = linear * linear - 4.0 * squared * constant;
+        if (squared < 1e-12 || discriminant < 0)
+            return false;
+        /* The far side, behind the axis: the wall, bent towards the camera. */
+        double along = (-linear + sqrt(discriminant)) / (2.0 * squared);
+        if (along <= 0)
+            return false;
+        double hit_x = eye.x + along * ray.x, hit_z = eye.z + along * ray.z;
+        double angle = atan2(hit_x - surface.centre_x, axis_z - hit_z);
+        *x = surface.centre_x + surface.radius * angle;
+        *y = eye.y + along * ray.y;
+        return true;
+    }
+    case XD_EXPO_FLAT:
+        break;
+    }
+    *x = screen_x;
+    *y = screen_y;
+    return true;
+}
+
+int xd_expo_count_strips(const xd_expo_layout *layout, double progress, double width) {
+    expo_surface surface = expo_get_surface(layout, progress);
+    if (surface.deformation != XD_EXPO_CURVE)
+        return 1;
+    double strips = model_clamp(ceil(fabs(width) / surface.radius / STRIP_ANGLE), 1.0, MAX_STRIPS);
+    return (int)strips;
+}
+
+int xd_expo_find_desktop(const xd_expo_layout *layout, double screen_x, double screen_y,
+                         double *across, double *down) {
+    double x = 0, y = 0;
+    if (!xd_expo_find_point(layout, 1.0, screen_x, screen_y, &x, &y))
+        return -1;
     for (int row = 0; row < layout->rows; row++) {
         for (int column = 0; column < layout->columns; column++) {
             double cell_x = 0, cell_y = 0, cell_width = 0, cell_height = 0;

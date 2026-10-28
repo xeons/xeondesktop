@@ -306,6 +306,11 @@ void xd_glfx_draw_output(xd_output_effect *effect, xd_output *output);
  * `brightness` (0..1: darker). */
 void xd_glfx_draw_quad(const xd_glfx_draw *draw, const xd_glfx_texture *texture,
                        const float corners[4][4], float alpha, float brightness);
+/* The same with a part of the picture: `part` its left, top, right and
+ * bottom, 0..1 of it (a strip of a curved surface). */
+void xd_glfx_draw_quad_part(const xd_glfx_draw *draw, const xd_glfx_texture *texture,
+                            const float corners[4][4], const float part[4], float alpha,
+                            float brightness);
 /* A convex polygon (clip space, as a fan from the first corner) filled
  * with a colour, RGBA 0..1 not premultiplied. */
 void xd_glfx_fill_polygon(const xd_glfx_draw *draw, const float (*corners)[4], size_t count,

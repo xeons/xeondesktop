@@ -692,15 +692,23 @@ static void output_init_shaders(void) {
         shaders.fill_color = glGetUniformLocation(shaders.fill.program, "color");
 }
 
-void xd_glfx_draw_quad([[maybe_unused]] const xd_glfx_draw *draw, const xd_glfx_texture *texture,
+void xd_glfx_draw_quad(const xd_glfx_draw *draw, const xd_glfx_texture *texture,
                        const float corners[4][4], float alpha, float brightness) {
+    static const float whole[4] = {0, 0, 1, 1};
+    xd_glfx_draw_quad_part(draw, texture, corners, whole, alpha, brightness);
+}
+
+void xd_glfx_draw_quad_part([[maybe_unused]] const xd_glfx_draw *draw,
+                            const xd_glfx_texture *texture, const float corners[4][4],
+                            const float part[4], float alpha, float brightness) {
     output_init_shaders();
     bool external = texture->target == GL_TEXTURE_EXTERNAL_OES;
     const xd_glfx_shader *shader = external ? &shaders.quad_external : &shaders.quad_2d;
     GLint brightness_uniform = external ? shaders.brightness_external : shaders.brightness_2d;
     if (shader->program == 0 || texture->id == 0)
         return;
-    static const float texcoords[8] = {0, 0, 1, 0, 1, 1, 0, 1};
+    const float texcoords[8] = {part[0], part[1], part[2], part[1],
+                                part[2], part[3], part[0], part[3]};
     static const uint16_t indices[6] = {0, 1, 2, 0, 2, 3};
     float positions[16];
     memcpy(positions, corners, sizeof(positions));

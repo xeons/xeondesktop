@@ -3,10 +3,14 @@
  * the current one (src/compositor/effects/expo.c); click one to go there,
  * or drag a window from one desktop to another. Its options are Compiz's
  * expo plugin's, with its zoom time and corner; the key is Win+W, not
- * Compiz's Win+E, which Windows gives to Explorer. The flat wall, without
- * Compiz's tilt and reflection.
+ * Compiz's Win+E, which Windows gives to Explorer. Its deformations are
+ * Compiz's, Tilt by default; Compiz's reflection (a mirror floor) is left
+ * out.
  */
 #include "../effects.h"
+
+static const char *const deformation_names[] = {"none", "tilt", "curve", nullptr};
+static const char *const deformation_labels[] = {"None", "Tilt", "Curve", nullptr};
 
 static const xd_effect_option options[] = {
     {
@@ -47,6 +51,28 @@ static const xd_effect_option options[] = {
         .max = 100,
         .step = 1,
         .default_value = "10",
+    },
+    {
+        .key = "Deformation",
+        .label = "Deformation",
+        .description = "Flat on the screen, leaned back, or curved round you.",
+        .group = "Appearance",
+        .type = XD_EFFECT_OPTION_CHOICE,
+        .choice_names = deformation_names,
+        .choice_labels = deformation_labels,
+        .default_value = "tilt",
+    },
+    {
+        .key = "Curve",
+        .label = "Curve strength",
+        .description = "How far Curve bends the desktops round you.",
+        .group = "Appearance",
+        .type = XD_EFFECT_OPTION_DOUBLE,
+        .min = 0.0,
+        .max = 1.0,
+        .step = 0.05,
+        .digits = 2,
+        .default_value = "0.5",
     },
 };
 
