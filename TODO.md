@@ -1373,6 +1373,14 @@ against mocks or scratch directories; none yet against the real services.
       updates, the Host Security ID, the shell's scheduled check and XP's
       balloon. Untested against a real PackageKit transaction and a real
       fwupd (its flag bits and enums were written from memory).
+      A failed install says why in plain words by PackageKit's error code
+      (the files or packages involved, the first ten and "and N more",
+      Details >> with the whole text and Copy), logs it, and is kept in
+      View Installation History; a failed scheduled download gets a
+      balloon opening that history. On alpm, ticking only some updates
+      warns first: PackageKit 1.4.0's alpm backend upgrades everything
+      anyway. The user's installs on CachyOS fail (since Oct 22) for a
+      reason the new box will show; not yet known.
 - [~] System Configuration Utility (`xd-msconfig`): autostart entries and
       user services. Untested against a real user manager.
 - [~] Dedicated graphics (switcheroo-control): "Run with dedicated graphics
