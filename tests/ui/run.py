@@ -1757,6 +1757,62 @@ def animations_minimize_zoom(s):
             "restored, the window is itself again")
 
 
+@scenario(setup=effects_setup("[GeneralOptions]\nHorizontalSize=2\n[Animations]\n"
+                              "Enabled=true\nOpenEffect=zoom\nOpenDuration=3000\n"))
+def animations_open_desktop_switch(s):
+    """Animations, a window opening (slowed to three seconds) when the
+    desktop is switched: neither its picture nor the window shows on the
+    second desktop, then or once the animation would have ended; back on
+    the first it's there."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(0.5)
+    s.inject("key", "ctrl+alt+Right")
+    s.wait_window(title="Control Panel", gone=True)
+    time.sleep(0.5)
+    s.check(s.shot("switched").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+            "its picture isn't on the second desktop")
+    time.sleep(3.0)
+    s.check(s.settle("later").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+            "nor the window, once the animation would have ended")
+    s.inject("key", "ctrl+alt+Left")
+    s.wait_window(title="Control Panel", state="activated")
+    s.check(s.settle("back").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) > 0.02,
+            "back on the first desktop, the window shows")
+
+
+@scenario(setup=effects_setup("[Animations]\nEnabled=true\nMinimizeEffect=none\n"
+                              "CloseEffect=fade\nCloseDuration=4000\n"))
+def animations_close_minimized(s):
+    """Animations, Fade on close (slowed down): a minimized window closed
+    from its taskbar button's menu isn't on the screen, so nothing fades
+    where it was; it's simply gone."""
+    s.inject("move", WIDTH - 20, 300)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    s.inject("key", "super+Down")
+    s.wait_window(title="Control Panel", state="minimized")
+    minimized = s.settle("minimized")
+    s.check(minimized.differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01, "it's minimized")
+    button = minimized.changed_box(empty, (150, HEIGHT - 36, WIDTH - 300, 32))
+    s.check(button is not None, f"its taskbar button shows ({button})")
+    s.inject("move", button[0] + button[2] // 2, HEIGHT - 20, "click", "right")
+    wait_change(s, minimized, (0, 0, WIDTH, HEIGHT - 40), "the button's menu", "menu")
+    s.inject("key", "c")
+    s.wait_window(title="Control Panel", gone=True)
+    s.inject("move", WIDTH - 20, 300)
+    # Above the taskbar button's thumbnail, which may linger a moment.
+    above = (0, 0, WIDTH, HEIGHT - 240)
+    for i in range(6):
+        shot = s.shot(f"closing-{i}")
+        s.check(shot.differs(empty, above) < 0.01,
+                f"nothing fades where it was ({i * 0.3:.1f} s)")
+        time.sleep(0.3)
+
+
 def contrasting_points(shot, empty, box, avoid=None):
     """Points in box where shot is far from the desktop's colour, not in
     the box `avoid`."""
