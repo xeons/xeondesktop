@@ -413,6 +413,10 @@ struct xd_server {
     uint32_t kb_group;
     uint32_t kb_layouts;   /* in [Keyboard]'s keymap; 0: not counted yet */
     bool kb_group_syncing; /* setting it on the keyboards: their events are ours */
+    /* A virtual keyboard with a keymap has come and gone, and no physical
+     * keyboard was unplugged since: programs keep the keyboard capability
+     * (input.c's update_seat_caps). */
+    bool kb_virtual_kept;
     struct wl_list pointers; /* xd_pointer */
     struct wl_listener new_input;
     struct wl_listener request_cursor;

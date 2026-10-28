@@ -917,6 +917,10 @@ static void handle_keymap(struct wl_listener *listener, [[maybe_unused]] void *d
 static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, destroy);
     xd_server *server = kb->server;
+    if (kb->physical)
+        server->kb_virtual_kept = false;
+    else if (kb->wlr_keyboard->keymap != nullptr)
+        server->kb_virtual_kept = true;
     xd_access_keyboard_gone(kb);
     xd_unlisten(&kb->modifiers);
     xd_unlisten(&kb->keymap);
@@ -924,7 +928,7 @@ static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused
     xd_unlisten(&kb->destroy);
     wl_list_remove(&kb->link);
     xd_free(kb);
-    /* The last one unplugged: programs stop expecting keys. */
+    /* The last physical one unplugged: programs stop expecting keys. */
     update_seat_caps(server);
 }
 
@@ -1188,9 +1192,15 @@ static void add_switch(xd_server *server, struct wlr_input_device *device) {
 }
 
 /* The keyboard capability counts keyboards with a keymap: a program that
- * takes it before then would get none, and no focus with it. */
+ * takes it before then would get none, and no focus with it. A virtual
+ * keyboard that goes (xd-inject's, an input method's) doesn't take it
+ * away: programs would let go of their keyboards, and the next one's
+ * first keys would reach none, sent before they had taken one again. They
+ * get its keymap on the keyboards they kept. */
 static void update_seat_caps(xd_server *server) {
     uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
+    if (server->kb_virtual_kept)
+        caps |= WL_SEAT_CAPABILITY_KEYBOARD;
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         if (kb->wlr_keyboard->keymap != nullptr)
             caps |= WL_SEAT_CAPABILITY_KEYBOARD;

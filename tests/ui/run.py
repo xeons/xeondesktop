@@ -6965,6 +6965,25 @@ def window_edges(shot, empty, inside):
 
 
 @scenario()
+def keyboard_kept_after_virtual(s):
+    """A virtual keyboard that goes (each xd-inject's, an input method's)
+    leaves programs the keyboard capability: they keep their keyboards, so
+    the next one's first key reaches them. (Taken away, every program let
+    go of its keyboard and took one again, and on a busy machine a key sent
+    meanwhile was lost: Down in a dialog that had just opened.)"""
+    s.inject("key", "Shift_L")  # a virtual keyboard with a keymap, now gone
+    # A program connecting now (this xd-inject, before its own keyboard)
+    # is told the seat's capabilities first.
+    r = subprocess.run([s.tool("xd-inject"), "sleep", "0"],
+                       env=dict(os.environ, WAYLAND_DEBUG="1"), capture_output=True, timeout=60)
+    told = [line.split(".capabilities(", 1)[1].split(")", 1)[0]
+            for line in r.stderr.decode(errors="replace").splitlines()
+            if "wl_seat#" in line and ".capabilities(" in line]
+    s.check(told != [] and int(told[0]) & 2 != 0,
+            f"the keyboard capability stays (wl_seat capabilities {told})")
+
+
+@scenario()
 def keyboard_move_size(s):
     """The window menu's Move and Size: Ctrl+arrows step 1px; the mouse
     drags the window, or the chosen edges, until a click; two arrows pick
