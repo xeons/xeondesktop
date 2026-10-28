@@ -1307,9 +1307,10 @@ against mocks or scratch directories; none yet against the real services.
       default, configured from a CCSM-style panel built from one effect
       table (`effects.ini`, applied live); no two defaults clash with every
       effect on. OpenGL effects need xd-compositor-fx (greyed out
-      otherwise). All tested headless only (pixman, and llvmpipe for the
-      OpenGL ones, 2-12 ms a frame); none yet on a real GPU. CI likely
-      skips the OpenGL scenarios (no /dev/udmabuf).
+      otherwise). Tested headless (pixman, and llvmpipe for the OpenGL
+      ones, 2-12 ms a frame). On a real GPU (RTX 3070, NVIDIA's driver,
+      2026-10-27): Burn, Explode and Water work; the others are untested
+      there. CI likely skips the OpenGL scenarios (no /dev/udmabuf).
       - [x] Scene graph (both builds): Scale (Shift+Alt+Up, top-right
         corner), Animations (Fade, Zoom, Glide 1/2 for open, close,
         minimize), Window Opacity (rules, dim inactive, Alt+wheel), Ring
