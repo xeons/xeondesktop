@@ -197,10 +197,29 @@ void xd_glfx_drop_view(xd_view *view);
  * before each frame; 1 and 1 forget the window. */
 bool xd_glfx_set_window_color(xd_view *view, float opacity, float brightness, float saturation);
 
+/* That picture, for what draws the window elsewhere (Scale's and Ring
+ * Switcher's mirrors, the taskbar's thumbnails), in place of its own
+ * buffers. */
+typedef struct xd_glfx_window_picture {
+    struct wlr_buffer *buffer; /* held till the next picture, or the colours go */
+    struct wlr_fbox source;    /* the part of it, px */
+    struct wlr_box box;        /* where, layout units from the window's tree's origin */
+    uint64_t serial;           /* another with each new picture */
+} xd_glfx_window_picture;
+
+/* False when the window isn't drawn from such a picture. */
+bool xd_glfx_get_window_picture(const xd_view *view, xd_glfx_window_picture *picture);
+
 /* glfx.c's, for glfx_color.c: an effect's capture (its view, minus its
  * node) and letting go of it, and a swapchain of buffers at least that
  * big, in whole steps. */
 bool glfx_capture_window(xd_window_effect *effect);
+/* Each of the window's buffers, with layout coordinates, as
+ * wlr_scene_node_for_each_buffer on its tree, but while the tree itself
+ * is hidden too (Scale shows the window elsewhere, it's minimized or on
+ * another desktop). */
+void glfx_for_each_window_buffer(xd_view *view, wlr_scene_buffer_iterator_func_t iterator,
+                                 void *data);
 void glfx_release_capture(xd_window_effect *effect);
 bool glfx_ensure_chain(xd_server *server, struct wlr_swapchain **chain, int width, int height,
                        int step);

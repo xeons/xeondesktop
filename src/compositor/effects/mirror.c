@@ -8,6 +8,9 @@
 
 #include "../../core/alloc.h"
 #include "effects.h"
+#ifdef XD_SCENEFX
+#include "glfx.h"
+#endif
 
 typedef struct mirror_piece {
     struct wlr_scene_buffer *node;
@@ -27,6 +30,7 @@ struct xd_mirror {
     double x, y, scale_x, scale_y;
     float opacity;
     bool dirty; /* the window committed since the last update */
+    uint64_t picture_serial; /* glfx's picture of the window last shown */
     struct wlr_surface *surface;
     struct wl_listener commit;
     struct wl_listener surface_destroy;
@@ -55,6 +59,18 @@ static void mirror_apply_piece(const xd_mirror *mirror, const mirror_piece *piec
     wlr_scene_buffer_set_opacity(piece->node, mirror->opacity);
 }
 
+static void mirror_add_piece(xd_mirror *mirror) {
+    if (mirror->piece_count == mirror->piece_capacity) {
+        mirror->piece_capacity = XD_MAX(mirror->piece_capacity * 2, 8);
+        mirror->pieces =
+            xd_realloc_array(mirror->pieces, mirror->piece_capacity, sizeof(*mirror->pieces));
+    }
+    mirror_piece *piece = &mirror->pieces[mirror->piece_count++];
+    *piece = (mirror_piece){.node = wlr_scene_buffer_create(mirror->tree, nullptr)};
+    piece->node->point_accepts_input = mirror_reject_input;
+    wlr_scene_buffer_set_filter_mode(piece->node, WLR_SCALE_FILTER_BILINEAR);
+}
+
 /* The index-th buffer of the window, as `source` at (x, y) shows it. */
 static void mirror_copy_piece(xd_mirror *mirror, struct wlr_scene_buffer *source, int x, int y,
                               size_t *index) {
@@ -66,17 +82,8 @@ static void mirror_copy_piece(xd_mirror *mirror, struct wlr_scene_buffer *source
         buffer = view->kept_frame;
     if (buffer == nullptr && *index >= mirror->piece_count)
         return; /* nothing to show yet */
-    if (*index >= mirror->piece_count) {
-        if (mirror->piece_count == mirror->piece_capacity) {
-            mirror->piece_capacity = XD_MAX(mirror->piece_capacity * 2, 8);
-            mirror->pieces =
-                xd_realloc_array(mirror->pieces, mirror->piece_capacity, sizeof(*mirror->pieces));
-        }
-        mirror_piece *piece = &mirror->pieces[mirror->piece_count++];
-        *piece = (mirror_piece){.node = wlr_scene_buffer_create(mirror->tree, nullptr)};
-        piece->node->point_accepts_input = mirror_reject_input;
-        wlr_scene_buffer_set_filter_mode(piece->node, WLR_SCALE_FILTER_BILINEAR);
-    }
+    if (*index >= mirror->piece_count)
+        mirror_add_piece(mirror);
     mirror_piece *piece = &mirror->pieces[(*index)++];
     if (buffer != nullptr && (buffer != piece->buffer || mirror->dirty)) {
         wlr_scene_buffer_set_buffer(piece->node, buffer);
@@ -114,13 +121,43 @@ static void mirror_visit(xd_mirror *mirror, struct wlr_scene_node *node, int x, 
     /* Rects, and SceneFX's blur and shadow, aren't the window's picture. */
 }
 
+#ifdef XD_SCENEFX
+/* A window whose colours Window Opacity changes is drawn from glfx's
+ * picture of it, its own buffers fully transparent: the mirror shows that
+ * picture alone, as the window looks. */
+static bool mirror_copy_picture(xd_mirror *mirror, size_t *index) {
+    xd_glfx_window_picture picture;
+    if (!xd_glfx_get_window_picture(mirror->view, &picture))
+        return false;
+    if (mirror->piece_count == 0)
+        mirror_add_piece(mirror);
+    mirror_piece *piece = &mirror->pieces[(*index)++];
+    /* A swapchain's buffer comes back with a new picture in it. */
+    if (picture.buffer != piece->buffer || picture.serial != mirror->picture_serial) {
+        wlr_scene_buffer_set_buffer(piece->node, picture.buffer);
+        piece->buffer = picture.buffer;
+        mirror->picture_serial = picture.serial;
+    }
+    piece->x = picture.box.x;
+    piece->y = picture.box.y;
+    piece->width = picture.box.width;
+    piece->height = picture.box.height;
+    piece->source = picture.source;
+    piece->transform = WL_OUTPUT_TRANSFORM_NORMAL;
+    return true;
+}
+#endif
+
 void xd_mirror_update(xd_mirror *mirror) {
     xd_view *view = mirror->view;
     if (view == nullptr)
         return;
     mirror->box = xd_view_outer_box(view);
     size_t index = 0;
-    mirror_visit(mirror, &view->tree->node, 0, 0, &index, true);
+#ifdef XD_SCENEFX
+    if (!mirror_copy_picture(mirror, &index))
+#endif
+        mirror_visit(mirror, &view->tree->node, 0, 0, &index, true);
     /* Subsurfaces or popups that went. */
     while (mirror->piece_count > index) {
         mirror->piece_count--;

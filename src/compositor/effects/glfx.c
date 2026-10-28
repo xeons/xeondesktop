@@ -399,6 +399,27 @@ static void glfx_collect_buffer(struct wlr_scene_buffer *buffer, int sx, int sy,
     list->entries[list->count++] = (capture_entry){buffer, pixels, sx, sy};
 }
 
+typedef struct window_walk {
+    wlr_scene_buffer_iterator_func_t iterator;
+    void *data;
+    int x, y; /* the window's tree */
+} window_walk;
+
+static void glfx_walk_window_buffer(struct wlr_scene_buffer *buffer, int sx, int sy,
+                                    void *data) {
+    const window_walk *walk = data;
+    walk->iterator(buffer, sx + walk->x, sy + walk->y, walk->data);
+}
+
+void glfx_for_each_window_buffer(xd_view *view, wlr_scene_buffer_iterator_func_t iterator,
+                                 void *data) {
+    window_walk walk = {iterator, data, view->tree->node.x, view->tree->node.y};
+    struct wlr_scene_node *child;
+    wl_list_for_each(child, &view->tree->children, link) {
+        wlr_scene_node_for_each_buffer(child, glfx_walk_window_buffer, &walk);
+    }
+}
+
 /* A scene buffer's size in layout units, as the scene graph draws it. */
 static void glfx_get_buffer_size(const capture_entry *entry, int *width, int *height) {
     const struct wlr_scene_buffer *buffer = entry->buffer;
@@ -434,7 +455,7 @@ bool glfx_capture_window(xd_window_effect *effect) {
     xd_server *server = view->server;
     glfx_color_prepare_capture(effect);
     capture_list list = {.skip = effect->node, .view = view};
-    wlr_scene_node_for_each_buffer(&view->tree->node, glfx_collect_buffer, &list);
+    glfx_for_each_window_buffer(view, glfx_collect_buffer, &list);
     if (list.count == 0) {
         xd_free(list.entries);
         return false;

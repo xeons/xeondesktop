@@ -29,6 +29,9 @@
 
 #include "../core/alloc.h"
 #include "server.h"
+#ifdef XD_SCENEFX
+#include "effects/glfx.h"
+#endif
 
 /* Device px: the longest side of a captured window. Windows 7's
  * thumbnails are at most about 200 logical px wide; this leaves room for
@@ -135,6 +138,33 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int widt
         .sx = (double)width / XD_MAX(outer.width, 1),
         .sy = (double)height / XD_MAX(outer.height, 1),
     };
+#ifdef XD_SCENEFX
+    /* A window whose colours Window Opacity changes is drawn from glfx's
+     * picture of it: the thumbnail is that picture, as the window looks. */
+    xd_glfx_window_picture picture;
+    if (xd_glfx_get_window_picture(view, &picture)) {
+        struct wlr_texture *picture_tex = wlr_texture_from_buffer(server->renderer, picture.buffer);
+        if (picture_tex != nullptr) {
+            int left = (int)(picture.box.x * draw.sx), top = (int)(picture.box.y * draw.sy);
+            wlr_render_pass_add_texture(
+                pass, &(struct wlr_render_texture_options){
+                          .texture = picture_tex,
+                          .src_box = picture.source,
+                          .dst_box = {left, top,
+                                      (int)((picture.box.x + picture.box.width) * draw.sx) - left,
+                                      (int)((picture.box.y + picture.box.height) * draw.sy) - top},
+                          .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+                      });
+            bool drawn = wlr_render_pass_submit(pass);
+            wlr_texture_destroy(picture_tex);
+            if (!drawn) {
+                wlr_buffer_drop(buf);
+                return nullptr;
+            }
+            return buf;
+        }
+    }
+#endif
     /* SceneFX's scene lets go of the frame's buffer once it has uploaded
      * it: frame.c keeps the pixels for us while the source lives. */
     struct wlr_buffer *frame_buffer =
