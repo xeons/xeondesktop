@@ -1340,9 +1340,15 @@ against mocks or scratch directories; none yet against the real services.
         taskbar menu's Toolbars > Desktop Manager); Desktop Wall (slide, map, edge flip),
         Desktop Cube and Rotate Cube (Ctrl+Alt+drag), Expo (Super+W,
         top-left corner), Shift Switcher (Super+Shift+Tab).
-      - [ ] Not done: Brightness and Saturation (the scene graph can't),
-        Sidekick, Burn's smoke, Water's wiper, Expo's
-        tilt and reflection, pager thumbnails, Shift's window title; Task
+      - [x] Window Opacity's Brightness and Saturation (OpenGL: rules,
+        Alt+Shift+wheel and Alt+Ctrl+wheel, inactive windows' brightness),
+        drawn through a recolouring pass only when a window changes;
+        Expo's Deformation (Tilt by default, Curve, None); Burn's smoke
+        (off by default, as in Compiz; none when a burn plays backwards).
+        Expo and the smoke's looks await the user's review; Compiz's tilt
+        angle, curve maths and smoke defaults are from memory.
+      - [ ] Not done: Sidekick, Water's wiper, Expo's reflection, pager
+        thumbnails, Shift's window title; Task
         Manager lists only the current desktop's windows; attention
         requests on other desktops don't show; Annotate and Show Mouse
         draw under Expo; output filters skip rotated outputs.
