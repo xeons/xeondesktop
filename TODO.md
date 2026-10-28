@@ -1386,6 +1386,24 @@ against mocks or scratch directories; none yet against the real services.
 
 ## Testing
 
+- [x] Compositor audit (2026-10-27): both builds read through for bugs,
+      leaks and unused code, with the whole UI suite run under leak
+      checking (`XD_UI_LEAK_LOG=DIR`). Fixed: crashes on a monitor unplug
+      (a freed background, Ring Switcher's freed monitor) and at a real
+      session's start with an input method chosen; touch drag and drop;
+      pens unplugged mid-drag; pad input while locked; windows asking to
+      open maximized; CSD and SceneFX taskbar thumbnails; X11 override-
+      redirect and parent changes; Scale, Ring and Animations showing
+      other desktops' windows; effects flickering on a second monitor;
+      Enhanced Zoom on rotated monitors; exit leaks; unused code. Left
+      as they are, by design or upstream: Mesa's EGL state and wlroots
+      0.20's tablet pad `groups` (wlr_tablet_v2_pad.c:381, never freed;
+      worth reporting) are suppressed in tests/lsan.supp; touches are
+      told apart by id alone in wl_touch; X11 set_parent before map; a
+      closing animation can end on a newly switched-to desktop. Unsure:
+      whether Windows' move/size loop ignores other buttons (only the
+      button that began a grab ends it now).
+
 - [x] UI test suite (tests/ui/run.py, suite "ui": `meson test -C build
       --setup ui --suite ui`): each scenario in its own headless session
       (private mount namespace, scratch home, no system bus, sounds logged)
