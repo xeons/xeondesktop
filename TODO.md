@@ -1326,9 +1326,14 @@ against mocks or scratch directories; none yet against the real services.
         reviewed by the user (2026-10-27); option defaults and some
         motions (Razr, Fold's folds, Glide 3's away position, the plane's
         folds) are from memory of Compiz, not checked against it.
-      - [ ] Add-On: Burn and Explode aren't per-event choices as in CCSM.
-        Compiz's shade and focus events, its "time step for intense
-        effects" and polygon lighting are left out.
+      - [x] Burn and Explode are choices in each of Animations' events
+        too, as in CCSM (on open and unminimize played backwards); their
+        pages' "Burn/Explode every closing window" (on) keeps their old
+        claim on closing windows, so old effects.ini files act as before.
+        Reversed Explode's pieces stop abruptly as they land, as in
+        Compiz.
+      - [ ] Add-On: Compiz's shade and focus events, its "time step for
+        intense effects" and polygon lighting are left out.
       - [x] Virtual desktops (General Options' Desktop Size): Ctrl+Alt+
         arrows switch, Ctrl+Alt+Shift+arrows carry the window, window menu
         items, a taskbar pager (turned on, with four desktops, by the
