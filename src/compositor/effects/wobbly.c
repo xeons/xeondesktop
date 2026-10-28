@@ -153,11 +153,13 @@ static bool wobbly_can_wobble(const wobbly_state *state, const xd_view *view) {
                                    xd_view_title(view), view->dialog);
 }
 
-/* The window's wobble, started if it isn't wobbling. */
+/* The window's wobble, started if it isn't wobbling. Not while another
+ * effect has it (opening, restored by Magic Lamp, the Add-On, Burn or
+ * Explode): starting would end that one midway. */
 static wobbly_window *wobbly_start_window(wobbly_state *state, xd_view *view) {
-    xd_window_effect *effect = xd_glfx_find_window(view, &window_impl);
+    xd_window_effect *effect = xd_glfx_find_window(view, nullptr);
     if (effect != nullptr)
-        return effect->data;
+        return effect->impl == &window_impl ? effect->data : nullptr;
     wobbly_window *window = XD_NEW(wobbly_window);
     window->state = state;
     window->effect = xd_glfx_begin_window(view, &window_impl, window);
@@ -230,7 +232,7 @@ static void wobbly_handle_frame(xd_server *server, void *data, [[maybe_unused]] 
     xd_view *view = server->grab_view;
     if (!state->options.on_move || server->mode != XD_CURSOR_MOVE || view == nullptr ||
         view->maximized || !wobbly_can_wobble(state, view) ||
-        xd_glfx_find_window(view, &window_impl) != nullptr)
+        xd_glfx_find_window(view, nullptr) != nullptr)
         return;
     wobbly_start_window(state, view);
 }
