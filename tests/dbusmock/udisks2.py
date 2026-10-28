@@ -26,7 +26,15 @@ Repair fixes them. "MockCalls" on /org/freedesktop/UDisks2 lists what
 was called.
 
 Parameters: "media", the folder Mount mounts in (default
-/run/media/xeon), so a test can make the folders; "encrypted": true adds
+/run/media/xeon), so a test can make the folders; "smart": true gives the
+drives S.M.A.R.T. data, for xd-diskbench's Health tab: sda (Drive.Ata) is
+healthy, sdb (Drive.Ata) has 8 pending sectors, the USB stick has none,
+and it adds
+
+  nvme0  1 TB NVMe drive (NVMe.Controller) with its health log
+
+SmartUpdate is logged in MockCalls, and refused as not authorised with
+"smart_denied": true. "encrypted": true adds
 
   sde  8 GB USB stick: an encrypted (LUKS2) partition, locked, whose
        passphrase is "correct horse"; unlocked, it holds Private (ext4)
@@ -354,6 +362,9 @@ def load(mock, parameters):
         p = add_partition(mock, "sde", "sde1", 1, MIB, 8_000_000_000 - MIB, "0x83",
                           usage="crypto", fstype="crypto_LUKS", version="2")
         make_encrypted(p, "correct horse", ("ext4", "Private", "uuid-private"))
+
+    if parameters.get("smart", False):
+        add_smart(mock, bool(parameters.get("smart_denied", False)))
 
 
 # ---- methods ------------------------------------------------------------------------------
@@ -860,3 +871,111 @@ def do_eject(self, _args):
         if BLOCK in o.props and str(o.props[BLOCK]["Drive"]) == self.path and mounted(o.path):
             fail("DeviceBusy", f"{o.path} is mounted")
     self.UpdateProperties(DRIVE, {"MediaAvailable": dbus.Boolean(False)})
+
+
+# ---- S.M.A.R.T. ---------------------------------------------------------------------------
+
+ATA = U + ".Drive.Ata"
+NVME = U + ".NVMe.Controller"
+
+# (id, name, flags, value, worst, threshold, pretty, pretty_unit): pretty
+# units are 1 a count, 2 milliseconds, 3 sectors, 4 millikelvin.
+ATA_GOOD = [
+    (0x01, "raw-read-error-rate", 0x000F, 117, 99, 6, 0, 1),
+    (0x05, "reallocated-sector-count", 0x0033, 100, 100, 36, 0, 3),
+    (0x09, "power-on-hours", 0x0032, 92, 92, 0, 7321 * 3600 * 1000, 2),
+    (0x0C, "power-cycle-count", 0x0032, 99, 99, 20, 1043, 1),
+    (0xC2, "temperature-celsius-2", 0x0022, 36, 45, 0, 309150, 4),
+    (0xC5, "current-pending-sector", 0x0012, 100, 100, 0, 0, 3),
+    (0xC6, "offline-uncorrectable", 0x0010, 100, 100, 0, 0, 3),
+    (0xC7, "udma-crc-error-count", 0x003E, 200, 200, 0, 0, 1),
+    (0xF1, "total-lbas-written", 0x0000, 100, 253, 0, 9765625000, 3),
+    (0xF2, "total-lbas-read", 0x0000, 100, 253, 0, 15625000000, 3),
+]
+
+
+def ata_props(temperature, hours, failing=False):
+    return {
+        "SmartSupported": True, "SmartEnabled": True, "SmartUpdated": dbus.UInt64(1),
+        "SmartFailing": failing, "SmartPowerOnSeconds": dbus.UInt64(hours * 3600),
+        "SmartTemperature": dbus.Double(temperature + 273.15),
+        "SmartNumAttributesFailing": dbus.Int32(0),
+        "SmartNumAttributesFailedInThePast": dbus.Int32(0),
+        "SmartNumBadSectors": dbus.Int64(0), "SmartSelftestStatus": "success",
+        "SmartSelftestPercentRemaining": dbus.Int32(-1),
+        "PmSupported": True, "PmEnabled": True, "ApmSupported": True, "ApmEnabled": False,
+        "AamSupported": False, "AamEnabled": False, "AamVendorRecommendedValue": dbus.Int32(0),
+        "WriteCacheSupported": True, "WriteCacheEnabled": True,
+        "ReadLookaheadSupported": True, "ReadLookaheadEnabled": True,
+        "SecurityEraseUnitMinutes": dbus.Int32(0),
+        "SecurityEnhancedEraseUnitMinutes": dbus.Int32(0), "SecurityFrozen": True,
+    }
+
+
+def smart_methods(attributes_out):
+    return [("SmartUpdate", "a{sv}", "", "xd_udisks.smart_update(self)"),
+            ("SmartGetAttributes", "a{sv}", attributes_out,
+             "ret = xd_udisks.smart_attributes(self)")]
+
+
+def add_smart(mock, denied):
+    state.smart = {}
+    state.smart_denied = denied
+    mockobject.xd_udisks.smart_update = do_smart_update
+    mockobject.xd_udisks.smart_attributes = do_smart_attributes
+
+    sda = f"{MAIN_OBJ}/drives/VBOX_HARDDISK_sda"
+    obj(sda).props[DRIVE]["RotationRate"] = dbus.Int32(7200)
+    add_iface(sda, ATA, ata_props(36, 7321), smart_methods("a(ysqiiixia{sv})"))
+    state.smart[sda] = ATA_GOOD
+
+    # sdb: 8 sectors waiting to be reallocated.
+    sdb = f"{MAIN_OBJ}/drives/QEMU_HARDDISK_sdb"
+    obj(sdb).props[DRIVE]["RotationRate"] = dbus.Int32(5400)
+    add_iface(sdb, ATA, ata_props(41, 21877), smart_methods("a(ysqiiixia{sv})"))
+    state.smart[sdb] = [a if a[0] != 0xC5 else a[:6] + (8,) + a[7:] for a in ATA_GOOD]
+
+    # nvme0: an NVMe drive with its health log.
+    d = add_drive(mock, "Samsung_SSD_980_PRO_1TB_nvme0", "Samsung SSD 980 PRO 1TB",
+                  1_000_204_886_016, sortkey="06nvme0")
+    obj(d).props[DRIVE]["RotationRate"] = dbus.Int32(0)
+    obj(d).props[DRIVE]["Revision"] = "5B2QGXA7"
+    add_block(mock, "nvme0n1", 1_000_204_886_016, d)
+    add_iface(d, NVME, {
+        "State": "live", "ControllerID": dbus.UInt16(6),
+        "SubsystemNQN": ay("nqn.2014.08.org.nvmexpress:mock"), "FGUID": "",
+        "NVMeRevision": "1.3", "UnallocatedCapacity": dbus.UInt64(0),
+        "SmartUpdated": dbus.UInt64(1),
+        "SmartCriticalWarning": dbus.Array([], signature="s"),
+        "SmartPowerOnHours": dbus.UInt64(2210), "SmartTemperature": dbus.UInt16(311),
+        "SmartSelftestStatus": "", "SmartSelftestPercentRemaining": dbus.Int32(-1),
+        "SanitizeStatus": "", "SanitizePercentRemaining": dbus.Int32(-1),
+    }, smart_methods("a{sv}"))
+    state.smart[d] = {
+        "avail_spare": dbus.Byte(100), "spare_thresh": dbus.Byte(10),
+        "percent_used": dbus.Byte(2),
+        "total_data_read": dbus.UInt64(48_213_000_000_000),
+        "total_data_written": dbus.UInt64(31_904_000_000_000),
+        "ctrl_busy_time": dbus.UInt64(1312), "power_cycles": dbus.UInt64(1187),
+        "unsafe_shutdowns": dbus.UInt64(41), "media_errors": dbus.UInt64(0),
+        "num_err_log_entries": dbus.UInt64(3),
+        "temp_sensors": dbus.Array([dbus.UInt16(311), dbus.UInt16(318)], signature="q"),
+        "wctemp": dbus.UInt16(355), "cctemp": dbus.UInt16(358),
+        "warning_temp_time": dbus.UInt32(0), "critical_temp_time": dbus.UInt32(0),
+    }
+
+
+def do_smart_update(self):
+    log(f"SmartUpdate {self.path}")
+    if state.smart_denied:
+        fail("NotAuthorizedCanObtain", "Not authorized to perform operation")
+
+
+def do_smart_attributes(self):
+    data = state.smart[self.path]
+    if isinstance(data, dict):
+        return dbus.Dictionary(data, signature="sv")
+    return dbus.Array([dbus.Struct((dbus.Byte(i), n, dbus.UInt16(f), dbus.Int32(v),
+                                    dbus.Int32(w), dbus.Int32(t), dbus.Int64(p), dbus.Int32(u),
+                                    dbus.Dictionary({}, signature="sv")))
+                       for (i, n, f, v, w, t, p, u) in data], signature="(ysqiiixia{sv})")

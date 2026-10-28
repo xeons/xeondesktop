@@ -3134,6 +3134,21 @@ static void separator(GtkWidget *menu) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 }
 
+/* Disk Benchmark and Health's Health tab, on the selected disk. */
+static void show_health(dm *disk_manager) {
+    const disk *disk_info = disk_manager->sel.d;
+    if (disk_info == nullptr)
+        return;
+    const char *argv[] = {"xd-diskbench", "--page", "1", "--disk", disk_info->device, nullptr};
+    GError *error = nullptr;
+    if (!g_spawn_async(nullptr, (char **)(void *)argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                       nullptr, nullptr, &error)) {
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_ERROR,
+                       XD_MB_OK, FALSE, error->message);
+        g_error_free(error);
+    }
+}
+
 static void do_explore(dm *disk_manager) { explore(disk_manager); }
 static void do_mount(dm *disk_manager) {
     mount_volume(disk_manager, sel_volume(disk_manager), true);
@@ -3173,6 +3188,8 @@ static void fill_selection_menu(dm *disk_manager, GtkWidget *menu) {
              : disk_info->system     ? "The running system is on this disk."
                                      : nullptr);
         separator(menu);
+        item(menu, "_Health...", show_health, disk_manager,
+             disk_info->optical ? "Optical drives have no health data." : nullptr);
         item(menu, "P_roperties", properties, disk_manager, nullptr);
         return;
     }

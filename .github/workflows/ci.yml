@@ -48,7 +48,7 @@ jobs:
           pacman -Syu --noconfirm --needed base-devel clang meson ninja wayland-protocols \
             ${{ contains(matrix.options, 'compositor=false') && ' ' || 'wlroots0.20' }} \
             wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
-            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman lcms2 git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 nut libarchive gtk-layer-shell libseccomp bubblewrap xdg-desktop-portal \
+            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman lcms2 git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 nut libarchive gtk-layer-shell libseccomp bubblewrap xdg-desktop-portal liburing \
             ttf-dejavu gpgme libsecret openssh gnupg
       - uses: actions/checkout@v7
       - name: Configure
@@ -79,7 +79,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed base-devel clang meson ninja wayland-protocols \
             wlroots0.20 wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
-            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman lcms2 git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 nut libarchive gtk-layer-shell libseccomp bubblewrap xdg-desktop-portal \
+            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman lcms2 git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 nut libarchive gtk-layer-shell libseccomp bubblewrap xdg-desktop-portal liburing \
             ttf-dejavu grim python-gobject python-dbusmock gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gpgme libsecret openssh gnupg
       - uses: actions/checkout@v7
       - name: Configure

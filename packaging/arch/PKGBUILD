@@ -58,6 +58,7 @@ depends=(
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
   'lcms2'     # monitor calibration curves (vcgt)
+  'liburing'  # Disk Benchmark and Health: io_uring
   'sh'
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
@@ -84,7 +85,7 @@ optdepends=(
   'gnome-keyring: Passwords and Keys (or another Secret Service, such as KeePassXC)'
   'openssh: Passwords and Keys > SSH Keys'
   'bluez: Bluetooth Devices'
-  'udisks2: Disk Management'
+  'udisks2: Disk Management; Disk Benchmark and Health (Health)'
   'cups: Printers and Faxes'
   'nm-connection-editor: Network Connections > Configure and Advanced'
   'alacritty: the default terminal (Ctrl+Alt+T)'

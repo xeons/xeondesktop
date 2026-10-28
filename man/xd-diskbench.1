@@ -1,0 +1,136 @@
+.TH XD\-DISKBENCH 1 2026-10-27 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-diskbench \- Disk Benchmark and Health
+.SH SYNOPSIS
+.SY xd\-diskbench
+.OP \-\-page n
+.OP \-\-drive mount-point
+.OP \-\-folder directory
+.OP \-\-disk device
+.YS
+.SH DESCRIPTION
+.B xd\-diskbench
+measures how fast a drive reads and writes, and shows each drive's
+S.M.A.R.T. health.
+It has no Windows original; it sits in Administrative Tools, and a
+drive's Properties > Tools in
+.BR xd\-files (1)
+opens it with Test Now..., as Disk Management's Health... does for a
+disk.
+.SS Benchmark
+Drive lists the mounted file systems that can be written to, with their
+free space; Folder... picks any other folder.
+The test file goes in a hidden folder,
+.IR .xd\-diskbench ,
+at the root of the file system, or in your home folder on it when the
+root can't be written; a folder's test file goes in the same hidden folder
+inside it.
+The test file has a new name each time and is deleted when the test
+ends, whether it finished, was stopped or failed; a test file left by a
+crash is deleted the next time a test runs there.
+Before the test, the free space is checked (the file and 64 MiB to spare),
+and the file is preallocated and filled.
+.PP
+Runs (1 to 9) is how often each test runs; the best run is shown.
+Test size is the size of the test file, from 16 MiB to 64 GiB.
+Units shows the results in MB/s or GB/s (1 MB = 1,000,000 bytes),
+operations a second (IOPS), or the average time an operation takes (μs);
+every cell's tooltip has all three.
+.PP
+The default tests are:
+.IP 1. 4
+Sequential, 1 MiB blocks, queue depth 8, 1 thread
+.IP 2. 4
+Sequential, 1 MiB blocks, queue depth 1, 1 thread
+.IP 3. 4
+Random, 4 KiB blocks, queue depth 32, 1 thread
+.IP 4. 4
+Random, 4 KiB blocks, queue depth 1, 1 thread
+.PP
+Each test's button runs its read and write test; All runs every test's
+read, then every write.
+While a test runs its button reads Stop.
+Settings... changes each test's block size, queue depth and thread count,
+how long each run measures (5 seconds by default) and the wait between
+tests (5 seconds), and whether the test data is random (the default) or
+zeros.
+Its profiles are Default; Peak performance, with deeper queues and more
+threads; and Realistic, with shallow queues and a fifth test of random
+4 KiB blocks, 70% reads and 30% writes, whose reads and writes are shown
+in the two columns.
+Reset puts everything back.
+.PP
+The I/O goes through io_uring, a ring for each thread, with the file
+opened with O_DIRECT so the page cache doesn't make the results look
+better than the drive is.
+A sequential test's threads each read or write their own part of the
+file; a random test's go anywhere in it, aligned to the block size.
+On a file system that doesn't allow O_DIRECT (tmpfs, some FUSE file
+systems) the test uses buffered I/O, with fdatasync after writes, and
+the results are marked (cached).
+.PP
+Edit > Copy (Ctrl+C) puts the results on the clipboard as text, with the
+drive, its file system, the test size, the settings and the date.
+.SS Health
+The drive list shows each drive with its health's colour.
+UDisks2 provides the data: Drive.Ata for ATA drives,
+NVMe.Controller (UDisks2 2.10 or later) for NVMe drives.
+.PP
+Health status is one of:
+.TP
+.B Bad
+the drive says it is failing (SmartFailing), an attribute's current value
+is at or under its threshold (a threshold of 0 never fails), or an NVMe
+drive reports a critical warning.
+.TP
+.B Caution
+the drive has reallocated (attribute 05), pending (C5) or uncorrectable
+(C6) sectors; an NVMe drive's available spare is under its threshold, or
+90% or more of its rated life is used.
+.TP
+.B Good
+none of these.
+.TP
+.B Unknown
+the drive has no S.M.A.R.T. data: USB drives, memory cards and virtual
+disks usually don't, or it's turned off.
+.PP
+Details shows the model, firmware, serial number, capacity, interface,
+rotation rate, the features UDisks2 reports (S.M.A.R.T., APM, AAM, write
+cache; it doesn't report TRIM or NCQ), power-on hours and count, and the
+data read and written where the drive counts them.
+An ATA drive's attributes are listed with their raw values as UDisks2
+reads them (sectors, hours, °C); rows at or under their threshold are
+red, sector rows above zero yellow.
+An NVMe drive's health log is listed instead.
+.PP
+View > Refresh (F5) asks UDisks2 to read the drive's data again, which
+polkit may ask an administrator's permission for.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n :
+0 (Benchmark) or 1 (Health).
+.TP
+.BI \-\-drive " mount-point"
+Select the drive mounted there, on both tabs.
+.TP
+.BI \-\-folder " directory"
+Test in
+.I directory
+(added to the Drive list).
+.TP
+.BI \-\-disk " device"
+Select the disk on the Health tab by its block device
+.RI ( /dev/sda ).
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/diskbench.ini
+The settings, in
+.BR [Benchmark] .
+.SH SEE ALSO
+.BR xd\-admintools (1),
+.BR xd\-diskmgmt (1),
+.BR xd\-files (1),
+.BR udisksctl (1)

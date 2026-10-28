@@ -133,6 +133,9 @@ static int checks = 0;
         }                                                                      \
     } while (0)
 
+/* Disk Benchmark and Health: offsets, statistics, health rules. */
+#include "test_diskbench.c"
+
 static void test_str(void) {
     CHECK(xd_str_eq(xd_str_trim(XD_STR("  hi \t\n")), XD_STR("hi")));
     CHECK(xd_str_eq_nocase(XD_STR("ActiveTitle"), XD_STR("activetitle")));
@@ -12195,6 +12198,7 @@ int main(void) {
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
         return xd_keys_askpass_main();
     test_str();
+    test_diskbench();
     test_arena();
     test_scheme();
     test_scheme_custom();
