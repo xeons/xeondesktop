@@ -11,14 +11,34 @@
 
 #include "geometry.h"
 
-/* In the order of the option's choices. */
+/* Animations' own effects, then the Animations Add-On's (addon.c draws
+ * those, with OpenGL). */
 typedef enum xd_animation_effect : uint8_t {
     XD_ANIMATION_NONE,
     XD_ANIMATION_FADE,
     XD_ANIMATION_ZOOM,
     XD_ANIMATION_GLIDE_1,
     XD_ANIMATION_GLIDE_2,
+    XD_ANIMATION_AIRPLANE,
+    XD_ANIMATION_BEAM_UP,
+    XD_ANIMATION_DOMINO,
+    XD_ANIMATION_FOLD,
+    XD_ANIMATION_GLIDE_3,
+    XD_ANIMATION_LEAF_SPREAD,
+    XD_ANIMATION_RAZR,
+    XD_ANIMATION_SKEWER,
+    XD_ANIMATION_EFFECT_COUNT,
 } xd_animation_effect;
+
+/* The effect a name in effects.ini stands for ("glide1", "beamup");
+ * None for one it doesn't know. */
+xd_animation_effect xd_animation_find_effect(const char *name);
+/* Whether the Animations Add-On draws it. */
+bool xd_animation_is_addon(xd_animation_effect effect);
+/* What Animations draws in its place when the Add-On doesn't draw it (it's
+ * off, or there's no OpenGL): Zoom, as Compiz fell back to its default
+ * when an effect's plugin was gone. The others are themselves. */
+xd_animation_effect xd_animation_get_fallback(xd_animation_effect effect);
 
 /* The window's picture: its outer box's top left, its size times
  * scale_x and scale_y, and its opacity. */
@@ -33,7 +53,8 @@ double xd_animation_get_presence(bool appearing, double progress);
 
 /* The window (its outer box) drawn when `presence` of it shows: 1 is the
  * window as it is, 0 gone. Zoom goes to `target` (its taskbar button,
- * minimized) or, without one, to its own middle. */
+ * minimized) or, without one, to its own middle. An Add-On effect is
+ * drawn as its fallback. */
 xd_animation_frame xd_animation_get_frame(xd_animation_effect effect, xd_effect_rect window,
                                           const xd_effect_rect *target, double presence);
 

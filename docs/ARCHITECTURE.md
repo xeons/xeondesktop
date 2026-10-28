@@ -378,6 +378,26 @@ detached at unmap, keeping its last picture. Minimizing zooms to the
 taskbar button the shell reported (`button_box`, as `animate.c` uses), and
 `animates` stops XP's bar for the windows it animates.
 
+**Animations Add-On** (`addon.c`, xd-compositor-fx; the maths in
+`addon_model.c`, unit-tested) is Compiz Fusion's animationaddon: Airplane,
+Beam Up, Domino, Fold, Glide 3, Leaf Spread, Razr and Skewer, extra choices
+in Animations' Effect lists (each event lists those Compiz offered for it;
+Airplane isn't offered for opening), their options on the Add-On's own page.
+An option's `choice_requires` names the effect a choice needs: Desktop
+Effects greys the choice while that's off or can't be drawn, with a note
+saying `choice_fallback` (Zoom) is used meanwhile. The Add-On comes before
+Animations in `impl_list.h` and reads Animations' event settings; it takes a
+window whose event is set to one of its effects (Magic Lamp, Burn and
+Explode, before it, keep theirs), and Animations zooms any it doesn't take
+(off, plain build). The window's picture is cut into flat pieces that turn
+about hinges (folds, dominoes) or fly off, drawn each frame as one mesh of
+slabs back to front (face or mirrored back, and the sides facing the eye,
+Compiz's eye in front of the output's middle), perspective-correct (texture
+coordinates times each vertex's growth); Beam Up adds glowing streaks.
+Closing and minimizing use `xd_glfx_begin_closing_window`, opening and
+restoring run the same animation backwards on the live window; turned round
+midway, the new one starts where the old one had got to.
+
 **Window Opacity** (`opacity.c`) is the opacity part of Compiz's Opacity,
 Brightness and Saturation: a window's buffers are drawn at its first
 matching rule's opacity, or as Alt and the wheel over it last set, and

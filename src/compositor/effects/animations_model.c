@@ -3,10 +3,34 @@
  */
 #include "animations_model.h"
 
+#include <string.h>
+
 #include "../../core/common.h"
 
 /* Zoom fades out over the last part of its way only. */
 static constexpr double ZOOM_FADE_SHARE = 0.3;
+
+/* effects.ini's names, by effect. */
+static const char *const effect_names[XD_ANIMATION_EFFECT_COUNT] = {
+    "none",   "fade", "zoom",   "glide1",     "glide2", "airplane", "beamup",
+    "domino", "fold", "glide3", "leafspread", "razr",   "skewer",
+};
+
+xd_animation_effect xd_animation_find_effect(const char *name) {
+    for (size_t i = 0; name != nullptr && i < XD_ARRAY_LEN(effect_names); i++) {
+        if (strcmp(effect_names[i], name) == 0)
+            return (xd_animation_effect)i;
+    }
+    return XD_ANIMATION_NONE;
+}
+
+bool xd_animation_is_addon(xd_animation_effect effect) {
+    return effect >= XD_ANIMATION_AIRPLANE && effect < XD_ANIMATION_EFFECT_COUNT;
+}
+
+xd_animation_effect xd_animation_get_fallback(xd_animation_effect effect) {
+    return xd_animation_is_addon(effect) ? XD_ANIMATION_ZOOM : effect;
+}
 
 double xd_animation_get_presence(bool appearing, double progress) {
     double time = XD_CLAMP(progress, 0.0, 1.0);
@@ -34,8 +58,17 @@ xd_animation_frame xd_animation_get_frame(xd_animation_effect effect, xd_effect_
     double shown = XD_CLAMP(presence, 0.0, 1.0);
     double gone = 1.0 - shown;
     xd_animation_frame frame = {window.x, window.y, 1.0, 1.0, 1.0};
-    switch (effect) {
+    switch (xd_animation_get_fallback(effect)) {
     case XD_ANIMATION_NONE:
+    case XD_ANIMATION_AIRPLANE:
+    case XD_ANIMATION_BEAM_UP:
+    case XD_ANIMATION_DOMINO:
+    case XD_ANIMATION_FOLD:
+    case XD_ANIMATION_GLIDE_3:
+    case XD_ANIMATION_LEAF_SPREAD:
+    case XD_ANIMATION_RAZR:
+    case XD_ANIMATION_SKEWER:
+    case XD_ANIMATION_EFFECT_COUNT:
         return frame;
     case XD_ANIMATION_FADE:
         frame.opacity = shown;

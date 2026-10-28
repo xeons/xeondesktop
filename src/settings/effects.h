@@ -73,6 +73,13 @@ typedef struct xd_effect_option {
      * of the same length. */
     const char *const *choice_names;
     const char *const *choice_labels;
+    /* CHOICE, optional: for each choice, the id of the effect it needs
+     * turned on (and drawable), or nullptr for none; as long as
+     * choice_names. Until it's on the compositor uses another choice
+     * (Animations' Add-On effects, as CCSM listed them once the
+     * animationaddon plugin was on), and Desktop Effects greys it. */
+    const char *const *choice_requires;
+    const char *choice_fallback; /* that other choice's name: "zoom" */
     const char *default_value; /* in the file's syntax */
 } xd_effect_option;
 
@@ -166,6 +173,15 @@ uint32_t xd_effects_get_edges(const xd_effects_settings *settings, size_t effect
                               const char *key);
 const char *xd_effects_get_text(const xd_effects_settings *settings, size_t effect,
                                 const char *key);
+/* A CHOICE option's value as stored: its choice_names entry. */
+const char *xd_effects_get_choice_name(const xd_effects_settings *settings, size_t effect,
+                                       const char *key);
+/* The id of the effect a choice needs (choice_requires), or nullptr. */
+const char *xd_effects_get_choice_requirement(const xd_effect_option *option, int choice);
+/* Whether a choice can be used now: it needs no other effect, or the one
+ * it needs is on and can be drawn (`opengl`: OpenGL effects can be). */
+bool xd_effects_is_choice_available(const xd_effects_settings *settings, size_t effect,
+                                    size_t option, int choice, bool opengl);
 
 /* A value from the file's syntax, clamped; false if it doesn't parse.
  * A text value is newly allocated (g_free). */
