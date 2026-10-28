@@ -384,7 +384,7 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
 | Color Management | `xd-color` | colord's devices and ICC profiles; a monitor's calibration applied to its gamma ramp |
 | Date and Time | `xd-timedate` | the clock and time zone, through timedated; Internet Time's servers and Update Now on timesyncd; the hardware clock in local time, for dual boot |
-| Desktop Effects | `xd-effects` | Compiz Fusion-style effects, laid out as CompizConfig Settings Manager, all off by default: Scale, Animations, Window Opacity, Ring and Shift switchers, Enhanced Zoom, Annotate, Show Mouse; virtual desktops with a taskbar pager, Desktop Wall, Cube and Expo; Wobbly Windows, Magic Lamp, Burn, Explode and Water (the OpenGL ones need the SceneFX compositor) |
+| Desktop Effects | `xd-effects` | Compiz Fusion-style effects, laid out as CompizConfig Settings Manager, all off by default: Scale, Animations, Window Opacity, Ring and Shift switchers, Enhanced Zoom, Annotate, Show Mouse; virtual desktops with a taskbar pager, Desktop Wall, Cube and Expo; Wobbly Windows, Magic Lamp, Burn, Explode, Water and the Animations Add-On (Airplane, Beam Up, Domino, Razr, Fold, Glide 3, Leaf Spread, Skewer) (the OpenGL ones need the SceneFX compositor) |
 | Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors, night light |
 | Flatpak | `xd-flatpak` | Flatpak apps' permissions (sockets, devices, files, environment, D-Bus names) as your own overrides, and remotes |
 | Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`; new types in your shared-mime-info database) |
