@@ -1974,6 +1974,33 @@ def enhanced_zoom_pointer(s):
     s.check(after.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.02, "zoomed out, it's as it was")
 
 
+@scenario(setup=effects_setup("[EnhancedZoom]\nEnabled=true\nZoomFactor=2.0\n"))
+def enhanced_zoom_rotated(s):
+    """Enhanced Zoom Desktop on a monitor turned upside down (rotated by
+    180 degrees): the zoomed picture is the right way up, what was near
+    the pointer twice the size round it, as on a monitor the usual way."""
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--transform", "180"],
+                       capture_output=True, text=True, timeout=10)
+    s.check(r.returncode == 0, f"the monitor turned round ({r.stderr.strip()})")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    x, y = 330, 260
+    s.inject("move", x, y)
+    before = s.settle("before")
+    s.inject("hold", "super", "wheel", -1, "release", "super")
+    zoomed = s.settle("zoomed")
+    matched, changed = zoomed_match(zoomed, before, x, y, 2.0)
+    s.log(f"{matched:.2f} of the points show what was half as far from the pointer; "
+          f"{changed:.2f} changed")
+    s.check(changed > 0.3, f"the screen is zoomed ({changed:.2f} of it changed)")
+    s.check(matched > 0.8, f"what's round the pointer is twice the size ({matched:.2f})")
+    s.inject("hold", "super", "wheel", 1, "release", "super")
+    after = s.settle("unzoomed")
+    s.check(after.differs(before, (0, 0, WIDTH, HEIGHT)) < 0.02, "zoomed out, it's as it was")
+
+
 def is_red(pixel):
     r, g, b = pixel
     return r > 200 and g < 60 and b < 60
