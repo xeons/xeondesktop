@@ -44,4 +44,47 @@ bool xd_updates_state_write(const char *path, const xd_updates_state *st);
 /* The signature of a set of update ids (any order). */
 void xd_updates_signature(const char *const *ids, size_t count, char out[41]);
 
+/* ---- the installation history ------------------------------------------
+ * XP's "View installation history": what was installed (or downloaded by
+ * the scheduled check) and when, and why it failed. A key file next to
+ * the state ($XDG_STATE_HOME/xeondesktop/update-history.ini), newest
+ * first, at most XD_UPDATE_HISTORY_MAX entries. */
+
+static constexpr unsigned XD_UPDATE_HISTORY_MAX = 100;
+
+typedef enum xd_update_action : uint8_t {
+    XD_UPDATE_ACTION_INSTALL,  /* the user's Install (or a firmware update) */
+    XD_UPDATE_ACTION_DOWNLOAD, /* the scheduled check's download */
+    XD_UPDATE_ACTION_CHECK,    /* the scheduled check itself (refreshing, listing) */
+    XD_UPDATE_ACTION_COUNT,
+} xd_update_action;
+
+typedef enum xd_update_result : uint8_t {
+    XD_UPDATE_SUCCEEDED,
+    XD_UPDATE_FAILED,
+    XD_UPDATE_CANCELED,
+    XD_UPDATE_RESULT_COUNT,
+} xd_update_result;
+
+typedef struct xd_update_history_entry {
+    int64_t time; /* seconds since the epoch */
+    xd_update_action action;
+    xd_update_result result;
+    char **updates; /* the updates' names (nullptr-terminated; may be empty) */
+    char *error;    /* the error's name (PackageKit's "file-conflicts"...), or "" */
+    char *summary;  /* what went wrong, in a sentence or two, or "" */
+    char *details;  /* the full text, or "" */
+} xd_update_history_entry;
+
+/* $XDG_STATE_HOME/xeondesktop/update-history.ini. g_free it. */
+char *xd_update_history_path(void);
+/* The entries, newest first (empty when there's no file).
+ * g_ptr_array_unref it. */
+GPtrArray *xd_update_history_read(const char *path);
+/* Adds `entry` (copied) at the top, dropping the oldest past the max. */
+bool xd_update_history_add(const char *path, const xd_update_history_entry *entry);
+void xd_update_history_entry_free(xd_update_history_entry *entry);
+/* "Succeeded", "Failed", "Canceled". */
+const char *xd_update_result_name(xd_update_result result);
+
 #endif

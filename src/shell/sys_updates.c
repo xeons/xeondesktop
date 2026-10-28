@@ -5,7 +5,9 @@
  * it runs `xd-wuaucpl --check`, which refreshes, counts and, in Download
  * mode, downloads, but never installs. What the check found is a state
  * file we watch: while updates wait there's an icon, and a new set of them
- * brings XP's balloon. A click on either opens the updates to install.
+ * brings XP's balloon. A click on either opens the updates to install. A
+ * check that fails says so in a balloon of its own, whose click opens the
+ * installation history, where the check kept why.
  */
 #include <gio/gio.h>
 #include <stdlib.h>
@@ -55,6 +57,10 @@ static void settings_page(xd_shell *shell, [[maybe_unused]] void *data) {
     open_page(shell, "--page 0");
 }
 
+static void history(xd_shell *shell, [[maybe_unused]] void *data) {
+    open_page(shell, "--history");
+}
+
 static void balloon(updates *auto_updates) {
     /* XP's words: "ready" once downloaded. */
     bool ready = auto_updates->st.downloaded || auto_updates->st.software == 0;
@@ -81,6 +87,17 @@ static void load(updates *auto_updates, bool startup) {
     if (waiting(auto_updates) == 0 || turned_off(auto_updates)) {
         xd_balloon_hide_tray(auto_updates->shell, ITEM);
         auto_updates->shown[0] = '\0';
+        return;
+    }
+    /* A check that just failed (the download, say) says so each time,
+     * and a click shows why, from the installation history. */
+    if (!startup && auto_updates->st.checked > old.checked && auto_updates->st.error[0] != '\0') {
+        memcpy(auto_updates->shown, auto_updates->st.signature, sizeof(auto_updates->shown));
+        bool download = g_str_has_prefix(auto_updates->st.error, "Downloading");
+        xd_balloon_tray(auto_updates->shell, ITEM, "software-update-urgent",
+                        download ? "Updates could not be downloaded"
+                                 : "Your computer couldn't check for updates",
+                        "Click here to see why.", history, nullptr);
         return;
     }
     /* At logon while updates wait, and when a check finds a new set; not

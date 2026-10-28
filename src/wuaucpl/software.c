@@ -498,8 +498,12 @@ typedef struct install {
     xd_wuau_progress *progress;
     char **pk_ids;
     GPtrArray *flatpaks; /* fp_update *: installation, ref, name */
+    GPtrArray *names;    /* char *: every update's name, for the history */
     PkRestartEnum restart;
     bool failed;
+    bool only_some; /* some of the packages were left unticked */
+    /* Why it failed, for the history. */
+    char *error_name, *summary, *details;
 } install;
 
 static const char *const status_texts[PK_STATUS_ENUM_LAST] = {
@@ -522,6 +526,8 @@ static const char *status_text(PkStatusEnum status) {
 
 static void on_pk_progress(PkProgress *progress, PkProgressType type, gpointer data) {
     install *in = data;
+    if (in->progress == nullptr)
+        return; /* it failed already */
     if (type == PK_PROGRESS_TYPE_PERCENTAGE) {
         int pct = pk_progress_get_percentage(progress);
         xd_wuau_progress_set(in->progress, pct >= 0 && pct <= 100 ? pct / 100.0 : -1.0, nullptr);
@@ -541,6 +547,24 @@ static void on_pk_progress(PkProgress *progress, PkProgressType type, gpointer d
     }
 }
 
+/* Shows why the install failed (not when it was cancelled: no summary),
+ * writes it to the journal, and keeps it for the history. */
+static void install_failed(install *in, const char *headline, const char *error_name,
+                           const char *summary, const char *details) {
+    in->failed = true;
+    xd_wuau_log_failure(headline, error_name, details);
+    if (in->error_name == nullptr) {
+        in->error_name = g_strdup(error_name);
+        in->summary = g_strdup(summary);
+        in->details = g_strdup(details);
+    }
+    /* The progress window goes first: the error box replaces it. */
+    xd_wuau_progress_free(in->progress);
+    in->progress = nullptr;
+    if (summary != nullptr)
+        xd_wuau_show_failure(in->w, headline, summary, details);
+}
+
 static void install_finish(install *in) {
     wuau *applet = in->w;
     xd_wuau_progress_free(in->progress);
@@ -548,6 +572,15 @@ static void install_finish(install *in) {
     bool cancelled = g_cancellable_is_cancelled(in->cancel);
     PkRestartEnum restart = in->restart;
     bool ok = !in->failed && !cancelled;
+    xd_wuau_record(XD_UPDATE_ACTION_INSTALL,
+                   ok          ? XD_UPDATE_SUCCEEDED
+                   : cancelled ? XD_UPDATE_CANCELED
+                               : XD_UPDATE_FAILED,
+                   in->names, in->error_name, in->summary, in->details);
+    g_free(in->error_name);
+    g_free(in->summary);
+    g_free(in->details);
+    g_ptr_array_unref(in->names);
     g_strfreev(in->pk_ids);
     g_ptr_array_unref(in->flatpaks);
     g_object_unref(in->cancel);
@@ -574,8 +607,9 @@ typedef struct fp_status {
 
 static gboolean fp_show(gpointer data) {
     fp_status *status = data;
-    xd_wuau_progress_set(status->in->progress,
-                         status->percent >= 0 ? status->percent / 100.0 : -1.0, status->text);
+    if (status->in->progress != nullptr)
+        xd_wuau_progress_set(status->in->progress,
+                             status->percent >= 0 ? status->percent / 100.0 : -1.0, status->text);
     g_free(status->text);
     g_free(status);
     return G_SOURCE_REMOVE;
@@ -664,10 +698,14 @@ static void on_fp_installed([[maybe_unused]] GObject *src, GAsyncResult *res, gp
     install *in = data;
     GError *error = nullptr;
     if (!g_task_propagate_boolean(G_TASK(res), &error)) {
-        in->failed = true;
-        if (!g_cancellable_is_cancelled(in->cancel) &&
-            !g_error_matches(error, FLATPAK_ERROR, FLATPAK_ERROR_ABORTED))
-            xd_wuau_error(in->w, "Some updates could not be installed.", error->message);
+        bool cancelled = g_cancellable_is_cancelled(in->cancel) ||
+                         g_error_matches(error, FLATPAK_ERROR, FLATPAK_ERROR_ABORTED);
+        install_failed(in, "Some apps could not be updated.",
+                       cancelled ? "transaction-cancelled" : "flatpak-error",
+                       cancelled ? nullptr
+                                 : "Flatpak couldn't update them. Click Details to see what it "
+                                   "reported.",
+                       error->message);
         g_clear_error(&error);
     }
     install_finish(in);
@@ -697,26 +735,20 @@ typedef struct pk_reply {
 static gboolean pk_updated_later(gpointer data) {
     pk_reply *packagekit_reply = data;
     install *in = packagekit_reply->in;
-    PkError *pe = packagekit_reply->results != nullptr
-                      ? pk_results_get_error_code(packagekit_reply->results)
-                      : nullptr;
     if (packagekit_reply->results != nullptr)
         in->restart = pk_results_get_require_restart_worst(packagekit_reply->results);
-    if (packagekit_reply->error != nullptr || pe != nullptr) {
-        in->failed = true;
-        bool cancelled = g_cancellable_is_cancelled(in->cancel) ||
-                         (pe != nullptr &&
-                          pk_error_get_code(pe) == PK_ERROR_ENUM_TRANSACTION_CANCELLED);
-        if (!cancelled) {
-            bool denied = pe != nullptr && pk_error_get_code(pe) == PK_ERROR_ENUM_NOT_AUTHORIZED;
-            xd_wuau_error(in->w,
-                          denied ? "You don't have permission to install updates on this computer."
-                                 : "The updates could not be installed.",
-                          packagekit_reply->error != nullptr ? packagekit_reply->error->message
-                                                             : pk_error_get_details(pe));
-        }
+    PkErrorEnum code = PK_ERROR_ENUM_UNKNOWN;
+    char *details = nullptr;
+    if (xd_update_get_failure(packagekit_reply->error, packagekit_reply->results, &code,
+                              &details)) {
+        if (g_cancellable_is_cancelled(in->cancel))
+            code = PK_ERROR_ENUM_TRANSACTION_CANCELLED;
+        char *summary = xd_update_get_error_summary(code, in->only_some);
+        install_failed(in, "The updates could not be installed.", pk_error_enum_to_string(code),
+                       summary, details);
+        g_free(summary);
+        g_free(details);
     }
-    g_clear_object(&pe);
     g_clear_error(&packagekit_reply->error);
     g_clear_object(&packagekit_reply->results);
     g_free(packagekit_reply);
@@ -736,14 +768,68 @@ static void on_pk_updated(GObject *src, GAsyncResult *res, gpointer data) {
     g_idle_add(pk_updated_later, packagekit_reply);
 }
 
+/* How many package updates are listed, and how many of them are ticked. */
+static void count_packages(wuau *applet, unsigned *listed, unsigned *ticked) {
+    *listed = *ticked = 0;
+    GtkTreeIter it;
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok;
+         ok = gtk_tree_model_iter_next(model, &it)) {
+        gboolean on = FALSE;
+        int kind = 0;
+        gtk_tree_model_get(model, &it, COL_SELECTED, &on, COL_KIND, &kind, -1);
+        if (kind == KIND_PACKAGE) {
+            ++*listed;
+            *ticked += on ? 1 : 0;
+        }
+    }
+}
+
+static void tick_all_packages(wuau *applet) {
+    GtkTreeIter it;
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok;
+         ok = gtk_tree_model_iter_next(model, &it)) {
+        int kind = 0;
+        gtk_tree_model_get(model, &it, COL_KIND, &kind, -1);
+        if (kind == KIND_PACKAGE)
+            gtk_list_store_set(applet->sw_store, &it, COL_SELECTED, TRUE, -1);
+    }
+}
+
+/* Arch Linux (PackageKit's alpm backend) upgrades the whole system or
+ * nothing: pacman doesn't support partial upgrades, and the backend adds
+ * every upgrade to an UpdatePackages of a few anyway. False: Cancel. */
+static bool confirm_partial(wuau *applet, bool *only_some) {
+    unsigned listed = 0, ticked = 0;
+    count_packages(applet, &listed, &ticked);
+    *only_some = ticked > 0 && ticked < listed;
+    if (!*only_some || g_strcmp0(applet->backend, "alpm") != 0)
+        return true;
+    static const char *const labels[] = {"Install _All", "Install _Selected", "Cancel"};
+    int choice = xd_message_box_choose(
+        GTK_WINDOW(applet->window), XD_WUAU_TITLE, XD_MB_WARNING,
+        "Installing only some updates isn't supported on this system: its package manager may "
+        "install all of them anyway, or fail.\n\nInstall all of them?",
+        labels, 3, 0, 2);
+    if (choice == 0) {
+        tick_all_packages(applet);
+        *only_some = false;
+    }
+    return choice != 2;
+}
+
 static void on_install([[maybe_unused]] GtkButton *button, gpointer data) {
     wuau *applet = data;
-    if (applet->busy)
+    bool only_some = false;
+    if (applet->busy || !confirm_partial(applet, &only_some))
         return;
     install *in = g_new0(install, 1);
     in->w = applet;
     in->cancel = g_cancellable_new();
     in->flatpaks = g_ptr_array_new_with_free_func(fp_update_free);
+    in->names = g_ptr_array_new_with_free_func(g_free);
+    in->only_some = only_some;
     GPtrArray *ids = g_ptr_array_new();
     GtkTreeIter it;
     GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
@@ -752,9 +838,13 @@ static void on_install([[maybe_unused]] GtkButton *button, gpointer data) {
         gboolean on = FALSE;
         int kind = 0;
         unsigned restart = 0;
-        char *id = nullptr, *inst = nullptr, *name = nullptr;
+        char *id = nullptr, *inst = nullptr, *name = nullptr, *version = nullptr;
         gtk_tree_model_get(model, &it, COL_SELECTED, &on, COL_KIND, &kind, COL_ID, &id,
-                           COL_INSTALLATION, &inst, COL_NAME, &name, COL_RESTART, &restart, -1);
+                           COL_INSTALLATION, &inst, COL_NAME, &name, COL_RESTART, &restart,
+                           COL_VERSION, &version, -1);
+        if (on)
+            g_ptr_array_add(in->names, g_strdup_printf("%s %s", name, version));
+        g_free(version);
         if (on && kind == KIND_PACKAGE) {
             g_ptr_array_add(ids, id);
             id = nullptr;
@@ -850,6 +940,9 @@ GtkWidget *xd_wuau_software_page(wuau *applet) {
     applet->sw_check = gtk_button_new_with_mnemonic("_Check for Updates");
     g_signal_connect(applet->sw_check, "clicked", G_CALLBACK(on_check), applet);
     gtk_box_pack_start(GTK_BOX(buttons), applet->sw_check, FALSE, FALSE, 0);
+    GtkWidget *history = gtk_button_new_with_mnemonic("View Installation _History");
+    g_signal_connect_swapped(history, "clicked", G_CALLBACK(xd_wuau_show_history), applet);
+    gtk_box_pack_start(GTK_BOX(buttons), history, FALSE, FALSE, 0);
     applet->sw_install = gtk_button_new_with_mnemonic("_Install");
     gtk_widget_set_size_request(applet->sw_install, 80, -1);
     g_signal_connect(applet->sw_install, "clicked", G_CALLBACK(on_install), applet);
@@ -883,16 +976,29 @@ static bool metered(GDBusConnection *bus) {
     return metered_state == 1 || metered_state == 3;
 }
 
-static void note_error(xd_updates_state *st, const char *what, GError *error, PkResults *results) {
-    if (st->error[0] != '\0')
-        return;
-    PkError *pe = results != nullptr ? pk_results_get_error_code(results) : nullptr;
-    const char *why = error != nullptr ? error->message
-                      : pe != nullptr  ? pk_error_get_details(pe)
-                                       : nullptr;
-    if (why != nullptr)
-        g_snprintf(st->error, sizeof(st->error), "%s: %s", what, why);
-    g_clear_object(&pe);
+/* A step of the check failed, with nobody watching: the state says so (for
+ * Automatic Updates' "Last checked" line and the shell's balloon), and the
+ * journal and the installation history get the details. */
+static void note_failure(xd_updates_state *st, const char *what, xd_update_action action,
+                         const GPtrArray *names, const char *code_name, const char *summary,
+                         const char *details) {
+    xd_wuau_log_failure(what, code_name, details);
+    xd_wuau_record(action, XD_UPDATE_FAILED, names, code_name, summary, details);
+    if (st->error[0] == '\0')
+        g_snprintf(st->error, sizeof(st->error), "%s: %s", what,
+                   summary != nullptr && summary[0] != '\0' ? summary : details);
+}
+
+static void note_error(xd_updates_state *st, const char *what, xd_update_action action,
+                       const GPtrArray *names, GError *error, PkResults *results) {
+    PkErrorEnum code = PK_ERROR_ENUM_UNKNOWN;
+    char *details = nullptr;
+    if (!xd_update_get_failure(error, results, &code, &details))
+        details = g_strdup("PackageKit didn't finish.");
+    char *summary = xd_update_get_error_summary(code, false);
+    note_failure(st, what, action, names, pk_error_enum_to_string(code), summary, details);
+    g_free(summary);
+    g_free(details);
 }
 
 static bool pk_ok(GError *error, PkResults *results) {
@@ -927,10 +1033,12 @@ int xd_wuau_check(void) {
     GError *error = nullptr;
     PkResults *results = pk_client_refresh_cache(pk, FALSE, nullptr, nullptr, nullptr, &error);
     if (!pk_ok(error, results))
-        note_error(&st, "Refreshing the list of updates", error, results);
+        note_error(&st, "Refreshing the list of updates", XD_UPDATE_ACTION_CHECK, nullptr, error,
+                   results);
     g_clear_error(&error);
     g_clear_object(&results);
     GPtrArray *pk_ids = g_ptr_array_new_with_free_func(g_free);
+    GPtrArray *pk_names = g_ptr_array_new_with_free_func(g_free);
     results = pk_client_get_updates(pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), nullptr, nullptr,
                                     nullptr, &error);
     if (pk_ok(error, results)) {
@@ -942,10 +1050,12 @@ int xd_wuau_check(void) {
                 st.important++;
             g_ptr_array_add(pk_ids, g_strdup(pk_package_get_id(package)));
             g_ptr_array_add(ids, g_strdup(pk_package_get_id(package)));
+            g_ptr_array_add(pk_names, g_strdup_printf("%s %s", pk_package_get_name(package),
+                                                      pk_package_get_version(package)));
         }
         g_ptr_array_unref(pkgs);
     } else {
-        note_error(&st, "Listing the updates", error, results);
+        note_error(&st, "Listing the updates", XD_UPDATE_ACTION_CHECK, nullptr, error, results);
     }
     g_clear_error(&error);
     g_clear_object(&results);
@@ -977,16 +1087,23 @@ int xd_wuau_check(void) {
                                                     nullptr, nullptr, &error);
                 ok = pk_ok(error, results);
                 if (!ok)
-                    note_error(&st, "Downloading the updates", error, results);
+                    note_error(&st, "Downloading the updates", XD_UPDATE_ACTION_DOWNLOAD,
+                               pk_names, error, results);
                 g_clear_error(&error);
                 g_clear_object(&results);
             }
             if (flatpaks->len > 0 &&
                 !run_flatpak_updates(flatpaks, true, false, nullptr, nullptr, &error)) {
                 ok = false;
-                if (st.error[0] == '\0')
-                    g_snprintf(st.error, sizeof(st.error), "Downloading the updates: %s",
-                               error->message);
+                GPtrArray *names = g_ptr_array_new();
+                for (guint i = 0; i < flatpaks->len; i++)
+                    g_ptr_array_add(names,
+                                    ((fp_update *)g_ptr_array_index(flatpaks, i))->name);
+                note_failure(&st, "Downloading the updates", XD_UPDATE_ACTION_DOWNLOAD, names,
+                             "flatpak-error",
+                             "Some apps' updates could not be downloaded with Flatpak.",
+                             error->message);
+                g_ptr_array_unref(names);
                 g_clear_error(&error);
             }
             st.downloaded = ok;
@@ -1003,6 +1120,7 @@ int xd_wuau_check(void) {
     g_free(path);
     g_ptr_array_unref(flatpaks);
     g_ptr_array_unref(pk_ids);
+    g_ptr_array_unref(pk_names);
     g_ptr_array_unref(ids);
     g_object_unref(pk);
     close(lock);

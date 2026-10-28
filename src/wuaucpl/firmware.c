@@ -501,9 +501,19 @@ static void flash_failed(flash *flashing, const char *what, const char *detail) 
     bool cancelled = g_cancellable_is_cancelled(flashing->cancel);
     /* `detail` may be one of the flash's own strings (its location). */
     char *kept = g_strdup(detail);
+    GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(names, g_strdup_printf("%s firmware", flashing->name));
     flash_free(flashing);
+    xd_wuau_log_failure(what, cancelled ? "cancelled" : "fwupd-error", kept);
+    xd_wuau_record(XD_UPDATE_ACTION_INSTALL, cancelled ? XD_UPDATE_CANCELED : XD_UPDATE_FAILED,
+                   names, cancelled ? "cancelled" : "fwupd-error", what, kept);
+    g_ptr_array_unref(names);
+    /* fwupd says why in a sentence: that's the summary. A longer text
+     * goes under Details. */
+    bool short_text = kept == nullptr || (strlen(kept) < 300 && strchr(kept, '\n') == nullptr);
     if (!cancelled)
-        xd_wuau_error(applet, what, kept);
+        xd_wuau_show_failure(applet, what, short_text ? kept : nullptr,
+                             short_text ? nullptr : kept);
     g_free(kept);
     fw_show_details(applet);
 }
@@ -553,6 +563,11 @@ static void on_installed(GObject *src, GAsyncResult *res, gpointer data) {
     bool restart = (flashing->flags & (DEVICE_NEEDS_REBOOT | DEVICE_NEEDS_SHUTDOWN)) != 0;
     char *name = g_strdup(flashing->name);
     flash_free(flashing);
+    GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(names, g_strdup_printf("%s firmware", name));
+    xd_wuau_record(XD_UPDATE_ACTION_INSTALL, XD_UPDATE_SUCCEEDED, names, nullptr, nullptr,
+                   nullptr);
+    g_ptr_array_unref(names);
     xd_wuau_firmware_load(applet);
     if (restart) {
         xd_wuau_ask_restart(applet, "The firmware update is ready.");

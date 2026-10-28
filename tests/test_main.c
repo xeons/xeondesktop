@@ -10645,6 +10645,155 @@ static int64_t utc_at(int y, int mo, int day, int hour, int mi) {
     return seconds;
 }
 
+/* Why an install failed (PackageKit's codes, alpm's lists) and the
+ * installation history. */
+static void test_update_failures(void) {
+    /* The code: packagekit-glib2's GError (0xff + code), else the results'. */
+    PkErrorEnum code = PK_ERROR_ENUM_UNKNOWN;
+    char *details = nullptr;
+    CHECK(!xd_update_get_failure(nullptr, nullptr, &code, &details) && details == nullptr);
+    GError *error = g_error_new(PK_CLIENT_ERROR, 0xff + PK_ERROR_ENUM_FILE_CONFLICTS, "a (/x)");
+    CHECK(xd_update_get_failure(error, nullptr, &code, &details));
+    CHECK(code == PK_ERROR_ENUM_FILE_CONFLICTS && strcmp(details, "a (/x)") == 0);
+    g_free(details);
+    g_error_free(error);
+    PkResults *results = pk_results_new();
+    PkError *result_error = g_object_new(PK_TYPE_ERROR_CODE, "code", PK_ERROR_ENUM_CANNOT_GET_LOCK,
+                                         "details", "unable to lock database", nullptr);
+    pk_results_set_error_code(results, result_error);
+    CHECK(xd_update_get_failure(nullptr, results, &code, &details));
+    CHECK(code == PK_ERROR_ENUM_CANNOT_GET_LOCK && strcmp(details, "unable to lock database") == 0);
+    g_free(details);
+    g_object_unref(result_error);
+    g_object_unref(results);
+    error = g_error_new_literal(G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN, "no PackageKit");
+    CHECK(xd_update_get_failure(error, nullptr, &code, &details));
+    CHECK(code == PK_ERROR_ENUM_INTERNAL_ERROR && strcmp(details, "no PackageKit") == 0);
+    g_free(details);
+    g_error_free(error);
+
+    /* The summaries. */
+    CHECK(xd_update_get_error_summary(PK_ERROR_ENUM_TRANSACTION_CANCELLED, false) == nullptr);
+    char *summary = xd_update_get_error_summary(PK_ERROR_ENUM_CANNOT_GET_LOCK, false);
+    CHECK(strcmp(summary, "Another program is installing or removing software. Close it and "
+                          "try again.") == 0);
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_FILE_CONFLICTS, false);
+    CHECK(g_str_has_prefix(summary, "Some files in the updates already belong to other packages"));
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_DEP_RESOLUTION_FAILED, true);
+    CHECK(strstr(summary, "installing all of them may help") != nullptr);
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_PACKAGE_CONFLICTS, false);
+    CHECK(strstr(summary, "conflict") != nullptr && strstr(summary, "all of them") == nullptr);
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_MISSING_GPG_SIGNATURE, false);
+    CHECK(strstr(summary, "keyring") != nullptr);
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_NO_SPACE_ON_DEVICE, false);
+    CHECK(strstr(summary, "disk space") != nullptr);
+    g_free(summary);
+    summary = xd_update_get_error_summary(PK_ERROR_ENUM_NO_DISTRO_UPGRADE_DATA, false);
+    CHECK(strcmp(summary, "The package manager reported an error (no-distro-upgrade-data).") ==
+          0);
+    g_free(summary);
+
+    /* alpm's lists: one item a line, readable names, the first ten. */
+    const char *alpm = "a (/usr/bin/x), b <-> c (/usr/lib/y): conflicting files";
+    char *formatted = xd_update_format_error_details(alpm);
+    CHECK(strcmp(formatted, "conflicting files:\na (/usr/bin/x)\nb <-> c (/usr/lib/y)") == 0);
+    g_free(formatted);
+    GPtrArray *items = xd_update_get_error_items(alpm);
+    CHECK(items->len == 2 && strcmp(g_ptr_array_index(items, 0), "/usr/bin/x (a)") == 0 &&
+          strcmp(g_ptr_array_index(items, 1), "/usr/lib/y (b, c)") == 0);
+    g_ptr_array_unref(items);
+    items = xd_update_get_error_items("glibc>=2.41 <- foo, bar <-> baz: could not satisfy "
+                                      "dependencies");
+    CHECK(items->len == 2 && strcmp(g_ptr_array_index(items, 0), "foo needs glibc>=2.41") == 0 &&
+          strcmp(g_ptr_array_index(items, 1), "bar conflicts with baz") == 0);
+    g_ptr_array_unref(items);
+    /* Prose isn't a list. */
+    const char *prose = "unable to lock database\nerror: failed to init transaction, try again";
+    items = xd_update_get_error_items(prose);
+    CHECK(items->len == 0);
+    g_ptr_array_unref(items);
+    formatted = xd_update_format_error_details(prose);
+    CHECK(strcmp(formatted, prose) == 0);
+    g_free(formatted);
+    GString *many = g_string_new(nullptr);
+    for (int i = 1; i <= 200; i++)
+        g_string_append_printf(many, "%spkg (/usr/share/f%03d)", i > 1 ? ", " : "", i);
+    g_string_append(many, ": conflicting files");
+    items = xd_update_get_error_items(many->str);
+    CHECK(items->len == 200);
+    char *bullets = xd_update_list_error_items(items, 10);
+    CHECK(g_str_has_prefix(bullets, "• /usr/share/f001 (pkg)\n• /usr/share/f002 (pkg)\n"));
+    CHECK(g_str_has_suffix(bullets, "• /usr/share/f010 (pkg)\nand 190 more"));
+    g_free(bullets);
+    g_ptr_array_set_size(items, 3);
+    bullets = xd_update_list_error_items(items, 10);
+    CHECK(strstr(bullets, "more") == nullptr && g_str_has_suffix(bullets, "f003 (pkg)"));
+    g_free(bullets);
+    g_ptr_array_unref(items);
+    formatted = xd_update_format_error_details(many->str);
+    CHECK(g_str_has_prefix(formatted, "conflicting files:\npkg (/usr/share/f001)\n"));
+    unsigned lines = 0;
+    for (const char *at = formatted; *at != '\0'; at++)
+        lines += *at == '\n';
+    CHECK(lines == 200);
+    g_free(formatted);
+    g_string_free(many, TRUE);
+
+    /* The history: newest first, round trip, capped. */
+    char *dir = g_dir_make_tmp("xd-history-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "update-history.ini", nullptr);
+    GPtrArray *history = xd_update_history_read(path);
+    CHECK(history->len == 0);
+    g_ptr_array_unref(history);
+    char editor[] = "xdtest-editor", kernel[] = "xdtest-kernel", code_name[] = "file-conflicts";
+    char some_files[] = "Some files...", two_lines[] = "line 1\nline 2; [x]=y";
+    char *names[] = {editor, kernel, nullptr};
+    xd_update_history_entry entry = {
+        .time = 1760000000, .action = XD_UPDATE_ACTION_DOWNLOAD, .result = XD_UPDATE_FAILED,
+        .updates = names, .error = code_name, .summary = some_files, .details = two_lines};
+    CHECK(xd_update_history_add(path, &entry));
+    entry.time++;
+    entry.action = XD_UPDATE_ACTION_INSTALL;
+    entry.result = XD_UPDATE_SUCCEEDED;
+    entry.updates = nullptr;
+    entry.error = entry.summary = entry.details = nullptr;
+    CHECK(xd_update_history_add(path, &entry));
+    history = xd_update_history_read(path);
+    CHECK(history->len == 2);
+    const xd_update_history_entry *newest = g_ptr_array_index(history, 0);
+    const xd_update_history_entry *oldest = g_ptr_array_index(history, 1);
+    CHECK(newest->time == 1760000001 && newest->result == XD_UPDATE_SUCCEEDED &&
+          newest->updates[0] == nullptr && strcmp(newest->error, "") == 0);
+    CHECK(oldest->action == XD_UPDATE_ACTION_DOWNLOAD && oldest->result == XD_UPDATE_FAILED);
+    CHECK(g_strv_length(oldest->updates) == 2 && strcmp(oldest->updates[1], "xdtest-kernel") == 0);
+    CHECK(strcmp(oldest->error, "file-conflicts") == 0 &&
+          strcmp(oldest->details, "line 1\nline 2; [x]=y") == 0);
+    CHECK(strcmp(xd_update_result_name(oldest->result), "Failed") == 0);
+    g_ptr_array_unref(history);
+    for (unsigned i = 0; i < XD_UPDATE_HISTORY_MAX + 5; i++) {
+        entry.time = 1770000000 + i;
+        CHECK(xd_update_history_add(path, &entry));
+    }
+    history = xd_update_history_read(path);
+    CHECK(history->len == XD_UPDATE_HISTORY_MAX);
+    CHECK(((xd_update_history_entry *)g_ptr_array_index(history, 0))->time ==
+          1770000000 + XD_UPDATE_HISTORY_MAX + 4);
+    g_ptr_array_unref(history);
+    CHECK(g_file_set_contents(path, "[Entry 1]\nAction=explode\nResult=failed\n", -1, nullptr));
+    history = xd_update_history_read(path);
+    CHECK(history->len == 0);
+    g_ptr_array_unref(history);
+    g_unlink(path);
+    g_rmdir(dir);
+    g_free(path);
+    g_free(dir);
+}
+
 static void test_updates(void) {
     xd_settings original;
     xd_settings_defaults(&original);
@@ -12259,6 +12408,7 @@ int main(void) {
     test_appwiz();
     test_flatpak_perms();
     test_updates();
+    test_update_failures();
     test_superbar();
     test_calendar();
     test_notices();

@@ -81,6 +81,21 @@ void xd_wuau_software_finish(wuau *applet);
 /* `xd-wuaucpl --check` (no window): refresh, count, maybe download. */
 int xd_wuau_check(void);
 
+/* failures.c: why an install failed, and the installation history */
+/* The error box for a failed install: `headline` ("The updates could not
+ * be installed."), what went wrong (`summary`), the packages or files the
+ * details name as bullets, and Details >> with the full text and Copy. */
+void xd_wuau_show_failure(wuau *applet, const char *headline, const char *summary,
+                          const char *details);
+/* Writes a failure to stderr (the journal), with its code and details. */
+void xd_wuau_log_failure(const char *what, const char *code_name, const char *details);
+/* Adds an entry to the installation history; `names` are the updates'
+ * names (char *; may be nullptr). */
+void xd_wuau_record(xd_update_action action, xd_update_result result, const GPtrArray *names,
+                    const char *code_name, const char *summary, const char *details);
+/* The Installation History window, over the applet. */
+void xd_wuau_show_history(wuau *applet);
+
 /* firmware.c: the Firmware and Device Security tabs */
 GtkWidget *xd_wuau_firmware_page(wuau *applet);
 GtkWidget *xd_wuau_security_page(wuau *applet);
