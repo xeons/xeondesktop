@@ -1727,6 +1727,50 @@ def virtual_desktops(s):
     s.check(paged.differs(carried, box, step=4) < 0.02, "the pager's 2 shows it again")
 
 
+@scenario()
+def desktop_manager_toolbar(s):
+    """The taskbar menu's Toolbars > Desktop Manager (XP PowerToys'):
+    checked, it makes four desktops (General Options' Desktop Size in
+    effects.ini) and the pager shows left of the notification area;
+    unchecked, one desktop again and the pager's gone."""
+    empty = s.settle("desktop")
+    # Left of the notification area (the Classic style's, its clock at
+    # the right), where the pager comes.
+    pager = (WIDTH - 330, HEIGHT - 26, 240, 24)
+
+    def toggle_desktop_manager(label):
+        # Toolbars (T), then its fifth item: Address, Links, Desktop,
+        # Quick Launch, Desktop Manager.
+        shown = s.settle(f"before-{label}")
+        s.inject("move", 700, HEIGHT - 14, "click", "right")
+        wait_change(s, shown, (650, 450, 374, 290), "the menu", f"menu-{label}")
+        s.inject("key", "t", "sleep", 300)
+        for _ in range(4):
+            s.inject("key", "Down")
+        s.inject("key", "Return")
+
+    toggle_desktop_manager("on")
+    s.wait(lambda: effects_ini_value(s, "GeneralOptions", "HorizontalSize") == "4",
+           "HorizontalSize=4 in effects.ini")
+    s.check(effects_ini_value(s, "GeneralOptions", "VerticalSize") in (None, "1"),
+            "one row of desktops (the default, so maybe not written)")
+    s.wait(lambda: s.shot("pager").differs(empty, pager, step=1) > 0.01,
+           "the pager shows on the taskbar")
+    s.log("ok: Desktop Manager made four desktops and the pager")
+    # The desktops are there: Ctrl+Alt+Right goes to the second (the
+    # pager's button 2 pushed in instead of 1).
+    first = s.settle("first-desktop")
+    s.inject("key", "ctrl+alt+Right")
+    s.wait(lambda: s.shot("second").differs(first, pager, step=1) > 0.003,
+           "Ctrl+Alt+Right switched desktops")
+
+    toggle_desktop_manager("off")
+    s.wait(lambda: effects_ini_value(s, "GeneralOptions", "HorizontalSize") in (None, "1"),
+           "one desktop across in effects.ini")
+    s.wait(lambda: s.shot("no-pager").differs(empty, pager, step=1) < 0.001,
+           "the pager's gone")
+
+
 @scenario(setup=effects_setup(TWO_DESKTOPS))
 def virtual_desktops_window_menu(s):
     """With two desktops the window menu (Alt+Space) has Always on Visible

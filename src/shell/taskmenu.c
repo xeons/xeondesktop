@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../settings/effects.h"
 #include "shell.h"
 
 /* ---- actions --------------------------------------------------------------------- */
@@ -131,11 +132,41 @@ typedef struct desktop_choice {
     uint32_t desktop;
 } desktop_choice;
 
-static bool has_desktops(const xd_shell *shell) {
+static bool can_switch_desktops(const xd_shell *shell) {
     return shell->arranger != nullptr &&
            xd_window_arranger_v1_get_version(shell->arranger) >=
-               XD_WINDOW_ARRANGER_V1_SWITCH_DESKTOP_SINCE_VERSION &&
-           shell->desktop_columns * shell->desktop_rows > 1;
+               XD_WINDOW_ARRANGER_V1_SWITCH_DESKTOP_SINCE_VERSION;
+}
+
+static bool has_desktops(const xd_shell *shell) {
+    return can_switch_desktops(shell) && shell->desktop_columns * shell->desktop_rows > 1;
+}
+
+/* Toolbars > Desktop Manager: XP PowerToys' Virtual Desktop Manager,
+ * turned on there, gave four desktops. It sets Desktop Effects' General
+ * Options (effects.ini, which the compositor watches): four across when
+ * there's one, back to one when there are more (their windows come to
+ * it). The pager shows while there's more than one. */
+enum { DESKTOP_MANAGER_DESKTOPS = 4 };
+
+static void act_desktop_manager(xd_shell *shell, [[maybe_unused]] void *data) {
+    xd_effects_settings *settings = xd_effects_create_settings();
+    xd_effects_load(settings);
+    size_t general = 0, across = 0, down = 0;
+    if (xd_effects_find(settings, "GeneralOptions", &general)) {
+        const xd_effect_info *info = xd_effects_get_info(settings, general);
+        if (xd_effects_find_option(info, "HorizontalSize", &across) &&
+            xd_effects_find_option(info, "VerticalSize", &down)) {
+            xd_effect_value columns = {.integer = has_desktops(shell) ? 1
+                                                                      : DESKTOP_MANAGER_DESKTOPS};
+            xd_effect_value rows = {.integer = 1};
+            xd_effects_set_value(settings, general, across, &columns);
+            xd_effects_set_value(settings, general, down, &rows);
+            if (!xd_effects_save(settings))
+                fprintf(stderr, "xd-shell: cannot save the desktops' settings\n");
+        }
+    }
+    xd_effects_destroy_settings(settings);
 }
 
 static void act_move_to_desktop(xd_shell *shell, void *data) {
@@ -382,6 +413,11 @@ static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree, bool clo
     add(tree, toolbars->submenu, "Desktop", nullptr, nullptr);
     add(tree, toolbars->submenu, "Quick Launch", act_quick_launch, nullptr)->checked =
         shell->settings.quick_launch;
+    /* After Windows' own, as the PowerToy's band came. */
+    xd_menu_item *manager = add(tree, toolbars->submenu, "Desktop Manager",
+                                can_switch_desktops(shell) ? act_desktop_manager : nullptr,
+                                nullptr);
+    manager->checked = has_desktops(shell);
     separator(tree, toolbars->submenu);
     add(tree, toolbars->submenu, "&New Toolbar...", nullptr, nullptr);
     separator(tree, menu_model);

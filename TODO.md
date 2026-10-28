@@ -1331,7 +1331,8 @@ against mocks or scratch directories; none yet against the real services.
         effects" and polygon lighting are left out.
       - [x] Virtual desktops (General Options' Desktop Size): Ctrl+Alt+
         arrows switch, Ctrl+Alt+Shift+arrows carry the window, window menu
-        items, a taskbar pager; Desktop Wall (slide, map, edge flip),
+        items, a taskbar pager (turned on, with four desktops, by the
+        taskbar menu's Toolbars > Desktop Manager); Desktop Wall (slide, map, edge flip),
         Desktop Cube and Rotate Cube (Ctrl+Alt+drag), Expo (Super+W,
         top-left corner), Shift Switcher (Super+Shift+Tab).
       - [ ] Not done: Brightness and Saturation (the scene graph can't),

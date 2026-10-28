@@ -241,7 +241,9 @@ them off for XP's plain tooltips.
 ### Taskbar menus
 
 Right-clicking the taskbar opens Windows XP's taskbar menu: Toolbars ▸ Quick
-Launch, Cascade Windows, Tile Windows Horizontally/Vertically (with Undo),
+Launch and Desktop Manager (four virtual desktops and their pager, as XP
+PowerToys' Virtual Desktop Manager; Desktop Effects' General Options set
+other layouts), Cascade Windows, Tile Windows Horizontally/Vertically (with Undo),
 Show the Desktop, Task Manager, Lock the Taskbar and Properties. Arranging
 windows goes through `xd-window-arranger-v1`, a private protocol the
 compositor offers only to the shell it started. Right-clicking a task
