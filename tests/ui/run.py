@@ -70,13 +70,15 @@ SCENARIO_OPTIONS = {}
 
 
 def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11=False,
-             showcase=False, fx=False):
+             showcase=False, fx=False, virtual_input=True):
     """Registers a scenario: a function of the session (Session), run with
     that desktop.ini; it's skipped without the Python modules it requires.
     A showcase one takes a README screenshot (tools/screenshots.sh) and
     runs only when named, never in the suite. An fx one runs on
     xd-compositor-fx (Desktop Effects' OpenGL effects), and is skipped
-    where that can't draw."""
+    where that can't draw. Without virtual_input the compositor runs as in
+    a real session, with no --allow-virtual-input, so xd-inject can't
+    drive it."""
 
     def register(fn):
         SCENARIOS[fn.__name__] = (fn, desktop_ini, requires)
@@ -86,6 +88,7 @@ def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11
             "x11": x11,
             "showcase": showcase,
             "fx": fx,
+            "virtual_input": virtual_input,
         }
         return fn
 
@@ -695,8 +698,10 @@ def inner(args):
     setup = SCENARIO_OPTIONS[args.inner]["setup"]
     if setup is not None:
         setup(s)
+    is_virtual_input = SCENARIO_OPTIONS[args.inner]["virtual_input"]
+    virtual_input = ["--allow-virtual-input"] if is_virtual_input else []
     comp = subprocess.Popen(
-        [os.path.join(build, "xd-compositor"), "--allow-virtual-input"],
+        [os.path.join(build, "xd-compositor"), *virtual_input],
         preexec_fn=die_with_parent,
     )
     rc = 1
@@ -9372,6 +9377,42 @@ def fake_frameworks(s):
     with open(os.path.join(etc, "autostart", "org.fcitx.Fcitx5.desktop"), "w") as f:
         f.write("[Desktop Entry]\nType=Application\nName=Fcitx 5\nExec=fcitx5\n")
     os.environ["XDG_CONFIG_DIRS"] = etc
+
+
+@scenario(IME_INI, setup=stand_in_ime, virtual_input=False)
+def virtual_input_refused(s):
+    """As in a real session (no --allow-virtual-input), a program can't
+    type or point for the user: it isn't offered virtual keyboards, the
+    virtual pointer or test input, and xd-inject gives up. The input
+    method the compositor started still gets its virtual keyboard."""
+    log = os.path.join(s.base, "ime.log")
+
+    def heard(what):
+        try:
+            with open(log) as f:
+                return what in f.read()
+        except OSError:
+            return False
+
+    s.wait(lambda: heard("ready"), "the input method to connect")
+    s.check(heard("ready with a virtual keyboard"), "the input method gets a virtual keyboard")
+    r = subprocess.run([s.tool("xd-globals")], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=20)  # fmt: skip
+    if r.returncode != 0:
+        raise Failure("xd-globals: " + r.stderr.decode().strip())
+    offered = set(r.stdout.decode().split())
+    s.check("wl_seat" in offered, f"a program gets the ordinary globals ({sorted(offered)})")
+    leaked = {"zwp_virtual_keyboard_manager_v1", "zwlr_virtual_pointer_manager_v1",
+              "xd_test_input_v1"} & offered  # fmt: skip
+    s.check(not leaked, f"a program gets none of the virtual input ones ({sorted(leaked)})")
+    probe = subprocess.run([s.tool("xd-test-ime"), "--probe"], stdout=subprocess.PIPE,
+                           timeout=10).stdout.decode()  # fmt: skip
+    s.check("virtual-keyboard no" in probe, "another program isn't offered a virtual keyboard")
+    r = subprocess.run([s.tool("xd-inject"), "key", "Return"], stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, timeout=10)  # fmt: skip
+    s.check(r.returncode != 0 and b"doesn't allow virtual input" in r.stderr,
+            f"xd-inject is refused ({r.returncode}: {r.stderr.decode().strip()})")
+    s.log(f"ok: {len(offered)} globals, none for virtual input")
 
 
 @scenario(setup=fake_frameworks)
