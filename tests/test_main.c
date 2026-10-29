@@ -65,6 +65,7 @@
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
 #include "../src/saver/rain.h"
+#include "../src/saver/rain_glyphs.h"
 #include "../src/saver/savers.h"
 #include "../src/color/colorlib.h"
 #include "../src/compositor/vcgt.h"
@@ -3323,18 +3324,18 @@ static void test_rain(void) {
     CHECK(saver_rain_column_get_brightness(&fixed, 21) == 0);
 
     /* Without katakana: letters and digits, not boxes. */
-    CHECK(saver_rain_pick_characters(XD_RAIN_KATAKANA, false) == XD_RAIN_LETTERS);
-    CHECK(saver_rain_pick_characters(XD_RAIN_KATAKANA, true) == XD_RAIN_KATAKANA);
-    CHECK(saver_rain_pick_characters(XD_RAIN_BINARY, false) == XD_RAIN_BINARY);
+    CHECK(xd_rain_pick_characters(XD_RAIN_KATAKANA, false) == XD_RAIN_LETTERS);
+    CHECK(xd_rain_pick_characters(XD_RAIN_KATAKANA, true) == XD_RAIN_KATAKANA);
+    CHECK(xd_rain_pick_characters(XD_RAIN_BINARY, false) == XD_RAIN_BINARY);
     g_setenv("XD_RAIN_NO_KATAKANA", "1", TRUE);
-    CHECK(!saver_rain_has_katakana());
+    CHECK(!xd_rain_has_katakana());
     xd_settings st;
     xd_settings_defaults(&st);
     cairo_surface_t *fallback = saver_frames("rain", &st.savers, 5, 20, 1.0 / 30);
     g_unsetenv("XD_RAIN_NO_KATAKANA");
     cairo_surface_t *katakana = saver_frames("rain", &st.savers, 5, 20, 1.0 / 30);
     /* (Another picture, where a katakana font is installed.) */
-    CHECK(!saver_rain_has_katakana() || !same_pixels(fallback, katakana));
+    CHECK(!xd_rain_has_katakana() || !same_pixels(fallback, katakana));
     cairo_surface_destroy(fallback);
     cairo_surface_destroy(katakana);
 
@@ -12337,6 +12338,8 @@ static void test_wobbly_model(void) {
 #include "test_effects_addon.c"
 /* Burn and Explode as Animations' choices. */
 #include "test_effects_events.c"
+/* Digital Rain. */
+#include "test_effects_rain.c"
 /* The scene-graph Desktop Effects' maths. */
 #include "test_effects_scene.c"
 /* Window Opacity: opacity, brightness and saturation. */
@@ -12468,6 +12471,7 @@ int main(void) {
     test_effects_gl();
     test_effects_addon();
     test_effects_events();
+    test_effects_rain();
     test_effects_scene();
     test_effects_opacity();
     test_desktops();

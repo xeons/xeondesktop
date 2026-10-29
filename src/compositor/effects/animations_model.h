@@ -12,8 +12,9 @@
 #include "geometry.h"
 
 /* Animations' own effects, then the Animations Add-On's (addon.c draws
- * those, with OpenGL), then Burn and Explode (burn.c, explode.c, with
- * OpenGL too), whose options are on their own pages. */
+ * those, with OpenGL), then Burn, Explode and Digital Rain (burn.c,
+ * explode.c, rain.c, with OpenGL too), whose options are on their own
+ * pages. */
 typedef enum xd_animation_effect : uint8_t {
     XD_ANIMATION_NONE,
     XD_ANIMATION_FADE,
@@ -30,6 +31,7 @@ typedef enum xd_animation_effect : uint8_t {
     XD_ANIMATION_SKEWER,
     XD_ANIMATION_BURN,
     XD_ANIMATION_EXPLODE,
+    XD_ANIMATION_DIGITAL_RAIN,
     XD_ANIMATION_EFFECT_COUNT,
 } xd_animation_effect;
 
@@ -47,8 +49,8 @@ typedef enum xd_animation_event : uint8_t {
 xd_animation_effect xd_animation_find_effect(const char *name);
 /* Whether the Animations Add-On draws it. */
 bool xd_animation_is_addon(xd_animation_effect effect);
-/* What Animations draws in its place when the Add-On, Burn or Explode
- * doesn't draw it (its page is off, or there's no OpenGL): Zoom, as
+/* What Animations draws in its place when the Add-On, Burn, Explode or
+ * Digital Rain doesn't draw it (its page is off, or there's no OpenGL): Zoom, as
  * Compiz fell back to its default when an effect's plugin was gone. The
  * others are themselves. */
 xd_animation_effect xd_animation_get_fallback(xd_animation_effect effect);

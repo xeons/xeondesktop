@@ -1671,6 +1671,247 @@ def burn_smoke_output_off(s):
            "and burns away", timeout=10)
 
 
+def rain_setup(animations, rain=""):
+    """effects.ini with Animations' events as given and Digital Rain's
+    page on, slowed to 4 s."""
+    return events_setup(animations, "[DigitalRain]\nEnabled=true\nDuration=4000\n" + rain)
+
+
+def rain_halves(shot, whole, empty, box):
+    """How the window at box (x, y, w, h) shows in a shot: how much of
+    its top quarter and of its bottom quarter (inside its frame) differs
+    from it whole, and how much of its top quarter differs from the
+    empty desktop (the rain's glyphs)."""
+    x, y, w, h = box
+    top = (x + 4, y + 4, w - 8, h // 4)
+    bottom = (x + 4, y + h - 4 - h // 4, w - 8, h // 4)
+    return (shot.differs(whole, top, step=2), shot.differs(whole, bottom, step=2),
+            shot.differs(empty, top, step=2))
+
+
+@scenario(setup=rain_setup("OpenEffect=digitalrain\n"), fx=True)
+def rain_open(s):
+    """Digital Rain chosen for Animations' Open (xd-compositor-fx),
+    slowed to 4 s: the window is built from the bottom up out of falling
+    glyphs, so midway its bottom shows as it will be while its top is
+    still rain (glyphs over the desktop, not the window); at the end it's
+    itself, and the first picture after the animation is the same as
+    once it has settled (no jump)."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel")
+    started = time.monotonic()
+    time.sleep(1.6)
+    mid = s.shot("midway")
+    midway_at = time.monotonic() - started
+    late = []
+    while time.monotonic() - started < 5.5:
+        late.append((time.monotonic() - started, s.shot("ending")))
+        time.sleep(0.05)
+    final = s.settle("opened")
+    box = final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the window shows once it has opened")
+    top, bottom, rain = rain_halves(mid, final, empty, box)
+    s.log(f"midway ({midway_at:.1f} s): {top:.2f} of its top unlike the end, {bottom:.2f} of "
+          f"its bottom, {rain:.3f} of its top unlike the desktop")
+    s.check(bottom < 0.1, f"midway its bottom shows as it will be ({bottom:.2f})")
+    s.check(top > 0.6, f"midway its top isn't built yet ({top:.2f})")
+    s.check(rain > 0.005, f"glyphs fall where its top will be ({rain:.3f})")
+    done = [(when, shot) for when, shot in late
+            if shot.differs(final, (0, 0, WIDTH, HEIGHT - 40), step=2) < 0.002]
+    s.check(done and done[0][0] < 5.0, "it's itself by the end, as once settled")
+    first = late.index(done[0])
+    nearing = [shot.differs(final, box, step=2) for _, shot in late[max(first - 3, 0):first]]
+    s.log(f"its last pictures before it's itself: {[round(share, 3) for share in nearing]} "
+          "unlike it")
+    s.check(all(share < 0.3 for share in nearing), "its last pictures are nearly it")
+    time.sleep(0.5)
+    s.check(s.shot("still").differs(final, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+            "once opened it stays itself")
+
+
+@scenario(setup=rain_setup("CloseEffect=digitalrain\n"), fx=True)
+def rain_close(s):
+    """Digital Rain chosen for Animations' Close, slowed to 4 s: a window
+    closed with Alt+F4 breaks up into glyphs from the top down, so midway
+    its top has gone (glyphs fall where it was) while its bottom is still
+    there; then it's all gone."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    box = open_control_panel(s, empty)
+    whole = s.settle("whole")
+    s.inject("key", "alt+F4", "sleep", 1800)
+    top, bottom, rain = rain_halves(s.shot("midway"), whole, empty, box)
+    s.log(f"midway: {top:.2f} of its top unlike the window, {bottom:.2f} of its bottom, "
+          f"{rain:.3f} of its top unlike the desktop")
+    s.check(top > 0.6, f"midway its top has gone ({top:.2f})")
+    s.check(bottom < 0.1, f"midway its bottom is still there ({bottom:.2f})")
+    s.check(rain > 0.005, f"glyphs fall where its top was ({rain:.3f})")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "the window gone, no glyph left", timeout=10)
+
+
+@scenario(setup=rain_setup("MinimizeEffect=digitalrain\nUnminimizeEffect=digitalrain\n"),
+          fx=True)
+def rain_minimize(s):
+    """Digital Rain chosen for Minimize and Unminimize, slowed to 4 s: the
+    window breaks up where it is, from the top down (midway its top gone,
+    its bottom still there, in place); then it's minimized and gone.
+    Restored, it builds again and is minimized again before it's whole:
+    it breaks up from there and stays minimized, nothing left on the
+    screen; restored once more it ends whole where it was."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    box = open_control_panel(s, empty)
+    whole = s.settle("whole")
+    s.inject("key", "super+Down", "sleep", 1800)
+    top, bottom, rain = rain_halves(s.shot("midway"), whole, empty, box)
+    s.log(f"midway: {top:.2f} of its top unlike the window, {bottom:.2f} of its bottom, "
+          f"{rain:.3f} of its top unlike the desktop")
+    s.check(top > 0.6, f"midway its top has gone ({top:.2f})")
+    s.check(bottom < 0.1, f"midway its bottom is still there, in place ({bottom:.2f})")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "the window gone into its button", timeout=10)
+    s.inject("key", "alt+Tab", "sleep", 1200, "key", "super+Down")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.wait(lambda: s.shot("gone-again").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "minimized while it was built, it's gone again", timeout=10)
+    s.inject("key", "alt+Tab")
+    s.wait(lambda: s.shot("back").differs(whole, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "restored, it's whole where it was", timeout=10)
+
+
+@scenario(setup=effects_setup("[Animations]\nEnabled=true\nCloseEffect=digitalrain\n"
+                              "CloseDuration=4000\n[Burn]\nEnabled=true\nClosing=false\n"),
+          fx=True)
+def rain_off_greyed(s):
+    """Animations' Close set to Digital Rain while Digital Rain's page is
+    off (slowed to 4 s): a window closed zooms instead, smaller midway
+    and centred where it was. On Animations' Close tab, Up picks Burn
+    (its page on) and Down from it stays there, Digital Rain beside it
+    greyed and skipped."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    x, y, w, h = open_control_panel(s, empty)
+    s.inject("key", "alt+F4", "sleep", 1800)
+    now = s.shot("zooming").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"window {(x, y, w, h)}, midway {now}")
+    s.check(now is not None and now[2] < w - 20 and now[3] < h - 20,
+            "midway its picture is smaller (Zoom)")
+    s.check(now is not None and abs(now[0] + now[2] / 2 - (x + w / 2)) < 20 and
+            abs(now[1] + now[3] / 2 - (y + h / 2)) < 20, "centred on where the window was")
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.01,
+           "the window zoomed away", timeout=10)
+    s.launch("xd-effects", "--effect", "Animations")
+    s.wait_window(title="Desktop Effects", state="activated")
+    page = s.settle("animations")
+    # The Close tab (right of Open at the page's top left; the window
+    # cascades from Control Panel's), its Effect list.
+    x, y, w, h = page.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("move", x + 284, y + 41, "click", "sleep", 300, "key", "alt+e", "sleep", 300)
+    s.settle("close-tab")
+    s.inject("key", "Up", "sleep", 500)
+    s.wait(lambda: effects_ini_value(s, "Animations", "CloseEffect") == "burn",
+           "Up from Digital Rain picks Burn")
+    s.inject("key", "Down", "sleep", 500)
+    s.settle("after-down")
+    s.check(effects_ini_value(s, "Animations", "CloseEffect") == "burn",
+            "Down from Burn skips the greyed Digital Rain")
+
+
+@scenario(setup=rain_setup("OpenEffect=digitalrain\nCloseEffect=digitalrain\n"), fx=True)
+def rain_close_while_opening(s):
+    """Digital Rain on open and close, slowed to 4 s: a window closed while
+    it's still being built breaks up again from there, and is gone with
+    no glyph left on the screen; the compositor carries on (another
+    window opens and is built whole)."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(1.5)
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Control Panel", gone=True)
+    s.wait(lambda: s.shot("gone").differs(empty, (0, 0, WIDTH, HEIGHT - 40)) < 0.002,
+           "the window gone, no glyph left", timeout=10)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(4.5)
+    final = s.settle("reopened")
+    s.check(final.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40)) is not None,
+            "a window opened afterwards shows")
+
+
+@scenario(setup=rain_setup("OpenEffect=digitalrain\n"), fx=True)
+def rain_turned_off_midway(s):
+    """Digital Rain on open, slowed to 4 s, turned off in effects.ini
+    while a window is being built: the window shows whole at once, with
+    no glyph left over it or round it, and stays so."""
+    require_opengl_effects(s)
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    time.sleep(1.5)
+    building = s.shot("building")
+    path = os.path.join(s.config, "effects.ini")
+    with open(path) as f:
+        text = f.read()
+    with open(path + ".new", "w") as f:
+        f.write(text.replace("[DigitalRain]\nEnabled=true", "[DigitalRain]\nEnabled=false"))
+    os.replace(path + ".new", path)
+    time.sleep(1.0)
+    shown = s.shot("turned-off")
+    box = shown.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the window shows")
+    s.check(building.differs(shown, box, step=2) > 0.2, "it was still being built")
+    time.sleep(4.0)
+    final = s.settle("settled")
+    s.check(shown.differs(final, (0, 0, WIDTH, HEIGHT - 40), step=2) < 0.002,
+            "turned off, it was whole at once, and stays so")
+
+
+@scenario(setup=rain_setup("CloseEffect=digitalrain\n"),
+          outputs=[(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)], fx=True)  # TWO_MONITORS
+def rain_close_output_off(s):
+    """Digital Rain on close, slowed to 4 s, of a window on the second
+    monitor (scaled 1.5, its glyphs drawn bigger), which is turned off
+    while the window breaks up: nothing of it is left on the first
+    monitor, and the next window closed, there, breaks up as before."""
+    require_opengl_effects(s)
+    if shutil.which("wlr-randr") is None:
+        raise Skip("wlr-randr isn't installed")
+    empty = s.settle("desktop")
+    s.inject("move", SECOND_X + 300, 200)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    on_second = s.settle("on-second")
+    s.check(on_second.changed_box(empty, SECOND) is not None, "the window on the second monitor")
+    s.inject("key", "alt+F4", "sleep", 1000)
+    raining = s.shot("raining").changed_box(empty, SECOND)
+    s.check(raining is not None, f"it breaks up on the second monitor ({raining})")
+    r = subprocess.run(["wlr-randr", "--output", "HEADLESS-2", "--off"], capture_output=True,
+                       text=True, timeout=10)
+    s.check(r.returncode == 0, f"the second monitor turned off ({r.stderr.strip()})")
+    s.wait_window(title="Control Panel", gone=True)
+    first = (0, 0, WIDTH, HEIGHT - 40)
+    s.wait(lambda: s.shot("first").differs(empty, first, tolerance=4) < 0.002,
+           "nothing of it on the first monitor", timeout=10)
+    time.sleep(1.0)
+    s.check(s.shot("still").differs(empty, first, tolerance=4) < 0.002, "and it stays so")
+    s.inject("move", 500, 400)
+    box = open_control_panel(s, empty)
+    whole = s.settle("whole")
+    s.inject("key", "alt+F4", "sleep", 1800)
+    top, bottom, rain = rain_halves(s.shot("midway"), whole, empty, box)
+    s.log(f"the next: {top:.2f} of its top gone, {bottom:.2f} of its bottom changed")
+    s.check(top > 0.6 and bottom < 0.1, "the next window closed breaks up as before")
+    s.wait(lambda: s.shot("next-gone").differs(empty, first, tolerance=4) < 0.002,
+           "and is gone", timeout=10)
+
+
 @scenario(setup=effects_setup("[Water]\nEnabled=true\n"), fx=True)
 def water_ripple(s):
     """Water Effect (xd-compositor-fx): Shift+Windows+click starts a

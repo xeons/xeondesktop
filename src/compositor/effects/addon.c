@@ -392,6 +392,7 @@ static xd_addon_effect addon_get_model_effect(xd_animation_effect effect) {
     case XD_ANIMATION_GLIDE_2:
     case XD_ANIMATION_BURN:
     case XD_ANIMATION_EXPLODE:
+    case XD_ANIMATION_DIGITAL_RAIN:
     case XD_ANIMATION_EFFECT_COUNT:
         break;
     }
@@ -673,7 +674,8 @@ static void addon_handle_window_event([[maybe_unused]] xd_server *server, void *
     addon_event kind;
     if (!addon_get_event(event->kind, &kind) || !addon_is_wanted(state, view, event->kind))
         return;
-    /* Magic Lamp, Burn and Explode, before us, keep the windows they take. */
+    /* Magic Lamp, Burn, Explode and Digital Rain, before us, keep the
+     * windows they take. */
     if (xd_effects_is_animated_before(&xd_effect_impl_animations_addon, view, event->kind))
         return;
     addon_start(state, view, kind);
