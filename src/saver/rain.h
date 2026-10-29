@@ -2,7 +2,8 @@
  * Digital Rain's column model and its choice of characters, apart from
  * the drawing (rain.c) so the unit tests can check them without a
  * screen: where each column's leading glyph is, how fast it falls, how
- * long its trail is and how long it waits before falling again.
+ * long its trail is and how long it waits before falling again. Its
+ * characters are rain_glyphs.h's.
  */
 #ifndef XD_SAVER_RAIN_H
 #define XD_SAVER_RAIN_H
@@ -38,12 +39,5 @@ void saver_rain_column_advance(saver_rain_column *column, const saver_rain_pace 
 /* How bright the glyph at `row` is: 1 at the head, fading to 0 at the
  * end of the trail; 0 where nothing shows. */
 double saver_rain_column_get_brightness(const saver_rain_column *column, int row);
-
-/* The characters drawn for those asked for: without a font that has
- * half-width katakana, letters and digits rather than boxes. */
-xd_rain_characters saver_rain_pick_characters(xd_rain_characters wanted, bool has_katakana);
-/* Whether the fonts cover U+FF66..U+FF9D (asked of Pango once). False
- * when XD_RAIN_NO_KATAKANA is set, so tests can try the fallback. */
-bool saver_rain_has_katakana(void);
 
 #endif

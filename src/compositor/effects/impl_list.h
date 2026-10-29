@@ -17,6 +17,9 @@ XD_EFFECT_IMPL(wobbly_windows)
 XD_EFFECT_IMPL(magic_lamp)
 XD_EFFECT_IMPL(burn)
 XD_EFFECT_IMPL(explode)
+/* After Burn and Explode, which come first for a window both would take
+ * (their own claims on closing windows). */
+XD_EFFECT_IMPL(digital_rain)
 /* Before Animations, whose events it draws when they're set to its effects. */
 XD_EFFECT_IMPL(animations_addon)
 XD_EFFECT_IMPL(water)

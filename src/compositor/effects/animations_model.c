@@ -14,6 +14,7 @@ static constexpr double ZOOM_FADE_SHARE = 0.3;
 static const char *const effect_names[XD_ANIMATION_EFFECT_COUNT] = {
     "none",   "fade", "zoom",   "glide1",     "glide2", "airplane", "beamup",
     "domino", "fold", "glide3", "leafspread", "razr",   "skewer", "burn", "explode",
+    "digitalrain",
 };
 
 xd_animation_effect xd_animation_find_effect(const char *name) {
@@ -96,6 +97,7 @@ xd_animation_frame xd_animation_get_frame(xd_animation_effect effect, xd_effect_
     case XD_ANIMATION_SKEWER:
     case XD_ANIMATION_BURN:
     case XD_ANIMATION_EXPLODE:
+    case XD_ANIMATION_DIGITAL_RAIN:
     case XD_ANIMATION_EFFECT_COUNT:
         return frame;
     case XD_ANIMATION_FADE:

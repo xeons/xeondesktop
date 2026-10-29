@@ -4,7 +4,8 @@
  * the trail's glyphs changing now and then. A Linux addition after the
  * film's "digital rain", with no Windows original.
  *
- * Each glyph is drawn once, through Pango, into a small A8 mask, and
+ * Each glyph is drawn once, through Pango (rain_glyphs.c, shared with
+ * the compositor's Digital Rain effect), into a small A8 mask, and
  * every frame paints those masks in the colour each place needs (the
  * film's half-width katakana mirrored, as it showed them). Masks keep
  * one cache for every colour, Rainbow's hues and the trail's continuous
@@ -16,11 +17,11 @@
 
 #include <math.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include <pango/pangocairo.h>
 
 #include "../core/alloc.h"
+#include "rain_glyphs.h"
 #include "saver_impl.h"
 
 /* The glyphs' height at 96 DPI, small to large. */
@@ -30,7 +31,7 @@ static const double RAIN_FONT_PX[XD_RAIN_SIZE_COUNT] = {
 static constexpr double RAIN_FONT_PX_MIN = 6;
 /* How often a lit glyph in a trail changes, per second. */
 static constexpr double RAIN_FLICKER = 0.7;
-static constexpr int RAIN_GLYPHS_MAX = 80;
+static constexpr int RAIN_GLYPHS_MAX = XD_RAIN_GLYPHS_MAX;
 
 struct saver_rain {
     uint64_t *rng;
@@ -126,128 +127,27 @@ double saver_rain_column_get_brightness(const saver_rain_column *column, int row
     return 1.0 - behind / column->trail;
 }
 
-/* ---- the characters --------------------------------------------------------------- */
-
-xd_rain_characters saver_rain_pick_characters(xd_rain_characters wanted, bool has_katakana) {
-    return wanted == XD_RAIN_KATAKANA && !has_katakana ? XD_RAIN_LETTERS : wanted;
-}
-
-/* Fontconfig falls back through every font for each character, so a
- * katakana family that's missing is fine as long as some font has them. */
-static const char RAIN_KATAKANA_FONT[] = "Noto Sans Mono CJK JP, Monospace";
-static const char RAIN_LATIN_FONT[] = "Monospace";
-
-/* The katakana's UTF-8: U+FF66..U+FF9D, three bytes each. */
-static int rain_get_katakana(int index, char *out) {
-    unsigned code = 0xFF66u + (unsigned)index;
-    out[0] = (char)(0xE0u | (code >> 12));
-    out[1] = (char)(0x80u | ((code >> 6) & 0x3Fu));
-    out[2] = (char)(0x80u | (code & 0x3Fu));
-    out[3] = '\0';
-    return 0xFF9D - 0xFF66 + 1;
-}
-
-bool saver_rain_has_katakana(void) {
-    const char *forced = getenv("XD_RAIN_NO_KATAKANA");
-    if (forced != nullptr && forced[0] != '\0')
-        return false;
-    static int known = -1; /* the fonts don't change while we run */
-    if (known >= 0)
-        return known == 1;
-    char text[64 * 3 + 1] = "";
-    char one[4];
-    int count = rain_get_katakana(0, one);
-    for (int i = 0; i < count; i++) {
-        rain_get_katakana(i, one);
-        g_strlcat(text, one, sizeof(text));
-    }
-    PangoContext *context = pango_font_map_create_context(pango_cairo_font_map_get_default());
-    PangoLayout *layout = pango_layout_new(context);
-    PangoFontDescription *description = pango_font_description_from_string(RAIN_KATAKANA_FONT);
-    pango_font_description_set_absolute_size(description, 16 * PANGO_SCALE);
-    pango_layout_set_font_description(layout, description);
-    pango_font_description_free(description);
-    pango_layout_set_text(layout, text, -1);
-    known = pango_layout_get_unknown_glyphs_count(layout) == 0 ? 1 : 0;
-    g_object_unref(layout);
-    g_object_unref(context);
-    return known == 1;
-}
-
 /* ---- drawing ------------------------------------------------------------------------ */
 
-/* One glyph, white on nothing, centred in a cell; mirrored left to right
- * for the katakana, as the film showed them. */
-static cairo_surface_t *rain_draw_glyph(saver_rain *rain, PangoLayout *layout, const char *utf8,
-                                        bool mirrored) {
+/* One glyph, white on nothing, centred in a cell (rain_glyphs.c). */
+static cairo_surface_t *rain_draw_glyph(saver_rain *rain, PangoLayout *layout,
+                                        const xd_rain_glyph *glyph) {
     cairo_surface_t *surface =
         cairo_image_surface_create(CAIRO_FORMAT_A8, rain->cell_w, rain->cell_h);
     cairo_t *cairo = cairo_create(surface);
-    pango_layout_set_text(layout, utf8, -1);
-    PangoRectangle ink;
-    pango_layout_get_pixel_extents(layout, &ink, nullptr);
-    double x = floor((rain->cell_w - ink.width) / 2.0) - ink.x;
-    double y = floor((rain->cell_h - ink.height) / 2.0) - ink.y;
-    if (mirrored) {
-        cairo_translate(cairo, rain->cell_w, 0);
-        cairo_scale(cairo, -1, 1);
-    }
-    cairo_move_to(cairo, x, y);
-    pango_cairo_update_layout(cairo, layout);
-    pango_cairo_show_layout(cairo, layout);
+    xd_rain_draw_glyph(cairo, layout, glyph, 0, 0, rain->cell_w, rain->cell_h);
     cairo_destroy(cairo);
     return surface;
-}
-
-static void rain_add_glyph(saver_rain *rain, PangoLayout *layout, const char *utf8,
-                           bool mirrored) {
-    if (rain->glyph_count < RAIN_GLYPHS_MAX)
-        rain->glyphs[rain->glyph_count++] = rain_draw_glyph(rain, layout, utf8, mirrored);
 }
 
 static void rain_draw_glyphs(saver_rain *rain, xd_rain_characters characters, double font_px) {
     cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
     cairo_t *cairo = cairo_create(scratch);
-    PangoLayout *layout = pango_cairo_create_layout(cairo);
-    cairo_font_options_t *options = cairo_font_options_create();
-    cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_GRAY);
-    cairo_font_options_set_hint_metrics(options, CAIRO_HINT_METRICS_OFF);
-    pango_cairo_context_set_font_options(pango_layout_get_context(layout), options);
-    cairo_font_options_destroy(options);
-    pango_layout_context_changed(layout);
-
-    PangoFontDescription *description = pango_font_description_from_string(
-        characters == XD_RAIN_KATAKANA ? RAIN_KATAKANA_FONT : RAIN_LATIN_FONT);
-    pango_font_description_set_absolute_size(description, font_px * PANGO_SCALE);
-    pango_layout_set_font_description(layout, description);
-    pango_font_description_free(description);
-
-    char one[4];
-    switch (characters) {
-    case XD_RAIN_KATAKANA: {
-        int count = rain_get_katakana(0, one);
-        for (int i = 0; i < count; i++) {
-            rain_get_katakana(i, one);
-            rain_add_glyph(rain, layout, one, true);
-        }
-        [[fallthrough]];
-    }
-    case XD_RAIN_DIGITS:
-    case XD_RAIN_CHARACTERS_COUNT:
-        for (char digit = '0'; digit <= '9'; digit++)
-            rain_add_glyph(rain, layout, (char[]){digit, '\0'}, false);
-        break;
-    case XD_RAIN_BINARY:
-        rain_add_glyph(rain, layout, "0", false);
-        rain_add_glyph(rain, layout, "1", false);
-        break;
-    case XD_RAIN_LETTERS:
-        for (char letter = 'A'; letter <= 'Z'; letter++)
-            rain_add_glyph(rain, layout, (char[]){letter, '\0'}, false);
-        for (char digit = '0'; digit <= '9'; digit++)
-            rain_add_glyph(rain, layout, (char[]){digit, '\0'}, false);
-        break;
-    }
+    PangoLayout *layout = xd_rain_create_layout(cairo, characters, font_px);
+    xd_rain_glyph glyphs[XD_RAIN_GLYPHS_MAX];
+    size_t count = xd_rain_list_glyphs(characters, glyphs);
+    for (size_t i = 0; i < count && rain->glyph_count < RAIN_GLYPHS_MAX; i++)
+        rain->glyphs[rain->glyph_count++] = rain_draw_glyph(rain, layout, &glyphs[i]);
     g_object_unref(layout);
     cairo_destroy(cairo);
     cairo_surface_destroy(scratch);
@@ -269,23 +169,6 @@ static void rain_draw_glow(saver_rain *rain) {
     cairo_destroy(cairo);
 }
 
-static void rain_get_base_color(xd_rain_color color, xd_rgb custom, double *rgb) {
-    /* Rainbow's columns have hues of their own; this is for its first frame. */
-    static const double colors[XD_RAIN_COLOR_COUNT][3] = {
-        [XD_RAIN_GREEN] = {0.0, 1.0, 0.27}, [XD_RAIN_AMBER] = {1.0, 0.62, 0.05},
-        [XD_RAIN_BLUE] = {0.2, 0.55, 1.0},  [XD_RAIN_WHITE] = {0.85, 0.88, 0.9},
-        [XD_RAIN_RAINBOW] = {0.0, 1.0, 0.27}};
-    if (color == XD_RAIN_CUSTOM) {
-        rgb[0] = custom.r / 255.0;
-        rgb[1] = custom.g / 255.0;
-        rgb[2] = custom.b / 255.0;
-        return;
-    }
-    if (color >= XD_RAIN_COLOR_COUNT)
-        color = XD_RAIN_GREEN;
-    memcpy(rgb, colors[color], sizeof(colors[color]));
-}
-
 /* A bright hue, 0..1 round the colour wheel. */
 static void rain_get_hue(double hue, double *rgb) {
     hue = (hue - floor(hue)) * 6.0;
@@ -302,22 +185,21 @@ saver_rain *saver_rain_create(const xd_saver_settings *saver_settings, int width
     rain->h = height;
     rain->color = saver_settings->rain.color;
     rain->has_glow = saver_settings->rain.glow;
-    rain_get_base_color(rain->color, saver_settings->rain.custom_color, rain->base);
+    xd_rain_get_base_color(rain->color, saver_settings->rain.custom_color, rain->base);
 
     xd_rain_glyph_size size =
         saver_settings->rain.size < XD_RAIN_SIZE_COUNT ? saver_settings->rain.size : XD_RAIN_MEDIUM;
     double font_px = fmax(RAIN_FONT_PX_MIN, RAIN_FONT_PX[size] * scale);
-    rain->cell_w = XD_MAX(3, (int)lround(font_px * 0.72));
-    rain->cell_h = XD_MAX(4, (int)lround(font_px * 1.12));
+    xd_rain_get_cell_size(font_px, &rain->cell_w, &rain->cell_h);
     rain->columns = XD_MAX(1, width / rain->cell_w);
     rain->rows = height / rain->cell_h + 1; /* the last one cut off at the bottom */
     rain->left = (width - rain->columns * rain->cell_w) / 2;
     rain->pace =
         saver_rain_get_pace(rain->rows, saver_settings->rain.speed, saver_settings->rain.density);
 
-    xd_rain_characters characters = saver_rain_pick_characters(
+    xd_rain_characters characters = xd_rain_pick_characters(
         saver_settings->rain.characters,
-        saver_settings->rain.characters != XD_RAIN_KATAKANA || saver_rain_has_katakana());
+        saver_settings->rain.characters != XD_RAIN_KATAKANA || xd_rain_has_katakana());
     rain_draw_glyphs(rain, characters, font_px);
     if (rain->has_glow)
         rain_draw_glow(rain);

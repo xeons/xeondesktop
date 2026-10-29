@@ -387,9 +387,9 @@ An option's `choice_requires` names the effect a choice needs: Desktop
 Effects greys the choice while that's off or can't be drawn, with a note
 saying `choice_fallback` (Zoom) is used meanwhile. The Add-On comes before
 Animations in `impl_list.h` and reads Animations' event settings; it takes a
-window whose event is set to one of its effects (Magic Lamp, Burn and
-Explode, before it, keep theirs; Burn and Explode are choices too, drawn
-by their own effects), and Animations zooms any it doesn't take
+window whose event is set to one of its effects (Magic Lamp, Burn,
+Explode and Digital Rain, before it, keep theirs; Burn, Explode and
+Digital Rain are choices too, drawn by their own effects), and Animations zooms any it doesn't take
 (off, plain build). The window's picture is cut into flat pieces that turn
 about hinges (folds, dominoes) or fly off, drawn each frame as one mesh of
 slabs back to front (face or mirrored back, and the sides facing the eye,
@@ -661,6 +661,28 @@ window's size), so the last frame is the window itself. Turned round
 midway (closed while opening, minimized while restoring), the new one
 starts from the old one's progress, with the same pieces (seed) or
 direction.
+
+**Digital Rain** (`rain.c`, the front and the drops in `rain_model.c`,
+unit-tested) is a Linux addition after the screen saver of that name,
+listed beside Burn and Explode in each of Animations' events
+(`digitalrain`, needing its own page). It has no claim of its own, so an
+effects.ini from before it changes nothing: it takes the windows of
+Animations' events set to it that its page's Windows also matches, with
+its page's duration (Animations' 200 ms would be over before the rain
+showed). It comes after Burn and Explode in `impl_list.h`, before the
+Add-On and Animations. One shader pass draws the window in cells of
+glyphs: a ragged front (each column's jitter a hash of its number) falls
+through a closing window, the cells above it rain only, each cell below
+the window, a glyph just landed flashing over it; above the front drops
+fall, thickest near it and sparse further up, fading out at the end.
+Opening and restoring play it backwards on the live window, so it builds
+from the bottom up and ends as the window itself; minimizing plays in
+place. The glyphs are the saver's (`src/saver/rain_glyphs.c`, shared:
+its sets, the mirrored half-width katakana, the fallback to letters),
+drawn once with Pango into an atlas texture per glyph size in device
+pixels (a few kept, one for each monitor scale in use); the shader picks
+a glyph per cell from it. Their colour is the saver's or, with Window's
+colors, that of the window's pixel at each cell's middle.
 
 **Water Effect** (`water.c`, the waves in `water_model.c`, unit-tested)
 is an output filter. A height field covers the output layout, a cell
