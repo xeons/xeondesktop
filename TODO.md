@@ -1332,6 +1332,13 @@ against mocks or scratch directories; none yet against the real services.
         claim on closing windows, so old effects.ini files act as before.
         Reversed Explode's pieces stop abruptly as they land, as in
         Compiz.
+      - [x] Digital Rain (OpenGL, our own, after the screen saver): a
+        choice in each of Animations' events; windows build up out of
+        falling glyphs from the bottom as they open or restore, and break
+        up into them from the top as they close or minimize (in place).
+        Its page has Duration (which overrides Animations' for it),
+        Glyph size, Characters, Color (or the window's own) and Glow; it
+        claims no windows of its own. Looks await the user's review.
       - [ ] Add-On: Compiz's shade and focus events, its "time step for
         intense effects" and polygon lighting are left out.
       - [x] Virtual desktops (General Options' Desktop Size): Ctrl+Alt+
